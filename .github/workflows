@@ -1,1 +1,74 @@
+name: EasyProxy x86_64 package build
+
+on:
+  push:
+    branches: [ "main" ]
+    tags: [ "v*" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+  schedule:
+    - cron: "23 4 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build ImmortalWrt x86_64 IPK
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout EasyProxy
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build package with ImmortalWrt SDK
+        uses: immortalwrt/gh-action-sdk@master
+        env:
+          ARCH: x86_64
+          PACKAGES: easyproxy
+          V: "s"
+
+      - name: Collect IPK and checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          find bin/packages -type f -name 'easyproxy*.ipk' -exec cp -v {} dist/ \;
+          if ! compgen -G 'dist/*.ipk' > /dev/null; then
+            echo "::error::No EasyProxy IPK was produced. Inspect the SDK build log."
+            exit 1
+          fi
+          sha256sum dist/*.ipk | tee dist/SHA256SUMS
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: easyproxy-immortalwrt-x86_64
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30
+
+  release:
+    name: Publish version release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download package artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: easyproxy-immortalwrt-x86_64
+          path: dist
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" dist/*.ipk dist/SHA256SUMS \
+            --title "EasyProxy ${GITHUB_REF_NAME}" \
+            --generate-notes
 
