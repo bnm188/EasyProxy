@@ -16,7 +16,7 @@ permissions:
 jobs:
   build:
     name: Build ImmortalWrt x86_64 IPK
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - name: Checkout EasyProxy
         uses: actions/checkout@v4
