@@ -8,7 +8,8 @@ LuCI management panel.
 Version `0.6.0` is the first release meant to be installed and used on a real
 router. On top of split routing and reversible transparent capture it adds engine
 management, node/subscription import, a full maintenance CLI and a ten-page
-Chinese dark LuCI panel.
+Chinese dark LuCI panel. One SSH command now also installs the two proxy kernels,
+sing-box and dae, so the panel is usable as soon as it comes up.
 
 | Layer | What exists now |
 |---|---|
@@ -21,14 +22,21 @@ Chinese dark LuCI panel.
 | Nodes | 8 share-link formats, `node list|add|import|export|del|test`, subscription fetch |
 | Maintenance | `config backup|restore|reset`, `ruleset update|verify`, `doctor [--json]`, `log rotate`, `uninstall-clean` |
 | LuCI panel | `服务 → EasyProxy`, ten views: overview, nodes, subscription, split, engines, DNS, rules, logs, backup, settings |
+| Installer | one command installs panel + sing-box + dae; `upgrade` and `status` per component |
 
 ### Install in one line (SSH on the router)
 
 ```sh
-# install / upgrade to the newest release
+# install the panel, sing-box and dae in one go
 wget -qO- https://raw.githubusercontent.com/bnm188/EasyProxy/main/scripts/install.sh | sh
 
-# uninstall (config is kept; add `-s -- --purge` to drop it as well)
+# what is installed right now
+wget -qO- https://raw.githubusercontent.com/bnm188/EasyProxy/main/scripts/install.sh | sh -s status
+
+# upgrade all three components (old -> new version per component, rollback on failure)
+wget -qO- https://raw.githubusercontent.com/bnm188/EasyProxy/main/scripts/install.sh | sh -s upgrade
+
+# uninstall (config is kept; append --purge to drop it as well)
 wget -qO- https://raw.githubusercontent.com/bnm188/EasyProxy/main/scripts/uninstall.sh | sh
 ```
 
@@ -49,7 +57,9 @@ These are compiled into the generator, not options a user can flip:
 | Intranet never leaves the router | `10.10.10.10`, `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, every node server address, `transparent.exclude` and the router's own LAN addresses are all in `bypass_ipv4` / the direct rule set. LAN traffic is routed, not captured: it never enters the engine |
 
 Read it as: a broken or missing rule set costs you foreign websites, never your
-LAN. `easyproxy doctor` reports both locks as `ok` when they hold.
+LAN. `easyproxy doctor` reports both locks as `ok` when they hold. `install.sh`
+never writes any of these fields: it only installs binaries and points UCI at
+them.
 
 ### Why rule sets are local files
 
@@ -305,8 +315,7 @@ package/easyproxy/
     └── www/luci-static/resources/view/easyproxy/*.js   (10 views)
 scripts/
 ├── make-ipk.sh          # build the ipk (all / x86_64 / ... ) from package/easyproxy
-├── install.sh           # one-line installer used by the README
-└── uninstall.sh         # one-line uninstaller used by the README
+├── make-kernel-ipk.sh   # build sing-box_<ver>_<arch>.ipk / dae_<ver>_<arch>.ipk
 tests/
 ├── test-cli.sh             # CLI surface (status/validate/engine/start guard)
 ├── test-runtime.sh         # config generation + start/stop lifecycle
@@ -336,15 +345,17 @@ EP_SING_BOX_BIN=/usr/bin/sing-box sh tests/test-routing.sh
 EP_SING_BOX_BIN=/usr/bin/sing-box sh tests/test-transparent.sh
 ```
 
-Nine suites, 381 checks: routing 32, transparent 85, nodes 61, engine 44,
-maintenance 44, install scripts 36, ipk layout 40, CLI 21, runtime 20
-(`runtime` drops to 19 and `transparent` to 84 when no real `sing-box` binary is
-supplied, as in CI).
+Nine suites, 464 checks: routing 32, transparent 84, nodes 61, engine 44,
+maintenance 44, install scripts 119, ipk layout 40, CLI 21, runtime 19
+(`runtime` and `transparent` hold 19 and 84 without a real `sing-box` binary,
+which is also what CI runs).
 
-The install-script suite stubs `opkg`, `apk`, `curl` and the init/rpcd scripts
-in a sandbox, so it covers both package managers, the API-unreachable fallback,
-the rootfs route, the arch-matched ipk choice and the uninstall ordering without
-touching `/etc` at all.
+The install-script suite stubs `opkg`, `apk`, `curl`, `uci` and the init/rpcd
+scripts in a sandbox, so it covers both package managers, the API-unreachable
+fallback, the rootfs route, the arch-matched ipk choice, the three-component
+install, both kernels (sha256, architecture, reuse, failure), `upgrade` with its
+version table and rollback, `status`, and the uninstall ordering, backup,
+`--purge` and `--keep-kernels` without touching `/etc` at all.
 
 The transparent suite stubs `nft` and `ip`, so the takeover state machine is
 exercised (apply, idempotent re-apply, rollback, refusals, missing nft)
@@ -353,13 +364,15 @@ without touching the host's firewall and without root.
 ## Build
 
 `.github/workflows/build.yml` downloads the official ImmortalWrt SDK
-(25.12.2, x86-64), copies `package/easyproxy` into it, runs the repo test
-suites, builds the native package and uploads the
-`easyproxy-immortalwrt-25.12.2-x86_64` artifact. Runs on push/PR to `main`, on
-`workflow_dispatch`, and on `v*` tags. A failing suite stops the build before
+(25.12.2, x86-64), runs the repo test suites, copies `package/easyproxy` into the
+SDK and builds the native package, then builds the two kernel packages for
+x86_64, `aarch64_cortex-a53` and `arm_cortex-a7_neon-vfpv4` out of the official
+upstream archives (each checked against a pinned sha256), writes `KERNEL-VERSIONS`
+and uploads the `easyproxy-immortalwrt-25.12.2` artifact. Runs on push/PR to `main`,
+on `workflow_dispatch`, and on `v*` tags. A failing suite stops the build before
 anything is published.
 
-Every release carries four installable assets plus checksums:
+Every release carries the three components as separate packages plus checksums:
 
 | Asset | For |
 |---|---|
@@ -367,11 +380,23 @@ Every release carries four installable assets plus checksums:
 | `easyproxy_<ver>-1_x86_64.ipk` | opkg firmware that refuses `Architecture: all` (x86_64 targets) |
 | `easyproxy-<ver>-1.apk` | ImmortalWrt 25.x images using `apk` |
 | `easyproxy-<ver>-rootfs.tar.gz` | no matching package manager: extract at `/` |
-| `SHA256SUMS` | verify the downloads |
+| `sing-box_<ver>_<arch>.ipk` | sing-box kernel, one package per architecture |
+| `dae_<ver>_<arch>.ipk` | dae kernel, binary plus `/usr/share/dae` routing assets |
+| `SHA256SUMS` | sha256 of every asset above, kernels included |
+| `KERNEL-VERSIONS` | the kernel versions and architectures this release pins |
+
+`<arch>` is one of `x86_64`, `aarch64_cortex-a53`, `arm_cortex-a7_neon-vfpv4`.
+The kernels cannot live inside `easyproxy_..._all.ipk`: that package is
+architecture-independent, so an amd64 binary would be installed on an ARM router.
+Three separate packages also mean three separate upgrades and three separate
+removals, which is what the installer drives.
 
 `sh scripts/make-ipk.sh package/easyproxy dist all` and
 `sh scripts/make-ipk.sh package/easyproxy dist x86_64` build the two ipk flavours
 locally; the architecture is stamped into the `control` member.
+`sh scripts/make-kernel-ipk.sh sing-box x86_64 dist` and
+`sh scripts/make-kernel-ipk.sh dae x86_64 dist` build the kernel packages the
+same way the workflow does.
 
 ## Install
 
@@ -383,22 +408,84 @@ On the router, over SSH, the whole install is one command:
 wget -qO- https://raw.githubusercontent.com/bnm188/EasyProxy/main/scripts/install.sh | sh
 ```
 
-It detects whether the firmware has `opkg` or `apk`, picks the matching asset of
-the **latest release**: on opkg firmware the ipk that matches this host's
-architecture (falling back to `_all.ipk` when there is no arch-specific one or
-when it fails to download), on apk images the `.apk`. Then it installs the
-package, enables the service and restarts `rpcd` so the LuCI menu shows up.
-Re-running it simply installs the newest release again.
+One command installs all three components. It:
+
+1. detects the firmware (`opkg` or `apk`) and refuses to continue when neither
+   exists and `--rootfs` was not asked for;
+2. picks the matching asset of the **latest release**: on opkg firmware the ipk
+   that matches this host's architecture (falling back to `_all.ipk` when there
+   is no arch-specific one or when it fails to download), on apk images the
+   `.apk`, and for `--rootfs` the rootfs archive;
+3. verifies **every** download against `SHA256SUMS` before anything is installed
+   and refuses a package that is not the one the checksum file describes;
+4. installs the panel, then the sing-box kernel, then the dae kernel - each from
+   its own release asset when the release carries one
+   (`sing-box_<ver>_<arch>.ipk`, `dae_<ver>_<arch>.ipk`, installed through the
+   package manager so opkg owns the files), otherwise from the official upstream
+   archive with the sha256 pinned inside the script, unpacked, checked to be a
+   real ELF executable and installed to `/usr/bin/sing-box` and `/usr/bin/dae`
+   (`/usr/share/dae` for dae's `geoip.dat` / `geosite.dat`);
+5. records what it installed in `/etc/easyproxy/owned/`, so a later uninstall
+   removes only those files and never a kernel the user installed themselves;
+6. points `easyproxy.sing_box.binary` / `easyproxy.dae.binary` at them, leaves
+   `main.engine` untouched unless it is still empty or `none`, enables the
+   service and restarts `rpcd` so the LuCI menu shows up;
+7. runs `<binary> version` on both kernels, prints a per-component summary and
+   exits non-zero if anything did not install. A failed download or checksum is
+   reported as a failure - the script never prints success over a broken install.
+
+Re-running it is safe: an already present kernel of the right version is reused
+instead of downloaded again.
 
 | Command | What it does |
 |---|---|
-| `... install.sh` | detect opkg/apk and install the matching package |
+| `sh install.sh` | install panel + sing-box + dae |
+| `sh install.sh upgrade` | upgrade all three, with a version table |
+| `sh install.sh upgrade --only dae` | upgrade one component only |
+| `sh install.sh status` | installed versions of all three |
 | `sh install.sh --ipk` | force the `.ipk` asset |
 | `sh install.sh --apk` | force the `.apk` asset |
 | `sh install.sh --rootfs` | skip the package manager, extract the rootfs archive at `/` |
+| `sh install.sh --no-sing-box` | panel + dae only |
+| `sh install.sh --no-dae` | panel + sing-box only |
+| `sh install.sh --no-engine` | panel only, no kernel |
 | `sh install.sh --help` | usage, no network access |
 
-Uninstall is the same shape:
+### Upgrade and status
+
+```sh
+# all three components, after printing what changes
+wget -qO- https://raw.githubusercontent.com/bnm188/EasyProxy/main/scripts/install.sh | sh -s upgrade
+
+# one component only
+wget -qO- https://raw.githubusercontent.com/bnm188/EasyProxy/main/scripts/install.sh | sh -s upgrade --only package    # panel
+wget -qO- https://raw.githubusercontent.com/bnm188/EasyProxy/main/scripts/install.sh | sh -s upgrade --only sing-box  # kernel
+wget -qO- https://raw.githubusercontent.com/bnm188/EasyProxy/main/scripts/install.sh | sh -s upgrade --only dae       # kernel
+
+# what is on disk right now
+wget -qO- https://raw.githubusercontent.com/bnm188/EasyProxy/main/scripts/install.sh | sh -s status
+```
+
+`upgrade` prints the current and newest version of each component first, then
+upgrades only those whose version differs:
+
+```
+component    current      newest
+easyproxy    0.6.0-1      0.6.0-1
+sing-box     1.9.0        1.10.7
+dae          2.1.0        2.1.2
+```
+
+Before a kernel is replaced its old binary is copied to
+`/etc/easyproxy/backup/<kernel>.old`. The new one must answer `<binary> version`,
+otherwise the old binary is restored, the component is reported as
+`upgrade incomplete` and the command exits non-zero. The service is stopped for
+the duration of the upgrade and started again afterwards.
+
+Without a pipe, the same two actions run from a local copy:
+`sh scripts/install.sh upgrade` and `sh scripts/install.sh status`.
+
+### Uninstall
 
 ```sh
 wget -qO- https://raw.githubusercontent.com/bnm188/EasyProxy/main/scripts/uninstall.sh | sh
@@ -406,11 +493,21 @@ wget -qO- https://raw.githubusercontent.com/bnm188/EasyProxy/main/scripts/uninst
 
 It removes the nftables capture first, then stops the service, then removes the
 package — in that order, so LAN traffic is never left pointing at a dead listener.
-`/etc/config/easyproxy` and `/etc/easyproxy` are kept; to drop them as well:
+Before anything is removed, a backup of the config and state is written to
+`/root/easyproxy-backup-<date>-<time>.tar.gz` and its path is printed.
+`/etc/config/easyproxy` and `/etc/easyproxy` are kept afterwards.
 
-```sh
-wget -qO- https://raw.githubusercontent.com/bnm188/EasyProxy/main/scripts/uninstall.sh | sh -s -- --purge
-```
+| Command | What it does |
+|---|---|
+| `sh uninstall.sh` | remove everything, keep config and state, keep a backup |
+| `sh uninstall.sh --purge` | remove the package, the config and the state too |
+| `sh uninstall.sh --keep-config` | explicit alias of the default |
+| `sh uninstall.sh --keep-kernels` | remove only the panel, leave sing-box and dae |
+| `sh uninstall.sh --no-backup` | do not write the backup archive |
+
+The kernels are only removed when this installer put them there: their paths are
+listed in `/etc/easyproxy/owned/`, and a `sing-box` or `dae` the user installed
+themselves has no such record, so it is never touched.
 
 Both scripts are idempotent, and both still work when `api.github.com` is
 rate-limited or unreachable: the asset URL is then rebuilt from `PKG_VERSION`
@@ -427,7 +524,8 @@ sh /tmp/install.sh
 
 ```sh
 opkg install --force-reinstall /tmp/easyproxy_*.ipk
-opkg install sing-box           # or drop a static binary and set easyproxy.sing_box.binary
+opkg install /tmp/sing-box_*.ipk   # or install the kernel yourself and point
+opkg install /tmp/dae_*.ipk        # easyproxy.sing_box.binary / easyproxy.dae.binary at it
 /etc/init.d/rpcd restart
 rm -f /tmp/luci-indexcache*
 ```
