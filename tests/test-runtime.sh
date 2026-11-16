@@ -180,7 +180,7 @@ pgrep -f 'sleep 30' >/dev/null 2>&1 && no "停止后无残留进程" || ok "停�
 sed -i 's/^easyproxy.main.enabled=.*/easyproxy.main.enabled=0/' "$SB/etc/uci.db"
 "$EP" start > "$SB/s2.log" 2>&1; rc=$?
 [ "$rc" -ne 0 ] && ok "未启用时拒绝启动" || no "未启用时拒绝启动" "rc=$rc"
-grep -qi 'disabled|未启用' "$SB/s2.log" && ok "拒绝原因清晰" || no "拒绝原因清晰" "$(cat "$SB/s2.log")"
+grep -qi 'disabled\|未启用' "$SB/s2.log" && ok "拒绝原因清晰" || no "拒绝原因清晰" "$(cat "$SB/s2.log")"
 sed -i 's/^easyproxy.main.enabled=.*/easyproxy.main.enabled=1/' "$SB/etc/uci.db"
 
 say ""
