@@ -1,5 +1,5 @@
 #!/bin/sh /etc/rc.common
-# EasyProxy init integration. Runtime process supervision arrives in Stage 2.
+# EasyProxy init integration. Runtime process supervision arrives in Stage 3.
 
 START=95
 STOP=10
@@ -9,7 +9,7 @@ start_service() {
 	local enabled
 	enabled="$(uci -q get easyproxy.main.enabled 2>/dev/null)"
 	[ "$enabled" = "1" ] || return 0
-	logger -t easyproxy "Start requested, but Stage 1 has no proxy runtime; refusing to alter routing."
+	logger -t easyproxy "Start requested, but Stage 2 has no proxy runtime; refusing to alter routing."
 	return 1
 }
 
