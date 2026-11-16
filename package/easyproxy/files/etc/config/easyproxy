@@ -4,6 +4,9 @@ config global 'main'
 	option log_level 'notice'
 	option listen '127.0.0.1'
 	option listen_port '7890'
+	# sing-box caches the resolved addresses it learns so a restart does not
+	# have to re-resolve every domain; the file lives under /etc so it survives.
+	option cache_file '/etc/easyproxy/cache.db'
 
 config routing 'routing'
 	option china_policy 'direct'
@@ -19,6 +22,17 @@ config routing 'routing'
 	# for everything else.
 	option dns_local_server '223.5.5.5'
 	option dns_remote_server 'https://1.1.1.1/dns-query'
+	# Per-node TCP probe timeout in seconds (`easyproxy node test`).
+	option probe_timeout '3'
+	# Well-known services that must leave through the node group. Domain lists
+	# are inline, so the split works even before the rule sets are downloaded.
+	option platform_youtube '1'
+	option platform_netflix '1'
+	option platform_tiktok '1'
+	# Custom split rules, "type:value:outbound" separated by ';'. Types:
+	# domain | domain-suffix | domain-keyword | ip-cidr. Outbounds:
+	# direct | proxy | block. Managed by `easyproxy rule add|del|list`.
+	option custom_rules ''
 
 # Transparent capture (Stage 5). Disabled by default: turning it on makes this
 # package rewrite firewall state on the router. Everything lives in its own
@@ -52,13 +66,24 @@ config engine 'sing_box'
 #
 # config node 'hk'
 #	option name 'hk-01'
-#	option type 'shadowsocks'    # shadowsocks | vmess | trojan | socks | http
+#	option type 'shadowsocks'    # shadowsocks | vmess | vless | trojan |
+#	                             # hysteria2 | tuic | socks | http
 #	option server '203.0.113.10'
 #	option port '8388'
 #	option method 'aes-256-gcm'  # shadowsocks only
 #	option password 'secret'     # shadowsocks / trojan / socks / http
-#	option uuid 'uuid-here'      # vmess only
+#	option uuid 'uuid-here'      # vmess / vless / tuic
 #	option alter_id '0'          # vmess only
-#	option tls '1'               # trojan / vmess
+#	option tls '1'               # trojan / vmess / vless / hysteria2 / tuic
 #	option sni 'example.com'
 #	option enabled '1'
+
+# Nodes are grouped by the region keyword in their name (hk/tw/jp/sg/us/uk/de/
+# kr/ru, Chinese names included) and each group becomes one urltest outbound
+# ("auto-hk", "auto-us", ...); a selector named "proxy" points at those groups.
+# Import share links instead of hand-writing sections:
+#
+#   easyproxy node add 'ss://...'             import one link
+#   easyproxy node import /tmp/nodes.txt      one link per line
+#   easyproxy node list                       show nodes and their group
+#   easyproxy rule add domain-suffix:example.org:proxy
