@@ -1,4 +1,4 @@
-#!/sh
+#!/bin/sh
 # One-line installer, upgrader and status report for EasyProxy.
 #
 #   wget -qO- https://raw.githubusercontent.com/bnm188/EasyProxy/main/scripts/install.sh | sh
@@ -341,7 +341,7 @@ fetch_verified() {
 	return 1
 }
 
-# Same idea for an object pinned by a sha256 inside this file rather than the
+# Same idea for an object pinned by a sha256 inside this file rather than a
 # release's SHA256SUMS (the official upstream kernel archives).
 fetch_pinned() {
 	local url file want got attempt
