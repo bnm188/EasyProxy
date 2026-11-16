@@ -22,6 +22,7 @@ Usage:
   easyproxy transparent status     Show transparent capture state
   easyproxy transparent apply      Capture LAN traffic (nftables + policy routing)
   easyproxy transparent remove     Roll the capture back
+  easyproxy transparent audit      Check the live rules, marks and IPv6 policy against UCI
   easyproxy log                    Show recent log lines
   easyproxy help                   Show this help
 EOF
@@ -95,6 +96,12 @@ cmd_status_text() {
 			fi
 			;;
 	esac
+	case "$(ep_ipv6_policy):$(ep_ipv6_state)" in
+		direct:off) printf 'IPv6: not captured, direct (ipv6_policy=direct)\n' ;;
+		block:active) printf 'IPv6: blocked for LAN clients outside the bypass set (ipv6 table loaded)\n' ;;
+		block:*) printf 'IPv6: policy=block but the ip6 table is %s\n' "$(ep_ipv6_state)" ;;
+		*) printf 'IPv6: %s (%s)\n' "$(ep_ipv6_policy)" "$(ep_ipv6_state)" ;;
+	esac
 	printf 'Runtime: %s' "$runtime"
 	[ "$runtime" = "running" ] && printf ' (pid %s, up %ss)' "$pid" "$up"
 	printf '\n'
@@ -105,7 +112,7 @@ cmd_status_text() {
 cmd_status_json() {
 	local enabled engine binary bstate china proxy fail_closed nodes
 	local runtime pid up config_state config_path nodes_enabled china_rule route_rules dns_mode rule_set_state route_mode
-	local transparent tproxy_port tproxy_state
+	local transparent tproxy_port tproxy_state ipv6_policy ipv6_state
 	enabled="$(ep_bool "$(ep_get main enabled 0)")"
 	engine="$(ep_get main engine none)"
 	binary="$(ep_engine_binary "$engine")"
@@ -122,6 +129,8 @@ cmd_status_json() {
 	transparent="$(ep_bool "$(ep_get transparent enabled 0)")"
 	tproxy_port="$(ep_tproxy_port)"
 	tproxy_state="$(ep_transparent_state)"
+	ipv6_policy="$(ep_ipv6_policy)"
+	ipv6_state="$(ep_ipv6_state)"
 
 	route_mode="$(ep_route_mode "$nodes_enabled")"
 	if [ "$route_mode" = "split" ]; then
@@ -140,7 +149,7 @@ cmd_status_json() {
 	config_path="$(ep_engine_config_path "$engine")"
 	config_state="$(ep_config_state)"
 
-	printf '{"ok":true,"package":"%s","version":"%s","stage":%s,"enabled":%s,"engine":"%s","binary":"%s","binary_ok":%s,"china_policy":"%s","proxy_policy":"%s","fail_closed":%s,"nodes":%s,"nodes_enabled":%s,"runtime":"%s","runtime_pid":%s,"runtime_uptime":%s,"china_rule":%s,"route_rules":%s,"dns_mode":"%s","rule_set_state":"%s","route_mode":"%s","transparent":%s,"tproxy_port":%s,"tproxy_state":"%s","config_state":"%s","config_path":"%s","config_file":"%s","generated":"%s"}\n' \
+	printf '{"ok":true,"package":"%s","version":"%s","stage":%s,"enabled":%s,"engine":"%s","binary":"%s","binary_ok":%s,"china_policy":"%s","proxy_policy":"%s","fail_closed":%s,"nodes":%s,"nodes_enabled":%s,"runtime":"%s","runtime_pid":%s,"runtime_uptime":%s,"china_rule":%s,"route_rules":%s,"dns_mode":"%s","rule_set_state":"%s","route_mode":"%s","transparent":%s,"tproxy_port":%s,"tproxy_state":"%s","ipv6_policy":"%s","ipv6_state":"%s","config_state":"%s","config_path":"%s","config_file":"%s","generated":"%s"}\n' \
 		"$(ep_json_escape "$PROG")" \
 		"$(ep_json_escape "$EP_VERSION")" \
 		"$EP_STAGE" \
@@ -164,6 +173,8 @@ cmd_status_json() {
 		"$transparent" \
 		"$tproxy_port" \
 		"$(ep_json_escape "$tproxy_state")" \
+		"$(ep_json_escape "$ipv6_policy")" \
+		"$(ep_json_escape "$ipv6_state")" \
 		"$(ep_json_escape "$config_state")" \
 		"$(ep_json_escape "$config_path")" \
 		"$(ep_json_escape "$EP_CONFIG_FILE")" \
@@ -398,19 +409,21 @@ cmd_restart() {
 }
 
 cmd_transparent() {
-	local action state
+	local action state _report _rc _items _ok _st _name _detail _tag
 	action="${1:-status}"
 	state="$(ep_transparent_state)"
 	case "$action" in
 		status)
 			if [ "$JSON" = "1" ]; then
-				printf '{"ok":true,"enabled":%s,"state":"%s","port":%s,"fwmark":%s,"route_table":%s,"interfaces":"%s","nft":"%s","nft_available":%s,"file":"%s","generated":"%s"}\n' \
+				printf '{"ok":true,"enabled":%s,"state":"%s","port":%s,"fwmark":%s,"route_table":%s,"interfaces":"%s","ipv6_policy":"%s","ipv6_state":"%s","nft":"%s","nft_available":%s,"file":"%s","generated":"%s"}\n' \
 					"$(ep_bool "$(ep_get transparent enabled 0)")" \
 					"$(ep_json_escape "$state")" \
 					"$(ep_tproxy_port)" \
 					"$(ep_transparent_fwmark)" \
 					"$(ep_transparent_route_table)" \
 					"$(ep_json_escape "$(ep_transparent_ifaces)")" \
+					"$(ep_json_escape "$(ep_ipv6_policy)")" \
+					"$(ep_json_escape "$(ep_ipv6_state)")" \
 					"$(ep_json_escape "$EP_NFT_BIN")" \
 					"$([ "$state" = "unsupported" ] && printf 'false' || printf 'true')" \
 					"$(ep_json_escape "$EP_NFT_FILE")" \
@@ -420,8 +433,36 @@ cmd_transparent() {
 				printf 'State: %s\n' "$state"
 				printf 'Capture: %s → tproxy 0.0.0.0:%s\n' "$(ep_transparent_ifaces)" "$(ep_tproxy_port)"
 				printf 'Fwmark: %s (route table %s)\n' "$(ep_transparent_fwmark)" "$(ep_transparent_route_table)"
+				printf 'IPv6 policy: %s (%s)\n' "$(ep_ipv6_policy)" "$(ep_ipv6_state)"
 				printf 'Rule file: %s\n' "$EP_NFT_FILE"
 			fi
+			;;
+		audit)
+			_report="$(ep_transparent_audit)"
+			_rc=$?
+			if [ "$JSON" = "1" ]; then
+				_items=""
+				_ok=true
+				while IFS="$(printf '\t')" read -r _st _name _detail; do
+					[ -n "$_st" ] || continue
+					[ "$_st" = "fail" ] && _ok=false
+					_items="${_items}${_items:+,}{\"status\":\"$(ep_json_escape "$_st")\",\"check\":\"$(ep_json_escape "$_name")\",\"detail\":\"$(ep_json_escape "$_detail")\"}"
+				done <<EOF
+$_report
+EOF
+				printf '{"ok":%s,"checks":[%s]}\n' "$_ok" "$_items"
+			else
+				printf '%s\n' "$_report" | while IFS="$(printf '\t')" read -r _st _name _detail; do
+					[ -n "$_st" ] || continue
+					case "$_st" in
+						ok) _tag="[ok]  " ;;
+						warn) _tag="[warn]" ;;
+						*) _tag="[FAIL]" ;;
+					esac
+					printf '%s %s: %s\n' "$_tag" "$_name" "$_detail"
+				done
+			fi
+			[ "$_rc" = "0" ] || return 1
 			;;
 		apply)
 			if ep_transparent_apply; then
@@ -522,6 +563,7 @@ case "$CMD" in
 			apply) cmd_transparent apply ;;
 			remove|down|off) cmd_transparent remove ;;
 			status|"") cmd_transparent status ;;
+			audit|check) cmd_transparent audit ;;
 			*) echo "Unknown transparent action: $SUB" >&2; exit 2 ;;
 		esac
 		;;
