@@ -1,0 +1,88 @@
+name: p1once
+on:
+  push:
+    paths:
+      - .github/workflows/p1once.yml
+permissions:
+  contents: write
+  issues: write
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: apply the 0.8.0 code patch and report the result
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          (
+          set -euo pipefail
+          cat > /tmp/p1.patch.xz.b64 <<'B64'
+          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
+          B64
+          base64 -d /tmp/p1.patch.xz.b64 > /tmp/p1.patch.xz
+          xz -dc /tmp/p1.patch.xz > /tmp/p1.patch
+          sha256sum /tmp/p1.patch
+          git apply --verbose /tmp/p1.patch
+          git -c user.name='EasyProxy Bot' -c user.email='bot@users.noreply.github.com' commit -am 'fix: back up the config outside the state dir; bump 0.8.0'
+          git push origin HEAD:main
+          echo "pushed: $(git rev-parse HEAD)"
+          ) > /tmp/log.txt 2>&1
+          RC=$?
+          cat /tmp/log.txt
+          echo "rc=$RC" >> /tmp/log.txt
+          gh issue create --repo "$GITHUB_REPOSITORY" --title "p1once result" --body-file /tmp/log.txt || true
+          exit $RC
