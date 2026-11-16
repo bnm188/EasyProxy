@@ -31,9 +31,9 @@ jobs:
             rsync unzip zlib1g-dev file wget curl zstd
 
       # Every behaviour this release ships is guarded by the repo suites, so a
-      # build that would publish a broken package fails here instead. Each
-      # failure is emitted as an ::error annotation naming the suite, which is
-      # visible without signing in and points straight at what broke.
+      # build that would publish a broken package fails here instead. The
+      # failing assertions are pasted into the ::error annotation, which is
+      # readable without signing in.
       - name: Run package test suites
         run: |
           set -uo pipefail
@@ -44,9 +44,10 @@ jobs:
             if sh "$t" > "$log" 2>&1; then
               tail -n 1 "$log"
             else
-              failed="$failed ${t##*/}"
-              echo "::error file=$t,line=1,title=Suite failed::${t} failed. Last lines:"
-              tail -n 30 "$log" | sed 's/^/  | /'
+              name="${t##*/}"
+              failed="$failed $name"
+              bad="$(grep -E 'FAIL|结果' "$log" | head -n 12 | tr '\n' ';' | cut -c1-900)"
+              echo "::error title=$name failed::$bad"
               echo "::group::Full log of $t"
               cat "$log"
               echo "::endgroup::"
