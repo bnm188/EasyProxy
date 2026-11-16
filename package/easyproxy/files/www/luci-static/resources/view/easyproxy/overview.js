@@ -59,6 +59,11 @@ return view.extend({
 		var generated = d.generated || '—';
 		var validOk = !!(v && v.ok);
 		var messages = (v && v.messages) || [];
+		var runtime = d.runtime || 'stopped';
+		var runPid = Number(d.runtime_pid || 0);
+		var runUp = Number(d.runtime_uptime || 0);
+		var nodesEnabled = Number(d.nodes_enabled || 0);
+		var configState = d.config_state || 'missing';
 
 		var css = `
 		.ep-shell {
@@ -282,6 +287,13 @@ return view.extend({
 			]);
 		}
 
+		function fmtDuration(sec) {
+			if (!sec) return '—';
+			if (sec < 60) return sec + ' 秒';
+			if (sec < 3600) return Math.floor(sec / 60) + ' 分';
+			return Math.floor(sec / 3600) + ' 小时 ' + Math.floor((sec % 3600) / 60) + ' 分';
+		}
+
 		function panel(title, content) {
 			return E('div', { 'class': 'ep-card' }, [
 				E('div', { 'class': 'ep-title' }, title),
@@ -307,17 +319,24 @@ return view.extend({
 			}))
 		]);
 
-		var lightClass = !ok ? 'off' : (enabled && binaryOk ? 'on' : (enabled ? 'warn' : 'off'));
+		var lightClass = !ok ? 'off'
+			: (runtime === 'running' ? 'on' : (enabled ? 'warn' : 'off'));
 		var lightText = !ok ? '状态读取失败'
-			: (enabled ? (binaryOk ? '已启用 · 内核待接入' : '已启用 · 内核未安装') : '未启用');
+			: (runtime === 'running' ? '运行中'
+				: (enabled ? (binaryOk ? '已启用 · 未运行' : '已启用 · 内核未安装') : '未启用'));
 
 		var engineLabel = engine === 'none' ? '未选择' : engine;
 		var engineNote = engine === 'none' ? '尚未选择内核'
 			: (binaryOk ? '二进制已就绪' : '二进制未安装');
 
 		var serviceNote = enabled
-			? (binaryOk ? '配置已启用 · 内核待接入' : '配置已启用 · 内核未安装')
+			? (runtime === 'running' ? ('已运行 ' + fmtDuration(runUp))
+				: (binaryOk ? '内核已就绪 · 待启动' : '内核未安装'))
 			: '配置未启用';
+
+		var serviceValue = enabled ? (runtime === 'running' ? '运行中' : '已停止') : '未启用';
+		var configText = configState === 'ok' ? '已生成且有效'
+			: (configState === 'invalid' ? '已生成但校验失败' : '尚未生成');
 
 		var chinaText = china === 'direct' ? '直连 DIRECT' : (china ? china.toUpperCase() : '—');
 		var failNote = failClosed ? '故障保护：开启' : '故障保护：关闭';
@@ -351,7 +370,7 @@ return view.extend({
 			E('div', {}, (failClosed ? '✓ ' : '⚠ ') + '故障保护：' + (failClosed ? '已开启（fail-closed）' : '已关闭（fail-open）')),
 			E('div', {}, (enabled ? '✓ ' : '⚠ ') + '总开关：' + (enabled ? '已启用' : '未启用')),
 			E('div', { 'class': 'ep-muted' },
-				'以上取值读取自 /etc/config/easyproxy；Stage 2 尚无实际路由进程。')
+				'以上取值读取自 /etc/config/easyproxy；Stage 3 已管理内核进程，分流规则在 Stage 4 生效。')
 		]);
 
 		var checkLines = messages.length
@@ -362,6 +381,9 @@ return view.extend({
 			E('div', { 'class': validOk ? 'ep-green' : 'ep-amber' },
 				(validOk ? '✓ 配置校验通过' : '⚠ 配置校验未通过')),
 			checkLines,
+			E('div', {}, (runtime === 'running' ? '✓ ' : '⚠ ') + '运行状态：'
+				+ (runtime === 'running' ? ('运行中 · PID ' + runPid + ' · 已运行 ' + fmtDuration(runUp)) : '未运行')),
+			E('div', {}, (configState === 'ok' ? '✓ ' : '⚠ ') + '内核配置：' + configText),
 			E('div', {}, '版本：' + version + ' · Stage ' + stage),
 			E('div', {}, '数据时间：' + generated),
 			E('div', { 'class': 'ep-muted' },
@@ -373,7 +395,7 @@ return view.extend({
 			E('div', { 'class': 'ep-empty' }, [
 				E('span', {}, '▤'),
 				E('div', {}, '暂无流量采集数据'),
-				E('div', { 'class': 'ep-muted', 'style': 'margin-top:0' }, 'Stage 2 未接管代理进程，接入内核后才会产生真实曲线')
+				E('div', { 'class': 'ep-muted', 'style': 'margin-top:0' }, 'Stage 3 已接管内核进程，流量曲线待后续阶段接入')
 			])
 		]);
 
@@ -402,11 +424,12 @@ return view.extend({
 						E('p', {}, '为您的网络连接提供更智能的代理管理方案')
 					]),
 					E('div', { 'class': 'ep-grid' }, [
-						card('●', '代理服务', enabled ? '已启用' : '未启用', serviceNote,
-							enabled ? (binaryOk ? 'ep-green' : 'ep-amber') : 'ep-gray'),
+						card('●', '代理服务', serviceValue, serviceNote,
+							runtime === 'running' ? 'ep-green' : (enabled ? 'ep-amber' : 'ep-gray')),
 						card('▣', '当前内核', engineLabel, engineNote,
 							binaryOk ? 'ep-blue' : 'ep-amber'),
-						card('◆', '节点数量', nodes + ' 个', nodes > 0 ? '来自 UCI 配置' : '尚未配置节点', 'ep-blue'),
+						card('◆', '节点数量', nodesEnabled + ' / ' + nodes,
+							nodes > 0 ? ('已启用 ' + nodesEnabled + ' 个') : '尚未配置节点', 'ep-blue'),
 						card('▥', '中国流量策略', chinaText, failNote,
 							china === 'direct' ? 'ep-green' : 'ep-amber')
 					]),
@@ -419,7 +442,7 @@ return view.extend({
 						panel('配置与校验', noticePanel)
 					]),
 					E('div', { 'class': 'ep-foot' },
-						'EasyProxy · 智能代理管理系统 · Stage ' + stage + ' 只读数据版本')
+						'EasyProxy · 智能代理管理系统 · Stage ' + stage + ' · 配置：' + d.config_path)
 				])
 			])
 		]);
