@@ -1,0 +1,14 @@
+name: kwrt-fix-once
+on:
+  push:
+    paths:
+      - .github/workflows/kwrt-fix-once.yml
+permissions:
+  contents: write
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: apply the installer patch and remove this workflow
+        run: "echo placeholder"
