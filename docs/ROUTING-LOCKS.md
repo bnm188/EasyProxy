@@ -1,4 +1,4 @@
-# Locked routing behaviour (0.6.0)
+# Locked routing behaviour (0.7.0)
 
 These three rules cannot be turned off from LuCI, UCI, the CLI or the config
 template. Editing `/etc/config/easyproxy` has no effect on them; it only shows up

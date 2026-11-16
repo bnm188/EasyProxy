@@ -117,5 +117,5 @@
 | 003 | 2026-11-16 | [003-2026-11-16-readme-chinese.md](003-2026-11-16-readme-chinese.md) | README 全面重写为中文，按实测能力/限制分栏 | `e5881db` |
 | 004 | 2026-11-17 | [004-2026-11-17-stage9-p1-fixes-and-release-gate.md](004-2026-11-17-stage9-p1-fixes-and-release-gate.md) | 第一阶段（Stage 9）：D1/D2/D3 与 ACL、拒装、升级安全、tag-only 发布、CI 真内核 + SKIP 门禁；504 项全绿，CI run #123 绿（#116~#122 全红已如实记录） | `4b3ffea` `f4f8c93` `2feefb5` `ef89792` `f5774ba` `e9ca749` `08086d8` `1252a15` `1ed6f6e` |
 | 005 | 2026-11-17 | [005-2026-11-17-acceptance-cleanup.md](005-2026-11-17-acceptance-cleanup.md) | 004 验收遗留清理：ACL 从 `/bin/sh` 收到固定 CLI、测试计数唯一来源（12 套件 574 项）、发布制度（版本递增/真 Release/IPK+SHA256/中文三节/保留 20）、Stage 9 口径统一；CI run 43912864440 绿（发布/清理步骤因非 tag 而 skipped） | `f5bf862` `8b26259` `faedfae` `aa230be` `65f6416` `6286cb6` `9cf976f` `050da3a` `58b0fb0` `769f0e6` `4e616b8` |
-
+| 006 | 2026-11-17 | [006-2026-11-17-release-0.7.0.md](006-2026-11-17-release-0.7.0.md) | 0.7.0 正式发布：sing-box 1.10.7→1.14.4（1.14 四处不兼容修复）、dae 复核仍 2.1.2、578 项全绿、真 Release `v0.7.0`（12 项资产、11/11 SHA 本地复核） | `1518343` `144a17a` `4863cd7` |
 新增报告时，在提交该报告的同一个 commit 里把索引行补上。

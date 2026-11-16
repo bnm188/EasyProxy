@@ -2,11 +2,11 @@
 
 EasyProxy 是给 ImmortalWrt 用的模块化代理管理包：一条 SSH 命令装好「面板 + sing-box + dae」三件套，装完在 LuCI 的「服务 → EasyProxy」里用中文面板管理节点、分流、透明代理和维护。
 
-- 当前版本：**0.6.0**
+- 当前版本：**0.7.0**（Release `v0.7.0`）
 - 适用固件：ImmortalWrt（`opkg` 与 `apk` 两种都支持，也支持 rootfs 直接展开）
 - 内核架构：`x86_64`、`aarch64_cortex-a53`、`arm_cortex-a7_neon-vfpv4`
 - 面板：10 个中文页面
-- 测试：9 套 **471** 项，另有真实 `sing-box 1.10.7` 校验路径
+- 测试：12 套 **578** 项（`tests/run-all.sh` 是唯一计数来源），CI 会下载并校验 pinned **sing-box 1.14.4** 后跑真实内核 `check`
 
 ---
 
@@ -26,7 +26,7 @@ EasyProxy 是给 ImmortalWrt 用的模块化代理管理包：一条 SSH 命令�
 | 升级 | 三组件各自独立升级；内核升级后不能运行会自动回滚旧二进制 |
 | 内核切换基础 | 已装 dae，适配器接口在（但见下方“还不能”） |
 
-### 还不能的（0.6.0 明确不支持）
+### 还不能的（0.7.0 明确不支持）
 
 | 缺什么 | 现状 | 计划 |
 |---|---|---|
@@ -38,7 +38,7 @@ EasyProxy 是给 ImmortalWrt 用的模块化代理管理包：一条 SSH 命令�
 | `ssr://` 链接 | **不支持**，会返回 `unsupported share link scheme: ssr` | — |
 | 带宽/丢包测速 | `node test` 只做一次 TCP 握手，QUIC 协议（hysteria2/tuic）会误报不可达 | Stage 13 |
 | 真机验收记录 | 透明代理、tproxy 转发、LuCI 渲染只在沙箱验证过，仓库里没有真机验收记录 | Stage 15 |
-| 发布不可变 | 目前每次 push `main` 都会重建并覆盖 `v0.6.0` 的资产 | Stage 9 |
+| 发布不可变 | **已实现**：发布只走 `v*` tag 或一次性受控发布，`v0.7.0` 是一次构建一次性写入，未覆盖任何旧资产 | 完成（Stage 9） |
 
 进度与证据见 [`docs/PROJECT-STATUS.md`](docs/PROJECT-STATUS.md)，路线见 [`docs/DEVELOPMENT-PLAN.md`](docs/DEVELOPMENT-PLAN.md)，历次工作报告见 [`docs/reports/`](docs/reports/)。
 
@@ -162,7 +162,7 @@ easyproxy restart
 
 - `route.rules`：私网 IP + 大陆规则集（geosite-cn / geoip-cn）→ `direct`；`route.final` → `proxy`。
 - DNS：`dns-local`（223.5.5.5，走 direct）与 `dns-remote`（DoH，走 proxy）分离；`.cn`、geosite-cn、私网走本地解析，其余走远端。
-- 规则集用**本地文件**（`type: local`），不用 `type: remote`。原因很实际：remote 型规则集在引擎启动时下载，下载失败会让整个进程 `initialize rule-set` 直接退出，路由器断网时反而起不来（对 1.10.7 实测确认）。
+- 规则集用**本地文件**（`type: local`），不用 `type: remote`。原因很实际：remote 型规则集在引擎启动时下载，下载失败会让整个进程 `initialize rule-set` 直接退出，路由器断网时反而起不来（对 1.14.4 实测确认）。
 
 规则集缺失时的行为：
 
@@ -344,7 +344,7 @@ scripts/
 ├── make-kernel-ipk.sh   # 打 sing-box_<ver>_<arch>.ipk / dae_<ver>_<arch>.ipk
 ├── install.sh           # 一键安装：面板 + 两内核，含 upgrade / status
 └── uninstall.sh         # 一键卸载：备份、--purge、--keep-kernels
-tests/                   # 9 套 471 项
+tests/                   # 12 套 578 项
 docs/
 ├── PROJECT-STATUS.md    # 真实完成度
 ├── DEVELOPMENT-PLAN.md  # 阶段路线
@@ -385,7 +385,7 @@ EP_SING_BOX_BIN=/usr/bin/sing-box sh tests/test-runtime.sh
 
 CI 用 `.github/workflows/build.yml`：下载官方 ImmortalWrt SDK（25.12.2，x86-64）→ 跑仓库测试套件（失败即停，不会发布）→ 编译原生包 → 用上游归档打三架构的 sing-box / dae 内核包（各自校验固定 sha256）→ 写 `KERNEL-VERSIONS` → 上传 `easyproxy-immortalwrt-25.12.2` artifact → 发布。
 
-**CI 的已知短板（如实写）**：CI 不安装 `sing-box`，`test-routing.sh` 里真实内核校验那条会走“跳过”分支且被计为通过，所以 CI 的 471 项只能证明配置形状与脚本逻辑，不能证明“内核接受这份配置”。这件事已列入 Stage 9。
+**CI 的内核校验（如实写）**：CI 会下载官方 `sing-box 1.14.4` amd64 归档并**先校验 pinned SHA256**，再把二进制路径只注入 routing/runtime/transparent/engine 四套，所以那 578 项里的真实 `check` 是真跑过的；下载或校验失败会让整次构建红，不会降级成「跳过」。
 
 ---
 
@@ -393,18 +393,18 @@ CI 用 `.github/workflows/build.yml`：下载官方 ImmortalWrt SDK（25.12.2，
 
 | 资产 | 用途 |
 |---|---|
-| `easyproxy_0.6.0-1_all.ipk` | 任意 opkg 固件，架构无关 |
-| `easyproxy_0.6.0-1_x86_64.ipk` | 拒绝 `Architecture: all` 的 opkg 固件（x86_64） |
-| `easyproxy-0.6.0-r1.apk` | 用 `apk` 的 ImmortalWrt 25.x 镜像 |
-| `easyproxy-0.6.0-rootfs.tar.gz` | 没有匹配包管理器时直接解到 `/` |
-| `sing-box_1.10.7_<arch>.ipk` | sing-box 内核，按架构分包 |
+| `easyproxy_0.7.0-1_all.ipk` | 任意 opkg 固件，架构无关 |
+| `easyproxy_0.7.0-1_x86_64.ipk` | 拒绝 `Architecture: all` 的 opkg 固件（x86_64） |
+| `easyproxy-0.7.0-r1.apk` | 用 `apk` 的 ImmortalWrt 25.x 镜像 |
+| `easyproxy-0.7.0-rootfs.tar.gz` | 没有匹配包管理器时直接解到 `/` |
+| `sing-box_1.14.4_<arch>.ipk` | sing-box 内核（1.14.4），按架构分包 |
 | `dae_2.1.2_<arch>.ipk` | dae 内核（二进制 + `/usr/share/dae` 路由数据） |
 | `SHA256SUMS` | 上面的 sha256，安装器逐项校验 |
 | `KERNEL-VERSIONS` | 本版本固定了哪些内核版本与架构 |
 
 内核不能塞进 `_all.ipk`：那个包架构无关，塞了 amd64 二进制就会装到 ARM 路由器上。三个包也意味着三者可以分别升级、分别卸载，安装器就是按这个设计的。
 
-**当前发布方式的问题**：每次推 `main`（哪怕只改文档）都会触发 CI 重建并 `--clobber` 覆盖 `v0.6.0` 的整组资产，所以同一个版本号在不同时间下载到的字节可能不同。修复计划见 Stage 9（tag 触发构建 + 不可变发布）。
+**发布方式（已修）**：`main` 上的提交只产出 artifact，不再写 Release；正式发布只由 `v*` tag（`build.yml` 的发布步骤）或一次性受控发布完成，同一版本重复发布直接失败、不 `--clobber`。`v0.7.0` 就是这个制度下第一次真实发布：12 项资产，本地把 11 个文件按 `SHA256SUMS` 逐个复核全部通过。
 
 本地构建：
 
@@ -442,7 +442,7 @@ sh scripts/make-kernel-ipk.sh dae x86_64 dist
 | 6 | 内核注册表、节点/订阅导入、维护 CLI、10 页面板 | 完成（0.6.0） |
 | 7 | 编译/安装/卸载验证：双 ipk、CI 门禁、架构感知安装器、真机清单 | 部分完成（安装与内核回滚已验；面板回滚、升级前备份、磁盘/兼容检查、统一入口未做） |
 | 8 | 文档与报告制度 | 完成 |
-| 9 | 发布合规：tag 驱动、不可变、CI 真内核校验、测试报告产物 | 未开始 |
+| 9 | 发布合规：不可变发布、CI 真内核校验、测试报告产物、真 Release | 完成（0.7.0 首次真实发布；`build.yml` 的 tag 原生路径尚未实跑） |
 | 10 | 唯一入口 `easyproxy-manager.sh`（9 项菜单） | 未开始 |
 | 11 | 无缝切换（clash API，不重启内核） | 未开始 |
 | 12 | 10 个平台分流 + 可绑定地区组 | 未开始 |

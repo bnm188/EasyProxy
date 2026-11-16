@@ -40,13 +40,13 @@ restarted, and `easyproxy status` prints a table.
 easyproxy status
 ```
 
-Expected: `Version: 0.6.0`, `Stage: 6`, `Enabled: 0`, engine `sing-box`,
+Expected: `Version: 0.7.0`, `Stage: 6`, `Enabled: 0`, engine `sing-box`,
 `China policy: direct`, `Fail closed: 1`. No runtime pid yet — the service is
 installed, not started.
 
 Failure to check: if `Architecture` is refused by opkg, install the x86_64 asset
-instead: download `easyproxy_0.6.0-1_x86_64.ipk` from the release page and run
-`opkg install --force-reinstall /tmp/easyproxy_0.6.0-1_x86_64.ipk`.
+instead: download `easyproxy_0.7.0-1_x86_64.ipk` from the release page and run
+`opkg install --force-reinstall /tmp/easyproxy_0.7.0-1_x86_64.ipk`.
 
 ## 2. Panel
 
@@ -200,7 +200,7 @@ components:
 Check each piece separately:
 
 ```sh
-sing-box version                 # sing-box version 1.10.7
+sing-box version                 # sing-box version 1.14.4
 dae --version                    # dae version v2.1.2
 ls -l /usr/share/dae             # geoip.dat, geosite.dat for dae
 ls /etc/easyproxy/owned          # sing-box, dae - proof this installer put them there
@@ -214,7 +214,7 @@ Then the upgrade path, on a router where an older kernel is installed:
 wget -qO- .../install.sh | sh -s upgrade
 ```
 
-Expected: a `component / current / newest` table, `sing-box: 1.9.0 -> 1.10.7`
+Expected: a `component / current / newest` table, `sing-box: 1.10.7 -> 1.14.4`
 style lines only for the components that changed, `upgrade done` and exit 0.
 `/etc/easyproxy/backup/<kernel>.old` holds the previous binary. If the new kernel
 cannot run, the old one is restored and the command exits non-zero with
