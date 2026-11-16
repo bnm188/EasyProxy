@@ -2,6 +2,8 @@ config global 'main'
 	option enabled '0'
 	option engine 'none'
 	option log_level 'notice'
+	option listen '127.0.0.1'
+	option listen_port '7890'
 
 config routing 'routing'
 	option china_policy 'direct'
@@ -15,3 +17,20 @@ config engine 'dae'
 config engine 'sing_box'
 	option config_file '/etc/easyproxy/sing-box.json'
 	option binary '/usr/bin/sing-box'
+
+# Node sections are optional. `easyproxy config generate` turns every enabled
+# "config node" section into one sing-box outbound and puts them behind a
+# latency-tested "proxy" group:
+#
+# config node 'hk'
+#	option name 'hk-01'
+#	option type 'shadowsocks'    # shadowsocks | vmess | trojan | socks | http
+#	option server '203.0.113.10'
+#	option port '8388'
+#	option method 'aes-256-gcm'  # shadowsocks only
+#	option password 'secret'     # shadowsocks / trojan / socks / http
+#	option uuid 'uuid-here'      # vmess only
+#	option alter_id '0'          # vmess only
+#	option tls '1'               # trojan / vmess
+#	option sni 'example.com'
+#	option enabled '1'
