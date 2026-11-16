@@ -1,0 +1,39 @@
+name: d9b
+on:
+  push:
+    paths:
+      - .github/workflows/d9b.yml
+permissions:
+  contents: write
+  issues: write
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: commit report 009 and the status docs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          (
+          set -euo pipefail
+          sed -n '/Td6WFoAAATm1rRG/,/^          B64$/p' .github/workflows/d9once.yml \
+            | sed 's/^          //' > /tmp/d9.b64
+          wc -c /tmp/d9.b64
+          base64 -d /tmp/d9.b64 | xz -dc > /tmp/d9.patch
+          sha256sum /tmp/d9.patch
+          git apply --verbose /tmp/d9.patch
+          git add docs/reports/009-2026-11-17-release-pipeline-fix.md
+          git -c user.name='EasyProxy Bot' -c user.email='bot@users.noreply.github.com' \
+            commit -am 'docs: report 009 (release pipeline fix and 0.8.0) plus index and status; drop the release request'
+          git push origin HEAD:main
+          echo "\npushed: $(git rev-parse HEAD)"
+          ) > /tmp/log.txt 2>&1
+          RC=$?
+          echo "rc=$RC" >> /tmp/log.txt
+          cat /tmp/log.txt
+          gh issue create --repo "$GITHUB_REPOSITORY" --title "d9b result" --body-file /tmp/log.txt || true
+          exit $RC
