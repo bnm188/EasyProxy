@@ -119,7 +119,8 @@ gen; rc=$?
 [ "$rc" -eq 0 ] && ok "生成成功（china=direct）" || no "生成成功（china=direct）" "rc=$rc $(cat "$SB/g.err")"
 
 json_py "import json,sys;d=json.load(open('$CFG'));print(len(d.get('route',{}).get('rules',[])))" > "$SB/n1"
-[ "$(cat "$SB/n1")" = "2" ] && ok "route.rules 有 2 条（内网直连 + 大陆直连）" || no "route.rules 有 2 条" "实际 $(cat "$SB/n1") 条"
+# 6 = 内网直连 + 节点服务器直连（防环路）+ YouTube/Netflix/TikTok 分流 + 大陆直连
+[ "$(cat "$SB/n1")" = "6" ] && ok "route.rules 有 6 条（内网直连 + 节点服务器直连 + 三个平台分流 + 大陆直连）" || no "route.rules 有 6 条" "实际 $(cat "$SB/n1") 条"
 
 json_py "import json,sys;d=json.load(open('$CFG'));rs=d['dns']['rules'];print('ip_is_private' in rs[0], '.lan' in rs[1]['domain_suffix'], any('.cn' in r.get('domain_suffix',[]) for r in rs))" > "$SB/n6"
 [ "$(cat "$SB/n6")" = "True True True" ] && ok "分流模式下 DNS 先内网后大陆，其余走远端" || no "分流模式 DNS 顺序" "$(cat "$SB/n6")"
@@ -181,7 +182,7 @@ rm -f "$SB/rules/"*.srs
 gen; rc=$?
 [ "$rc" -eq 0 ] && ok "规则集下载失败仍能生成配置" || no "规则集下载失败仍能生成配置" "rc=$rc $(cat "$SB/g.err")"
 json_py "import json,sys;d=json.load(open('$CFG'));print(len(d['route']['rules']),d['route']['final'],len(d['dns']['servers']),d['dns']['final'])" > "$SB/w1"
-[ "$(cat "$SB/w1")" = "1 direct 1 dns-local" ] && ok "fail_closed=1：缺规则集时禁止全局代理，全部直连" || no "fail_closed=1 缺规则集时全部直连" "$(cat "$SB/w1")"
+[ "$(cat "$SB/w1")" = "2 direct 1 dns-local" ] && ok "fail_closed=1：缺规则集时禁止全局代理，全部直连" || no "fail_closed=1 缺规则集时全部直连" "$(cat "$SB/w1")"
 grep -qi 'pinned to direct' "$SB/g.err" && grep -qi 'nothing is proxied' "$SB/g.err" \
 	&& ok "缺规则集时警告说明已钉死直连、境外暂时不通" || no "警告说明钉死直连" "$(cat "$SB/g.err")"
 out="$("$EP" status --json)"
@@ -193,7 +194,7 @@ sed -i 's/easyproxy.routing.fail_closed=1/easyproxy.routing.fail_closed=0/' "$SB
 gen; rc=$?
 [ "$rc" -eq 0 ] && ok "fail_closed=0 时仍能生成配置" || no "fail_closed=0 时仍能生成配置" "rc=$rc $(cat "$SB/g.err")"
 json_py "import json,sys;d=json.load(open('$CFG'));print(len(d['route']['rules']),d['route']['final'],len(d['dns']['servers']),d['dns']['final'])" > "$SB/w3"
-[ "$(cat "$SB/w3")" = "1 direct 1 dns-local" ] && ok "fail_closed=0 被忽略：缺规则集时仍然全部直连（不降级全代理）" || no "fail_closed=0 仍然全部直连" "$(cat "$SB/w3")"
+[ "$(cat "$SB/w3")" = "2 direct 1 dns-local" ] && ok "fail_closed=0 被忽略：缺规则集时仍然全部直连（不降级全代理）" || no "fail_closed=0 仍然全部直连" "$(cat "$SB/w3")"
 grep -qi 'fail_closed' "$SB/g.err" && ok "忽略 fail_closed=0 时给出警告" || no "忽略 fail_closed=0 时给出警告" "$(cat "$SB/g.err")"
 out="$("$EP" validate --json)"; rc=$?
 [ "$rc" -eq 1 ] && ok "validate 拒绝 fail_closed=0" || no "validate 拒绝 fail_closed=0" "rc=$rc"
