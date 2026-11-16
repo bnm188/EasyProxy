@@ -1,7 +1,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=easyproxy
-PKG_VERSION:=0.5.0
+PKG_VERSION:=0.6.0
 PKG_RELEASE:=1
 
 PKG_LICENSE:=MIT
@@ -22,6 +22,8 @@ define Package/easyproxy/description
  Stage 5 generates a split-routing sing-box config with local rule sets,
  can capture LAN traffic through an nftables tproxy table (fully reversible),
  supervises the runtime through procd and shows live state in the panel.
+ Stage 6 keeps LAN traffic direct and makes fail_closed real: when the CN rule
+ sets are missing nothing is proxied instead of silently going full-tunnel.
 endef
 
 define Package/easyproxy/conffiles
