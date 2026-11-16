@@ -1,7 +1,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=easyproxy
-PKG_VERSION:=0.1.0
+PKG_VERSION:=0.2.0
 PKG_RELEASE:=1
 
 PKG_LICENSE:=MIT
@@ -13,13 +13,18 @@ define Package/easyproxy
   SECTION:=utils
   CATEGORY:=Utilities
   TITLE:=EasyProxy proxy manager
-  DEPENDS:=+uci
+  DEPENDS:=+uci +luci-base
   PKGARCH:=all
 endef
 
 define Package/easyproxy/description
  Modular proxy management framework for ImmortalWrt.
- Stage 1 provides configuration, validation and guarded service interfaces.
+ Stage 2 exposes a read-only LuCI overview fed by real
+ "easyproxy status --json" data; no proxy runtime yet.
+endef
+
+define Package/easyproxy/conffiles
+/etc/config/easyproxy
 endef
 
 define Build/Compile
@@ -36,6 +41,12 @@ define Package/easyproxy/install
 	$(INSTALL_DATA) ./files/usr/lib/easyproxy/common.sh $(1)/usr/lib/easyproxy/common.sh
 	$(INSTALL_DATA) ./files/usr/lib/easyproxy/adapters/dae.sh $(1)/usr/lib/easyproxy/adapters/dae.sh
 	$(INSTALL_DATA) ./files/usr/lib/easyproxy/adapters/sing-box.sh $(1)/usr/lib/easyproxy/adapters/sing-box.sh
+	$(INSTALL_DIR) $(1)/www/luci-static/resources/view/easyproxy
+	$(INSTALL_DATA) ./files/www/luci-static/resources/view/easyproxy/overview.js $(1)/www/luci-static/resources/view/easyproxy/overview.js
+	$(INSTALL_DIR) $(1)/usr/share/luci/menu.d
+	$(INSTALL_DATA) ./files/usr/share/luci/menu.d/luci-app-easyproxy.json $(1)/usr/share/luci/menu.d/luci-app-easyproxy.json
+	$(INSTALL_DIR) $(1)/usr/share/rpcd/acl.d
+	$(INSTALL_DATA) ./files/usr/share/rpcd/acl.d/luci-app-easyproxy.json $(1)/usr/share/rpcd/acl.d/luci-app-easyproxy.json
 endef
 
 $(eval $(call BuildPackage,easyproxy))
