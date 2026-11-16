@@ -11,7 +11,7 @@
 
 | 文件 | 变更类型 | 说明 |
 |---|---|---|
-| `package/easyproxy/files/usr/lib/easyproxy/traffic.sh` | 修改 | D1：`tx="$1" + "0"` → `tx="${10}"`（36 行） |
+| `package/easyproxy/files/usr/lib/easyproxy/traffic.sh` | 修改 | D1：`tx="$10"` → `tx="${10}"`（36 行） |
 | `package/easyproxy/files/www/luci-static/resources/easyproxy/app.js` | 修改 | D2 错误卡片 + D3 dae 引擎不可选（870 行） |
 | `package/easyproxy/files/usr/share/rpcd/acl.d/luci-app-easyproxy.json` | 修改 | D9：ACL 收窄（31 行） |
 | `scripts/install.sh` | 修改 | D5 拒装、D7 备份/磁盘/兼容/回滚（999 → 1136 行） |
@@ -33,8 +33,8 @@
 ### `package/easyproxy/files/www/luci-static/resources/easyproxy/app.js`
 
 - 改前：总览错误分支调用 `herrCard(...)`（该函数不存在，只有 `errCard`，第 81 行）；内核选择直接写 UCI，dae 可选。
-- 改后：错误分支改用 `errCard`；新增顶层 `function saveEngine(pick)`（第 89 行），`pick === 'dae'` 时 `notify('dae 适配器开发中，暂不可选：请继续使用 sing-box', 'error')` 并拒绍保存（第 91 行）；dae 的 `<option>` 带 `disabled: 'disabled'`；保存按钮改为 `return saveEngine(valOf('ep-engine'))`。
-- 为什么改：D2 状态读取失败时抛 `ReferenceError`，错误卡片永久不显示（P1）；D3 保存 dae 后 `generate`/`start` 都拒绍，一键把可用服务变不可用（P1）。dae 适配器仍是 `dev`（`dae_run` 返回 2），面板先挡住入口，能力不变。
+- 改后：错误分支改用 `errCard`；新增顶层 `function saveEngine(pick)`（第 89 行），`pick === 'dae'` 时 `notify('dae 适配器开发中，暂不可选：请继续使用 sing-box', 'error')` 并拒绝保存（第 91 行）；dae 的 `<option>` 带 `disabled: 'disabled'`；保存按钮改为 `return saveEngine(valOf('ep-engine'))`。
+- 为什么改：D2 状态读取失败时抛 `ReferenceError`，错误卡片永久不显示（P1）；D3 保存 dae 后 `generate`/`start` 都拒绝，一键把可用服务变不可用（P1）。dae 适配器仍是 `dev`（`dae_run` 返回 2），面板先挡住入口，能力不变。
 
 ### `package/easyproxy/files/usr/share/rpcd/acl.d/luci-app-easyproxy.json`
 
@@ -72,7 +72,7 @@
 
 ### `tests/test-regressions.sh`（新增）
 
-- 30 项断言，覆盖 D1（tx/rx 与 `/proc/net/dev` 对照）、D2（`herrCard` 不再出现、`errCard` 有定义、`node --check`）、D3（dae option disabled、拦截提示、`saveEngine` 集中保存）、D9（解析 ACL JSON 校验 exec 白名单/无通配/无 config 写）、D5（缺 `SHA256SUMS` 非 0 退出 + 写明 refusing + 未交给 opkg）、D7a（磁盘不足非 0 + 报 disk）、D7b（RandomOS 拒绍、ImmortalWrt 25.12.2 通过）、D7c（配置被备份、失败后 CLI 与库文件回滚）、D6/D8（无 `--clobber`、无 `release edit`、tag-only、重复发布即失败、真内核下载+校验、内核路径交给套件、不泄漏到 `$GITHUB_ENV`、安装类套件 `env -u`、SKIP 即红）。
+- 30 项断言，覆盖 D1（tx/rx 与 `/proc/net/dev` 对照）、D2（`herrCard` 不再出现、`errCard` 有定义、`node --check`）、D3（dae option disabled、拦截提示、`saveEngine` 集中保存）、D9（解析 ACL JSON 校验 exec 白名单/无通配/无 config 写）、D5（缺 `SHA256SUMS` 非 0 退出 + 写明 refusing + 未交给 opkg）、D7a（磁盘不足非 0 + 报 disk）、D7b（RandomOS 拒绝、ImmortalWrt 25.12.2 通过）、D7c（配置被备份、失败后 CLI 与库文件回滚）、D6/D8（无 `--clobber`、无 `release edit`、tag-only、重复发布即失败、真内核下载+校验、内核路径交给套件、不泄漏到 `$GITHUB_ENV`、安装类套件 `env -u`、SKIP 即红）。
 - 为什么新增：本阶段所有行为都要有可复跑的守卫，且必须先看到失败。
 
 ---
@@ -81,7 +81,7 @@
 
 - 安装器：无校验值/无清单/取不到清单 → 拒装；安装与升级前检查剩余磁盘（默认 64 MB）；检查固件家族与版本（`EP_SKIP_COMPAT=1` 可放行）；升级前打包备份 `/etc/config/easyproxy`；面板包升级失败自动回滚到旧文件。
 - 安装器：`fetch_pinned` 支持按文件内 pin 的 sha256 校验上游内核归档。
-- 面板：dae 入口前置拦截（下拉 disabled + 保存即拒绍并提示），避免把可用服务写入不可用引擎。
+- 面板：dae 入口前置拦截（下拉 disabled + 保存即拒绝并提示），避免把可用服务写入不可用引擎。
 - 发布工程：tag-only 发布；同版本重复发布直接失败；CI 用真内核跑配置检查；SKIP 视为失败；测试日志作为 artifact 上传。
 
 ## 4. 未实现 / 仍缺的功能
