@@ -1,7 +1,7 @@
 #!/bin/sh
 
 EP_CONFIG="easyproxy"
-EP_CONFIG_FILE="/etc/config/easyproxy"
+EP_CONFIG_FILE="${EP_CONFIG_FILE:-/etc/config/easyproxy}"
 EP_VERSION="0.6.0"
 EP_STAGE="6"
 

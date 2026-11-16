@@ -44,9 +44,11 @@ while [ $# -gt 0 ]; do
 	shift
 done
 
-# 1. Stop capturing before anything else disappears.
+# 1. Stop capturing before anything else disappears. `uninstall-clean` only
+# removes EasyProxy's own nftables tables and fwmark rule; stock ImmortalWrt
+# network configuration is never touched.
 if [ -x "$BIN" ]; then
-	"$BIN" transparent remove >/dev/null 2>&1 || true
+	"$BIN" uninstall-clean >/dev/null 2>&1 || "$BIN" transparent remove >/dev/null 2>&1 || true
 fi
 
 # 2. Stop and unregister the service.
@@ -69,7 +71,8 @@ if [ -e /usr/sbin/easyproxy ] || [ -d /usr/lib/easyproxy ]; then
 		/etc/init.d/easyproxy \
 		/www/luci-static/resources/view/easyproxy \
 		/usr/share/luci/menu.d/luci-app-easyproxy.json \
-		/usr/share/rpcd/acl.d/luci-app-easyproxy.json 2>/dev/null || true
+		/usr/share/rpcd/acl.d/luci-app-easyproxy.json \
+		/usr/share/easyproxy 2>/dev/null || true
 fi
 
 # 5. Optional: drop configuration and runtime state.
