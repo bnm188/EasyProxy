@@ -3,11 +3,13 @@
 EasyProxy is a modular proxy-management package for ImmortalWrt, with a Chinese
 LuCI management panel.
 
-## Current stage — Stage 4: split routing and DNS
+## Current stage — Stage 5: transparent capture
 
-Stage 4 turns the generated config into a real split-routing setup: Chinese
-domains and addresses go out through `direct`, everything else falls through to
-the node group, and DNS is split the same way.
+Stage 4 made the generated config do real split routing: Chinese domains and
+addresses go out through `direct`, everything else falls through to the node
+group, DNS split the same way. Stage 5 adds the piece that was deliberately left
+out: LAN traffic is now captured by the router itself, through a TPROXY table of
+its own, and can be rolled back with one command.
 
 | Layer | What exists now |
 |---|---|
@@ -15,15 +17,15 @@ the node group, and DNS is split the same way.
 | Config generation | `easyproxy config generate` → sing-box JSON from `config node` sections, validated by `sing-box check` |
 | Split routing | `route.rules`: private IPs + CN rule sets → `direct`; `route.final` → `proxy` |
 | Rule sets | downloaded once by `config generate` into `rule_set_dir`, then referenced as **local** files |
+| Transparent capture | `table ip easyproxy` (TPROXY → `tproxy-in`) + one policy rule/table; `easyproxy transparent apply` / `remove` |
 | DNS | `dns-local` (domestic, `detour: direct`) + `dns-remote` (DoH, `detour: proxy`); CN names resolve domestically |
 | Runtime | `easyproxy run` (foreground wrapper) supervised by procd with respawn |
-| CLI | `status`, `validate`, `engine`, `config generate`, `start`, `stop`, `restart`, `run`, `log` |
-| LuCI panel | `服务 → EasyProxy → 运行总览` shows runtime, split mode, rule-set state and config state |
+| CLI | `status`, `validate`, `engine`, `config generate`, `start`, `stop`, `restart`, `run`, `log`, `transparent status/apply/remove` |
+| LuCI panel | `服务 → EasyProxy → 运行总览` shows runtime, split mode, rule-set state, capture state and config state |
 
-Stage 4 covers the **sing-box** engine only. Selecting `dae` is accepted by the
-CLI, but `start` refuses it explicitly instead of pretending to run something.
-Transparent proxying (firewall/route table takeover) is deliberately *not* part
-of this stage — see the roadmap.
+Both stages cover the **sing-box** engine only. Selecting `dae` is accepted by
+the CLI, but `start` refuses it explicitly instead of pretending to run
+something.
 
 ### Why rule sets are local files
 
@@ -45,6 +47,44 @@ sing-box 1.10.7). EasyProxy therefore fetches the two `.srs` files during
 The engine start path (`easyproxy run`, and the procd `start_service`) never
 hits the network: downloads only happen in `config generate` / `easyproxy start`.
 
+### Transparent capture
+
+Everything the capture needs lives in **our own namespace**:
+
+| Object | Name | Why |
+|---|---|---|
+| nft table | `table ip easyproxy` | never touches fw4's tables, so removing it cannot damage the router's firewall |
+| chain | `prerouting` (priority `mangle`) | intercepts LAN input before routing |
+| set | `bypass_ipv4` | private ranges + every node server address + `transparent.exclude` |
+| policy rule | `fwmark <mark> lookup <table>` | sends the marked packets back to the local stack |
+| route table | `local default dev lo` | the destination the mark resolves to |
+| generated file | `/etc/easyproxy/nftables.conf` | what actually got loaded, so `nft -f` can be replayed or inspected |
+
+Capture tracer: LAN packet → `prerouting` (only the listed interfaces, bypass
+set and the `mixed` port return early) → `tproxy to :7891` + `meta mark set 1` →
+`tproxy-in` → sniffed domain → split routing from Stage 4.
+
+`easyproxy transparent apply` refuses to run — and applies nothing — when any of
+these is true, because each one would black-hole the LAN:
+
+| Refusal | Reason |
+|---|---|
+| `transparent.enabled=0` | feature is off |
+| no enabled nodes | captured traffic would have nowhere to go |
+| `nft` missing or not runnable | nothing to load the rules with |
+| engine not running | a tproxy rule without a listener drops packets |
+
+Rollback is two deletes plus two `ip` deletes: `easyproxy transparent remove`
+(also invoked automatically by `easyproxy stop` and the init script's
+`stop_service`). It never needs to know what the firewall looked like before.
+
+Kernel note: the tproxy listener needs `CAP_NET_ADMIN` (`IP_TRANSPARENT`). On a
+router the engine runs as root under procd, so this is satisfied; in an
+unprivileged container sing-box exits with
+`configure tproxy TCP listener: operation not permitted` (verified), which means
+the config is correct but the host cannot intercept. `sing-box check` cannot
+detect this — it validates syntax only.
+
 ### Generated config shape
 
 ```json
@@ -62,13 +102,19 @@ hits the network: downloads only happen in `config generate` / `easyproxy start`
     ],
     "final": "dns-remote"
   },
-  "inbounds": [ { "type": "mixed", "tag": "mixed-in", "listen": "127.0.0.1", "listen_port": 7890 } ],
+  "inbounds": [
+    { "type": "mixed", "tag": "mixed-in", "listen": "127.0.0.1", "listen_port": 7890 },
+    /* only when transparent.enabled=1 and a node exists */
+    { "type": "tproxy", "tag": "tproxy-in", "listen": "0.0.0.0", "listen_port": 7891,
+      "sniff": true, "sniff_override_destination": true, "udp_timeout": "5m" }
+  ],
   "outbounds": [
     /* one per enabled node */,
     { "type": "urltest", "tag": "proxy", "outbounds": ["hk-01"], "url": "http://www.gstatic.com/generate_204", "interval": "5m", "tolerance": 50 },
     { "type": "direct", "tag": "direct" }
   ],
   "route": {
+    "auto_detect_interface": true,   /* only with the tproxy inbound */
     "rules": [
       { "ip_is_private": true, "outbound": "direct" },
       { "rule_set": ["geosite-cn", "geoip-cn"], "outbound": "direct" }
@@ -95,6 +141,17 @@ hits the network: downloads only happen in `config generate` / `easyproxy start`
 | `routing.rule_set_update_days` | `7` | refresh a cached file older than this |
 | `routing.dns_local_server` | `223.5.5.5` | domestic resolver |
 | `routing.dns_remote_server` | `https://1.1.1.1/dns-query` | remote DoH resolver |
+
+### Transparent capture options
+
+| UCI option | Default | Meaning |
+|---|---|---|
+| `transparent.enabled` | `0` | master switch; nothing is captured unless this is `1` **and** the engine is running |
+| `transparent.tproxy_port` | `7891` | the `tproxy-in` listen port (must match the generated config) |
+| `transparent.fwmark` | `1` | mark written by nft and matched by the policy rule |
+| `transparent.route_table` | `100` | table holding `local default dev lo` |
+| `transparent.lan_interfaces` | `br-lan` | interfaces whose input is captured, space separated |
+| `transparent.exclude` | *(empty)* | extra IPv4 addresses/CIDRs that must stay direct |
 
 ### Runtime model
 
@@ -137,8 +194,8 @@ with the section named, rather than emitting a config that would fail later.
 {
   "ok": true,
   "package": "easyproxy",
-  "version": "0.4.0",
-  "stage": 4,
+  "version": "0.5.0",
+  "stage": 5,
   "enabled": 1,
   "engine": "sing-box",
   "binary": "/usr/bin/sing-box",
@@ -155,6 +212,9 @@ with the section named, rather than emitting a config that would fail later.
   "route_rules": 2,
   "dns_mode": "split",
   "rule_set_state": "ready",
+  "transparent": 1,
+  "tproxy_port": 7891,
+  "tproxy_state": "active",
   "config_state": "ok",
   "config_path": "/etc/easyproxy/sing-box.json",
   "config_file": "/etc/config/easyproxy",
@@ -170,6 +230,8 @@ with the section named, rather than emitting a config that would fail later.
 | `route_rules` | number of `route.rules` entries (`1` = private IP only, `2` = private IP + CN) |
 | `dns_mode` | `split` (domestic + remote resolvers) or `local` (single resolver) |
 | `rule_set_state` | `ready` / `missing`, from the `.srs` files on disk |
+| `transparent` | `1` when capture is configured (not when it is actually loaded) |
+| `tproxy_state` | `active` (table loaded) / `inactive` / `unsupported` (no usable nft) |
 | `config_state` | `ok` / `invalid` / `missing`, verified with `sing-box check` |
 | `nodes` / `nodes_enabled` | total node sections and how many are enabled |
 
@@ -194,14 +256,16 @@ package/easyproxy/
     ├── usr/sbin/easyproxy
     ├── usr/lib/easyproxy/common.sh
     ├── usr/lib/easyproxy/config.sh
+    ├── usr/lib/easyproxy/transparent.sh
     ├── usr/lib/easyproxy/adapters/{dae.sh,sing-box.sh}
     ├── usr/share/luci/menu.d/luci-app-easyproxy.json
     ├── usr/share/rpcd/acl.d/luci-app-easyproxy.json
     └── www/luci-static/resources/view/easyproxy/overview.js
 tests/
-├── test-cli.sh      # CLI surface (status/validate/engine/start guard)
-├── test-runtime.sh  # config generation + start/stop lifecycle
-└── test-routing.sh  # split routing, DNS block, rule-set handling
+├── test-cli.sh          # CLI surface (status/validate/engine/start guard)
+├── test-runtime.sh      # config generation + start/stop lifecycle
+├── test-routing.sh      # split routing, DNS block, rule-set handling
+└── test-transparent.sh  # tproxy inbound, nft/ip takeover, idempotent rollback
 ```
 
 ## Tests
@@ -214,10 +278,16 @@ its own rule-set fixtures with the real binary when one is supplied):
 sh tests/test-cli.sh
 sh tests/test-runtime.sh
 sh tests/test-routing.sh
+sh tests/test-transparent.sh
 # additionally validate the generated config against a real binary:
 EP_SING_BOX_BIN=/usr/bin/sing-box sh tests/test-runtime.sh
 EP_SING_BOX_BIN=/usr/bin/sing-box sh tests/test-routing.sh
+EP_SING_BOX_BIN=/usr/bin/sing-box sh tests/test-transparent.sh
 ```
+
+The transparent suite stubs `nft` and `ip`, so the takeover state machine is
+exercised (apply, idempotent re-apply, rollback, refusals, missing nft)
+without touching the host's firewall and without root.
 
 ## Build
 
@@ -254,9 +324,30 @@ can be cached. On a router without internet, copy `geosite-cn.srs` and
 `geoip-cn.srs` to `/etc/easyproxy/ruleset/` by hand and run it again — otherwise
 the split degrades to full proxy and `status` reports `rule_set_state: missing`.
 
-To roll back: `easyproxy stop` and `uci set easyproxy.main.enabled='0'`. No
-firewall table or system-wide DNS is touched, so a client that is not pointed at
-`127.0.0.1:7890` is unaffected.
+Capture is off by default. To let the router proxy the whole LAN:
+
+```sh
+uci set easyproxy.transparent.enabled='1'
+uci set easyproxy.transparent.lan_interfaces="$(uci get network.lan.device 2>/dev/null || echo br-lan)"
+uci commit easyproxy
+easyproxy restart          # regenerates the config (adds tproxy-in), applies the capture
+easyproxy transparent status
+```
+
+A LAN client then needs nothing configured at all. To roll the capture back
+without touching anything else:
+
+```sh
+easyproxy transparent remove
+uci set easyproxy.transparent.enabled='0'
+uci commit easyproxy
+easyproxy restart
+```
+
+`remove` deletes `table ip easyproxy` and the policy rule/route it created;
+nothing else on the router is modified. To stop EasyProxy entirely:
+`easyproxy stop` (which removes the capture first) and
+`uci set easyproxy.main.enabled='0'`.
 
 ## Roadmap
 
@@ -265,13 +356,13 @@ firewall table or system-wide DNS is touched, so a client that is not pointed at
 | 1 | Packaging fix so the panel appears in LuCI |
 | 2 | Panel reads real status/validation data |
 | 3 | sing-box config generation + procd-supervised runtime |
-| **4 (current)** | Split routing + DNS (China direct, others proxied), local rule sets |
-| 5 | Transparent proxy: nftables/route takeover so LAN traffic is captured |
+| 4 | Split routing + DNS (China direct, others proxied), local rule sets |
+| **5 (current)** | Transparent capture: own nft table + policy routing, reversible in one command |
 | 6 | Operable panel: nodes, subscriptions, logs |
 
-Transparent proxying was moved behind the split because it rewrites firewall
-rules on the user's router; it is the one change that is not cheap to undo, so it
-gets its own stage with its own rollback path.
+Transparent capture got its own stage because it is the one change that touches
+firewall state on the user's router. It is kept out of fw4 entirely and ships
+with a rollback that only deletes objects EasyProxy created.
 
 ## License
 
