@@ -1,4 +1,4 @@
-name: EasyProxy x86_64 package build
+name: EasyProxy package and kernel build
 
 on:
   push:
@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   build:
-    name: Build ImmortalWrt 25.12.2 x86_64
+    name: Build ImmortalWrt 25.12.2 packages and kernels
     runs-on: ubuntu-24.04
 
     steps:
@@ -101,6 +101,23 @@ jobs:
           sh scripts/make-ipk.sh package/easyproxy dist x86_64 || { echo "::error title=ipk x86_64::make-ipk.sh failed"; exit 1; }
           ls -l dist
 
+      # The kernels are their own packages. `easyproxy_..._all.ipk` cannot carry a
+      # binary (one package would install an amd64 kernel on an ARM router), so
+      # sing-box and dae are packed per architecture, straight out of the official
+      # upstream archive after a pinned sha256 check. opkg then owns each of the
+      # three packages separately, which is what makes independent upgrade and
+      # independent removal possible on the router.
+      - name: Build kernel packages
+        run: |
+          set -euo pipefail
+          for arch in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4; do
+            sh scripts/make-kernel-ipk.sh sing-box "$arch" dist \
+              || { echo "::error title=sing-box $arch::kernel package build failed"; exit 1; }
+            sh scripts/make-kernel-ipk.sh dae "$arch" dist \
+              || { echo "::error title=dae $arch::kernel package build failed"; exit 1; }
+          done
+          ls -l dist
+
       - name: Collect packages
         run: |
           set -euo pipefail
@@ -113,17 +130,37 @@ jobs:
             exit 1
           fi
 
+      - name: Write KERNEL-VERSIONS
+        run: |
+          set -euo pipefail
+          cd dist
+          SB_VER="$(sed -n 's/^SING_BOX_VER=.*:-\([0-9][0-9.]*\)}.*/\1/p' ../scripts/make-kernel-ipk.sh)"
+          DAE_VER="$(sed -n 's/^DAE_VER=.*:-\([0-9][0-9.]*\)}.*/\1/p' ../scripts/make-kernel-ipk.sh)"
+          [ -n "$SB_VER" ] && [ -n "$DAE_VER" ] || { echo "::error::cannot read the kernel versions"; exit 1; }
+          VER="$(sed -n 's/^PKG_VERSION:=//p' ../package/easyproxy/Makefile | head -1)"
+          {
+            echo "component   version   upstream"
+            echo "easyproxy   ${VER}     https://github.com/${GITHUB_REPOSITORY}"
+            echo "sing-box    ${SB_VER}     SagerNet/sing-box v${SB_VER}"
+            echo "dae         ${DAE_VER}     daeuniverse/dae v${DAE_VER}"
+            echo
+            echo "architectures: x86_64, aarch64_cortex-a53, arm_cortex-a7_neon-vfpv4"
+            echo "kernel adapter: dae 适配器开发中，运行时分流仍由 sing-box 承担"
+            echo "built from commit: ${GITHUB_SHA}"
+          } > KERNEL-VERSIONS
+          cat KERNEL-VERSIONS
+
       - name: Checksums
         run: |
           set -euo pipefail
           cd dist
-          sha256sum easyproxy* > SHA256SUMS
+          sha256sum easyproxy* sing-box_* dae_* KERNEL-VERSIONS > SHA256SUMS
           cat SHA256SUMS
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: easyproxy-immortalwrt-25.12.2-x86_64
+          name: easyproxy-immortalwrt-25.12.2
           path: dist/*
           if-no-files-found: error
           retention-days: 30
@@ -141,27 +178,37 @@ jobs:
           TAG="v${VER}"
           NOTES_FILE="$(mktemp)"
           {
-            echo "EasyProxy ${VER} - ImmortalWrt 25.12.2 x86_64 build from ${GITHUB_SHA}."
+            echo "EasyProxy ${VER} - ImmortalWrt 25.12.2 build from ${GITHUB_SHA}."
             echo
-            echo "Assets:"
-            echo "- \`easyproxy_${VER}-1_all.ipk\` / \`easyproxy_${VER}-1_x86_64.ipk\`: install with \`opkg install\` (use the x86_64 one if opkg refuses \`Architecture: all\`)."
-            echo "- \`easyproxy-${VER}-1.apk\`: install with \`apk add --allow-untrusted\`."
-            echo "- \`easyproxy-${VER}-rootfs.tar.gz\`: extract at / on any OpenWrt-derived firmware when no package manager matches."
-            echo "- \`SHA256SUMS\`: verify the downloads."
+            echo "Assets (three independent components - the panel and each kernel):"
             echo
-            echo "One-line install and uninstall (opkg and apk firmware):"
+            echo "- \`easyproxy_${VER}-1_all.ipk\` / \`easyproxy_${VER}-1_x86_64.ipk\`: the panel and CLI, install with \`opkg install\` (use the x86_64 one if opkg refuses \`Architecture: all\`)."
+            echo "- \`easyproxy-${VER}-1.apk\`: same panel for apk firmware, \`apk add --allow-untrusted\`."
+            echo "- \`easyproxy-${VER}-rootfs.tar.gz\`: extract at / when no package manager matches."
+            echo "- \`sing-box_<version>_<arch>.ipk\`: sing-box kernel, one package per architecture."
+            echo "- \`dae_<version>_<arch>.ipk\`: dae kernel (binary + /usr/share/dae routing assets), one package per architecture."
+            echo "- \`SHA256SUMS\`: sha256 of every asset above; the installer refuses anything that does not match."
+            echo "- \`KERNEL-VERSIONS\`: the kernel versions this release pins."
+            echo
+            echo "Kernel architectures built here: x86_64, aarch64_cortex-a53, arm_cortex-a7_neon-vfpv4."
+            echo
+            echo "One-line install, upgrade, status and uninstall (opkg and apk firmware):"
             echo "\`\`\`"
             echo "wget -qO- https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/scripts/install.sh | sh"
+            echo "wget -qO- https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/scripts/install.sh | sh -s upgrade"
+            echo "wget -qO- https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/scripts/install.sh | sh -s status"
             echo "wget -qO- https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/scripts/uninstall.sh | sh"
             echo "\`\`\`"
             echo
+            echo "The install runs the panel, sing-box and dae in one go, verifies every download against \`SHA256SUMS\`, refuses a package built for another architecture, and reports a failure as a failure instead of printing success. The kernels are separate packages, so each one upgrades and uninstalls on its own; \`upgrade\` shows the old and new versions and rolls a kernel back if the new binary does not run."
+            echo
             echo "Safety locks compiled into this release: mainland China traffic is always direct (\`china_policy=proxy\` is rejected), \`fail_closed=1\` (a missing CN rule set yields an all-direct config instead of a full tunnel), and the whole intranet (10.10.10.10, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, router and LAN addresses) stays direct."
             echo
-            echo "The package carries the CLI, the ten-page LuCI panel, UCI defaults and the nftables capture logic. No sing-box binary is bundled: set \`easyproxy.main.engine=sing-box\` and point \`easyproxy.sing_box.binary\` at it."
+            echo "The panel carries the CLI, the ten-page LuCI panel, UCI defaults and the nftables capture logic. The kernels are installed by \`install.sh\` from the \`sing-box_*\` / \`dae_*\` assets above (or the pinned official archive) and are recorded in \`/etc/easyproxy/owned/\`, which is what lets the uninstaller remove only what it installed. The dae adapter is still 开发中, so the installer leaves \`main.engine\` alone and never rewrites an existing dae or sing-box configuration."
           } > "$NOTES_FILE"
 
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$TAG" dist/easyproxy* dist/SHA256SUMS --clobber --repo "$GITHUB_REPOSITORY"
+            gh release upload "$TAG" dist/easyproxy* dist/sing-box_* dist/dae_* dist/SHA256SUMS dist/KERNEL-VERSIONS --clobber --repo "$GITHUB_REPOSITORY"
             # The notes name the exact commit these assets were built from, so an
             # existing release is rewritten too - otherwise the body would keep
             # describing the first build forever.
@@ -173,6 +220,6 @@ jobs:
               --target "$GITHUB_SHA" \
               --title "EasyProxy ${VER}" \
               --notes-file "$NOTES_FILE" \
-              dist/easyproxy* dist/SHA256SUMS
+              dist/easyproxy* dist/sing-box_* dist/dae_* dist/SHA256SUMS dist/KERNEL-VERSIONS
             echo "created release $TAG"
           fi
