@@ -40,9 +40,11 @@ cmd_status_text() {
 	engine="$(ep_get main engine none)"
 	binary="$(ep_engine_binary "$engine")"
 	bstate="$(ep_binary_state "$binary")"
-	china="$(ep_get routing china_policy direct)"
+	# china_policy and fail_closed are locked on their safe values; the UCI
+	# values are only read to warn about them, never to change the route.
 	proxy="$(ep_get routing proxy_policy proxy)"
-	fail_closed="$(ep_bool "$(ep_get routing fail_closed 1)")"
+	china="direct"
+	fail_closed=1
 	nodes="$(ep_node_count)"
 	runtime="$(ep_runtime_state)"
 	pid="$(runtime_pid)"
@@ -70,19 +72,15 @@ cmd_status_text() {
 	case "$(ep_route_mode "$nodes")" in
 		split)
 			printf 'Routing: split (China direct, others proxied)\n' ;;
-		direct)
+		*)
 			if [ "$nodes" -gt 0 ]; then
-				printf 'Routing: direct only (rule sets missing, fail_closed=1: nothing is proxied)\n'
+				printf 'Routing: direct only (rule sets missing: nothing is proxied, foreign sites unreachable)\n'
 			else
 				printf 'Routing: direct only (no enabled nodes)\n'
 			fi ;;
-		*)
-			if [ "$china" = "direct" ]; then
-				printf 'Routing: all traffic proxied (rule sets missing, fail_closed=0)\n'
-			else
-				printf 'Routing: all traffic proxied (china_policy=proxy)\n'
-			fi ;;
 	esac
+	printf 'LAN: always direct (private ranges, router addresses, local domains excluded)\n'
+	[ -z "$(ep_locked_warn)" ] || printf 'Lock: %s\n' "$(ep_locked_warn)"
 	case "$(ep_transparent_state)" in
 		active)
 			printf 'Transparent: active (%s, tproxy 0.0.0.0:%s)\n' \
@@ -112,9 +110,10 @@ cmd_status_json() {
 	engine="$(ep_get main engine none)"
 	binary="$(ep_engine_binary "$engine")"
 	bstate="$(ep_binary_state "$binary")"
-	china="$(ep_get routing china_policy direct)"
 	proxy="$(ep_get routing proxy_policy proxy)"
-	fail_closed="$(ep_bool "$(ep_get routing fail_closed 1)")"
+	# locked values: reported as what the router really does, not as what UCI says
+	china="direct"
+	fail_closed=1
 	nodes="$(ep_node_count)"
 	nodes_enabled="$(ep_node_count_enabled)"
 	[ -n "$nodes" ] || nodes="0"
@@ -180,15 +179,18 @@ cmd_validate_text() {
 
 	case "$enabled" in 0|1) ;; *) echo "Invalid main.enabled: expected 0 or 1" >&2; return 1 ;; esac
 	ep_valid_engine "$engine" || { echo "Invalid main.engine: $engine" >&2; return 1; }
-	case "$china" in direct|proxy) ;; *) echo "Invalid routing.china_policy: $china" >&2; return 1 ;; esac
-	case "$fail_closed" in 0|1) ;; *) echo "Invalid routing.fail_closed: expected 0 or 1" >&2; return 1 ;; esac
+	case "$china" in
+		direct) ;;
+		*) echo "Invalid routing.china_policy: $china (locked to direct: proxying China mainland traffic is not allowed)" >&2; return 1 ;;
+	esac
+	case "$fail_closed" in
+		1) ;;
+		*) echo "Invalid routing.fail_closed: $fail_closed (locked to 1: missing China rule sets must never degrade to a full proxy)" >&2; return 1 ;;
+	esac
 
 	echo "Configuration values are valid."
-	if [ "$china" = "direct" ]; then
-		echo "Safety check: China policy is DIRECT."
-	else
-		echo "Warning: China policy is PROXY; domestic traffic would leave the router."
-	fi
+	echo "Safety check: China policy is DIRECT (locked)."
+	echo "Safety check: fail_closed is 1 (locked): without the China rule sets only direct routing is generated."
 	config_state="$(ep_config_state)"
 	case "$config_state" in
 		ok) echo "Generated engine config: present and valid." ;;
@@ -212,10 +214,14 @@ cmd_validate_json() {
 	fi
 	case "$china" in
 		direct) ;;
-		proxy) messages="${messages}\"Warning: China policy is PROXY\"," ;;
-		*) messages="${messages}\"Invalid routing.china_policy: $(ep_json_escape "$china")\","; code=1 ;;
+		*) messages="${messages}\"Invalid routing.china_policy: $(ep_json_escape "$china") (locked to direct)\","
+			messages="${messages}\"china_policy=proxy would proxy mainland traffic; the lock keeps the CN direct rule.\","; code=1 ;;
 	esac
-	case "$fail_closed" in 0|1) ;; *) messages="${messages}\"Invalid routing.fail_closed: expected 0 or 1\","; code=1 ;; esac
+	case "$fail_closed" in
+		1) ;;
+		*) messages="${messages}\"Invalid routing.fail_closed: $(ep_json_escape "$fail_closed") (locked to 1)\","
+			messages="${messages}\"fail_closed=0 would degrade to a full proxy when the CN rule sets are missing.\","; code=1 ;;
+	esac
 
 	config_state="$(ep_config_state)"
 	case "$config_state" in
@@ -223,7 +229,7 @@ cmd_validate_json() {
 		missing) messages="${messages}\"No generated config yet; run easyproxy config generate.\"," ;;
 	esac
 
-	[ "$code" = "0" ] && messages="${messages}\"Configuration values are valid.\",\"China policy: $(ep_json_escape "$china")\","
+	[ "$code" = "0" ] && messages="${messages}\"Configuration values are valid.\",\"China policy: direct (locked)\",\"Fail closed: 1 (locked)\","
 	messages="$(printf '%s' "$messages" | sed -e 's/,$//')"
 
 	printf '{"ok":%s,"version":"%s","config_state":"%s","messages":[%s],"generated":"%s"}\n' \
@@ -291,12 +297,6 @@ cmd_config_generate() {
 		case "${EP_ROUTE_MODE:-direct}" in
 			split)
 				echo "Routing mode: split (China direct, others proxied)" ;;
-			proxy)
-				if [ "$(ep_get routing china_policy direct)" = "direct" ]; then
-					echo "Routing mode: all proxied (rule sets missing, fail_closed=0)"
-				else
-					echo "Routing mode: all proxied (china_policy=proxy)"
-				fi ;;
 			*)
 				echo "Routing mode: direct only (nothing is proxied; LAN stays direct)" ;;
 			esac
