@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -51,10 +51,19 @@ jobs:
           make defconfig
           make package/easyproxy/compile V=s -j2
 
-      - name: Collect packages
+      - name: Package manual-install archive
         run: |
           set -euo pipefail
           mkdir -p dist
+          VER="$(sed -n 's/^PKG_VERSION:=//p' package/easyproxy/Makefile | head -1)"
+          [ -n "$VER" ] || { echo "::error::cannot read PKG_VERSION"; exit 1; }
+          tar --owner=0 --group=0 --numeric-owner \
+            -czf "dist/easyproxy-${VER}-rootfs.tar.gz" -C package/easyproxy/files .
+          ls -l dist
+
+      - name: Collect packages
+        run: |
+          set -euo pipefail
           find sdk/bin/packages -type f \
             \( -name 'easyproxy*.apk' -o -name 'easyproxy*.ipk' \) \
             -exec cp -v {} dist/ \;
@@ -64,7 +73,12 @@ jobs:
             exit 1
           fi
 
-          sha256sum dist/* | tee dist/SHA256SUMS
+      - name: Checksums
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum easyproxy* > SHA256SUMS
+          cat SHA256SUMS
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
@@ -73,3 +87,39 @@ jobs:
           path: dist/*
           if-no-files-found: error
           retention-days: 30
+
+      # A release is only created from a push (main or a v* tag) or a manual
+      # run, never from a pull request. The tag is derived from PKG_VERSION, so
+      # bumping the version is enough to publish the next build.
+      - name: Publish GitHub release
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          VER="$(sed -n 's/^PKG_VERSION:=//p' package/easyproxy/Makefile | head -1)"
+          TAG="v${VER}"
+          NOTES_FILE="$(mktemp)"
+          {
+            echo "EasyProxy ${VER} - ImmortalWrt 25.12.2 x86_64 build from ${GITHUB_SHA}."
+            echo
+            echo "Assets:"
+            echo "- \`easyproxy_${VER}*.ipk\` / \`*.apk\`: install with \`opkg install\` or \`apk add --allow-untrusted\`."
+            echo "- \`easyproxy-${VER}-rootfs.tar.gz\`: extract at / on any OpenWrt-derived firmware when no package manager matches."
+            echo "- \`SHA256SUMS\`: verify the downloads."
+            echo
+            echo "The package carries the CLI, the LuCI panel, UCI defaults and the nftables capture logic. No sing-box binary is bundled: set \`easyproxy.main.engine=sing-box\` and point \`easyproxy.sing_box.binary\` at it."
+          } > "$NOTES_FILE"
+
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/easyproxy* dist/SHA256SUMS --clobber --repo "$GITHUB_REPOSITORY"
+            echo "updated existing release $TAG"
+          else
+            gh release create "$TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "EasyProxy ${VER}" \
+              --notes-file "$NOTES_FILE" \
+              dist/easyproxy* dist/SHA256SUMS
+            echo "created release $TAG"
+          fi
