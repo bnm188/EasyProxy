@@ -14,14 +14,14 @@ sing-box and dae, so the panel is usable as soon as it comes up.
 | Layer | What exists now |
 |---|---|
 | UCI config | `/etc/config/easyproxy` (main, routing, transparent, engine, nodes) |
-| Config generation | `easyproxy config generate` → sing-box JSON, validated by `sing-box check` |
-| Split routing | `route.rules`: private IPs + CN rule sets → `direct`; `route.final` → `proxy` |
+| Config generation | `easyproxy config generate` -> sing-box JSON, validated by `sing-box check` |
+| Split routing | `route.rules`: private IPs + CN rule sets -> `direct`; `route.final` -> `proxy` |
 | Rule sets | local `.srs` under `rule_set_dir`, refreshed by `easyproxy ruleset update` |
 | Transparent capture | `table ip easyproxy` (TPROXY) / `table ip6 easyproxy`; `transparent apply|remove|status|audit` |
 | Engines | registry `sing-box:stable`, `dae:dev`; `engine list|health|version`, `node test` |
 | Nodes | 8 share-link formats, `node list|add|import|export|del|test`, subscription fetch |
 | Maintenance | `config backup|restore|reset`, `ruleset update|verify`, `doctor [--json]`, `log rotate`, `uninstall-clean` |
-| LuCI panel | `服务 → EasyProxy`, ten views: overview, nodes, subscription, split, engines, DNS, rules, logs, backup, settings |
+| LuCI panel | `服务 -> EasyProxy`, ten views: overview, nodes, subscription, split, engines, DNS, rules, logs, backup, settings |
 | Installer | one command installs panel + sing-box + dae; `upgrade` and `status` per component |
 
 ### Install in one line (SSH on the router)
@@ -93,9 +93,9 @@ Everything the capture needs lives in **our own namespace**:
 | route table | `local default dev lo` | the destination the mark resolves to |
 | generated file | `/etc/easyproxy/nftables.conf` | what actually got loaded, so `nft -f` can be replayed or inspected |
 
-Capture tracer: LAN packet → `prerouting` (only the listed interfaces, bypass
-set and the `mixed` port return early) → `tproxy to :7891` + `meta mark set 1` →
-`tproxy-in` → sniffed domain → split routing from Stage 4.
+Capture tracer: LAN packet -> `prerouting` (only the listed interfaces, bypass
+set and the `mixed` port return early) -> `tproxy to :7891` + `meta mark set 1` ->
+`tproxy-in` -> sniffed domain -> split routing from Stage 4.
 
 `easyproxy transparent apply` refuses to run — and applies nothing — when any of
 these is true, because each one would black-hole the LAN:
@@ -286,7 +286,7 @@ the log).
         ↓ (uci)
 /usr/sbin/easyproxy status --json
         ↓ (rpcd file.exec, ACL: luci-app-easyproxy)
-/usr/lib/easyproxy/app.js  →  overview / nodes / subscription / split / engines /
+/usr/lib/easyproxy/app.js  ->  overview / nodes / subscription / split / engines /
                               dns / rules / logs / backup / settings
 ```
 
@@ -347,8 +347,8 @@ EP_SING_BOX_BIN=/usr/bin/sing-box sh tests/test-routing.sh
 EP_SING_BOX_BIN=/usr/bin/sing-box sh tests/test-transparent.sh
 ```
 
-Nine suites, 464 checks: routing 32, transparent 84, nodes 61, engine 44,
-maintenance 44, install scripts 119, ipk layout 40, CLI 21, runtime 19
+Nine suites, 471 checks: routing 32, transparent 84, nodes 61, engine 44,
+maintenance 44, install scripts 126, ipk layout 40, CLI 21, runtime 19
 (`runtime` and `transparent` hold 19 and 84 without a real `sing-box` binary,
 which is also what CI runs).
 
@@ -356,7 +356,8 @@ The install-script suite stubs `opkg`, `apk`, `curl`, `uci` and the init/rpcd
 scripts in a sandbox, so it covers both package managers, the API-unreachable
 fallback, the rootfs route, the arch-matched ipk choice, the three-component
 install, both kernels (sha256, architecture, reuse, failure), `upgrade` with its
-version table and rollback, `status`, and the uninstall ordering, backup,
+version table and rollback, a corrupt download that must be retried and one
+that must stay fatal, `status`, and the uninstall ordering, backup,
 `--purge` and `--keep-kernels` without touching `/etc` at all.
 
 The transparent suite stubs `nft` and `ip`, so the takeover state machine is
@@ -419,7 +420,9 @@ One command installs all three components. It:
    is no arch-specific one or when it fails to download), on apk images the
    `.apk`, and for `--rootfs` the rootfs archive;
 3. verifies **every** download against `SHA256SUMS` before anything is installed
-   and refuses a package that is not the one the checksum file describes;
+   and refuses a package that is not the one the checksum file describes. A
+   checksum mismatch is re-downloaded up to three times first, because a CDN
+   edge can serve a stale object under an immutable release URL;
 4. installs the panel, then the sing-box kernel, then the dae kernel - each from
    its own release asset when the release carries one
    (`sing-box_<ver>_<arch>.ipk`, `dae_<ver>_<arch>.ipk`, installed through the
