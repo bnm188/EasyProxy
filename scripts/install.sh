@@ -89,6 +89,17 @@ detect_pm() {
 	fi
 }
 
+# Which ipk flavour this host can install. The release ships `_all.ipk` plus one
+# stamp per target; an opkg that refuses `Architecture: all` needs the exact one.
+host_ipk_arch() {
+	case "$(uname -m 2>/dev/null)" in
+		x86_64|amd64)   printf '%s' x86_64 ;;
+		aarch64|arm64)  printf '%s' aarch64 ;;
+		armv7l|armv7)   printf '%s' armv7 ;;
+		*)              printf '%s' '' ;;
+	esac
+}
+
 # --- release asset --------------------------------------------------------
 # Ask the API first: asset names carry the version, so guessing them is
 # fragile. If the API is unreachable (common behind a slow link), fall back to
@@ -114,8 +125,9 @@ fallback_release() {
 }
 
 asset_url() {
-	local pattern url ver rel
+	local pattern url ver rel arch
 	pattern="$1"
+	arch="${2:-}"
 	url="$(asset_from_api "$pattern" || true)"
 	if [ -n "$url" ]; then
 		printf '%s' "$url"
@@ -127,7 +139,12 @@ asset_url() {
 	rel="${rel:-1}"
 	case "$pattern" in
 		'\.apk$') printf '%s' "https://github.com/${REPO}/releases/download/v${ver}/easyproxy-${ver}-r${rel}.apk" ;;
-		'\.ipk$') printf '%s' "https://github.com/${REPO}/releases/download/v${ver}/easyproxy_${ver}-${rel}_all.ipk" ;;
+		'\.ipk$')
+			if [ -n "$arch" ]; then
+				printf '%s' "https://github.com/${REPO}/releases/download/v${ver}/easyproxy_${ver}-${rel}_${arch}.ipk"
+			else
+				printf '%s' "https://github.com/${REPO}/releases/download/v${ver}/easyproxy_${ver}-${rel}_all.ipk"
+			fi ;;
 		'\.tar\.gz$') printf '%s' "https://github.com/${REPO}/releases/download/v${ver}/easyproxy-${ver}-rootfs.tar.gz" ;;
 		*) return 1 ;;
 	esac
@@ -160,13 +177,34 @@ trap 'rm -rf "$work"' EXIT
 
 case "$MODE" in
 	apk|ipk)
-		pattern='\.apk$'
-		[ "$MODE" = "ipk" ] && pattern='\.ipk$'
-		url="$(asset_url "$pattern")" \
-			|| die "cannot resolve the $MODE download URL (release API unreachable and no version in the Makefile)"
+		arch=""
+		if [ "$MODE" = "apk" ]; then
+			url="$(asset_url '\.apk$')" \
+				|| die "cannot resolve the apk download URL (release API unreachable and no version in the Makefile)"
+		else
+			# The release carries one ipk per target next to `_all.ipk`; a firmware
+			# whose opkg refuses `Architecture: all` can only take the exact one.
+			arch="$(host_ipk_arch)"
+			[ -n "$arch" ] && url="$(asset_from_api "_${arch}\.ipk$" || true)"
+			[ -n "${url:-}" ] || url="$(asset_from_api '_all\.ipk$' || true)"
+			[ -n "${url:-}" ] || url="$(asset_url '\.ipk$' "$arch")" \
+				|| die "cannot resolve the ipk download URL (release API unreachable and no version in the Makefile)"
+		fi
 		file="$work/$(basename "$url")"
 		info "downloading $(basename "$url")"
-		fetch_file "$url" "$file" || die "download failed: $url"
+		if ! fetch_file "$url" "$file"; then
+			if [ "$MODE" = "ipk" ] && [ -n "$arch" ]; then
+				alt="$(asset_from_api '_all\.ipk$' || true)"
+				[ -n "$alt" ] || alt="$(asset_url '\.ipk$' 2>/dev/null || true)"
+				[ -n "$alt" ] || die "download failed: $url"
+				info "architecture-specific package unavailable, retrying $(basename "$alt")"
+				url="$alt"
+				file="$work/$(basename "$url")"
+				fetch_file "$url" "$file" || die "download failed: $url"
+			else
+				die "download failed: $url"
+			fi
+		fi
 		info "installing with $(detect_pm || printf '%s' 'package manager')"
 		install_pkg "$(detect_pm || printf '%s' opkg)" "$file"
 		;;
