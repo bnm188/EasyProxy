@@ -316,8 +316,55 @@ verify_download() {
 	want="$(awk -v n="$(basename "$url")" '$2 == n || $2 == "./" n { print $1 }' "$work/SHA256SUMS" | head -1)"
 	[ -n "$want" ] || die "the release has no checksum for $(basename "$url"); refusing to install an unverified package"
 	got="$(sha256_of "$file" || true)"
-	[ "$want" = "$got" ] || die "checksum mismatch for $(basename "$url"): expected $want, got $got (invalid download, nothing installed)"
+	if [ "$want" != "$got" ]; then
+		info "checksum mismatch for $(basename "$url"): expected $want, got $got"
+		return 1
+	fi
 	info "sha256 ok: $(basename "$url")"
+}
+
+# Fetch a release asset and accept it only when it matches SHA256SUMS. A CDN
+# edge or a transparent proxy can serve a stale or truncated object under a
+# release URL (seen in practice: the same tag served two different tarballs a
+# second apart), so a mismatch is retried a couple of times before the install
+# is declared broken. A mismatch is never accepted, only retried.
+fetch_verified() {
+	local url file attempt
+	url="$1"
+	file="$2"
+	attempt=1
+	while [ "$attempt" -le 3 ]; do
+		if fetch_file "$url" "$file" && verify_download "$file" "$url"; then
+			return 0
+		fi
+		attempt=$((attempt + 1))
+		[ "$attempt" -le 3 ] || return 1
+		info "retrying $(basename "$url") (attempt $attempt of 3)"
+	done
+	return 1
+}
+
+# Same idea for an object pinned by a sha256 inside this file rather than by the
+# release's SHA256SUMS (the official upstream kernel archives).
+fetch_pinned() {
+	local url file want got attempt
+	url="$1"
+	file="$2"
+	want="$3"
+	attempt=1
+	while [ "$attempt" -le 3 ]; do
+		if fetch_file "$url" "$file"; then
+			got="$(sha256_of "$file" || true)"
+			if [ "$want" = "$got" ]; then
+				return 0
+			fi
+			info "checksum mismatch for $(basename "$url"): expected $want, got $got"
+		fi
+		attempt=$((attempt + 1))
+		[ "$attempt" -le 3 ] || return 1
+		info "retrying $(basename "$url") (attempt $attempt of 3)"
+	done
+	return 1
 }
 
 # Cheap format check, so an HTML error page is stopped even when the checksum
@@ -510,12 +557,11 @@ install_kernel() {
 	if [ -n "$url" ]; then
 		file="$work/$(basename "$url")"
 		info "$name: downloading $(basename "$url")"
-		if ! fetch_file "$url" "$file"; then
-			info "$name: no kernel ipk for $(host_family), falling back to the official archive"
+		if ! fetch_verified "$url" "$file"; then
+			info "$name: no verified kernel ipk for $(host_family), falling back to the official archive"
 			url=""
 		else
 			check_package_file "$url" "$file"
-			verify_download "$file" "$url"
 			pm="$(detect_pm || printf '%s' '')"
 			if [ -z "$pm" ]; then
 				info "$name: kernel ipk downloaded but this firmware has no package manager"
@@ -549,10 +595,6 @@ install_kernel() {
 	[ -n "$url" ] || { info "$name: install failed: cannot build the archive URL"; return 1; }
 	file="$work/$(basename "$url")"
 	info "$name: downloading $(basename "$url")"
-	if ! fetch_file "$url" "$file"; then
-		info "$name: install failed: cannot download $(basename "$url")"
-		return 1
-	fi
 	want="$(kernel_sha "$name" "$arch" || true)"
 	if [ -z "$want" ]; then
 		info "$name: install failed: no pinned sha256 for $arch; refusing an unverified binary"
@@ -562,10 +604,9 @@ install_kernel() {
 		info "$name: install failed: this firmware has no sha256sum, cannot verify the download"
 		return 1
 	fi
-	got="$(sha256_of "$file" || true)"
-	if [ "$want" != "$got" ]; then
+	if ! fetch_pinned "$url" "$file" "$want"; then
 		rm -f "$file"
-		info "$name: install failed: checksum mismatch for $(basename "$url"): expected $want, got $got (nothing installed)"
+		info "$name: install failed: cannot download a verified archive, nothing was installed"
 		return 1
 	fi
 	info "$name sha256 ok: $(basename "$url")"
@@ -694,7 +735,7 @@ Use: sh install.sh --rootfs  (extracts the archive at / without a package manage
 			fi
 			file="$work/$(basename "$url")"
 			info "downloading $(basename "$url")"
-			if ! fetch_file "$url" "$file"; then
+			if ! fetch_verified "$url" "$file"; then
 				if [ "$MODE" = "ipk" ] && [ "$accepts_all" = 1 ]; then
 					alt="$(asset_from_api '_all\.ipk$' || true)"
 					[ -n "$alt" ] || alt="$(asset_url '\.ipk$' 2>/dev/null || true)"
@@ -702,13 +743,12 @@ Use: sh install.sh --rootfs  (extracts the archive at / without a package manage
 					info "architecture-specific package unavailable, retrying $(basename "$alt")"
 					url="$alt"
 					file="$work/$(basename "$url")"
-					fetch_file "$url" "$file" || die "download failed: $url"
+					fetch_verified "$url" "$file" || die "download failed or unverified: $url"
 				else
-					die "download failed: $url"
+					die "download failed or unverified: $url"
 				fi
 			fi
 			check_package_file "$url" "$file"
-			verify_download "$file" "$url"
 			info "installing with $(detect_pm || printf '%s' 'package manager')"
 			install_pkg "$(detect_pm || printf '%s' opkg)" "$file" \
 				|| die "the package manager refused $(basename "$url"); nothing was installed"
@@ -718,8 +758,7 @@ Use: sh install.sh --rootfs  (extracts the archive at / without a package manage
 				|| die "cannot resolve the rootfs archive URL (release API unreachable and no version in the Makefile)"
 			file="$work/$(basename "$url")"
 			info "downloading $(basename "$url")"
-			fetch_file "$url" "$file" || die "download failed: $url"
-			verify_download "$file" "$url"
+			fetch_verified "$url" "$file" || die "download failed or unverified: $url"
 			info "extracting at $ROOT (no package manager involved)"
 			tar -xzf "$file" -C "$ROOT" || die "cannot extract $file at $ROOT"
 			chmod 755 "$ROOT/usr/sbin/easyproxy" "$ROOT/etc/init.d/easyproxy" 2>/dev/null || true
