@@ -12,6 +12,8 @@
 # Stage 6 makes fail_closed real and keeps every LAN destination direct.
 # Stage 6 also locks the two safety knobs: china_policy is always direct and
 # fail_closed is always 1, so no UCI value can turn routing into a full proxy.
+# Stage 7 adds vless / hysteria2 / tuic nodes, per-region latency groups and
+# YouTube / Netflix / TikTok plus custom split rules.
 
 EP_ERR=""
 EP_ERR_FILE=""
@@ -55,7 +57,7 @@ ep_node_tls() {
 # Print one sing-box outbound object for a node section, or explain why not
 ep_node_outbound() {
 	local section="$1" tag type server port method password uuid alter_id user
-	local tls sni
+	local tls sni flow
 
 	tag="$(ep_node_tag "$section")"
 	type="$(ep_get "$section" type '')"
@@ -77,7 +79,7 @@ ep_node_outbound() {
 			method="$(ep_get "$section" method 'aes-256-gcm')"
 			password="$(ep_get "$section" password '')"
 			[ -n "$password" ] || { ep_err "node ${tag}: shadowsocks needs password"; return 1; }
-			printf '{"type":"shadowsocks","tag":"%s","server":"%s","server_port":%s,"method":"%s","password":"%s"}%s' \
+			printf '{"type":"shadowsocks","tag":"%s","server":"%s","server_port":%s,"method":"%s","password":"%s"%s}' \
 				"$tag" "$server" "$port" "$(ep_json_escape "$method")" "$(ep_json_escape "$password")" "$tls"
 			;;
 		vmess)
@@ -85,14 +87,37 @@ ep_node_outbound() {
 			alter_id="$(ep_get "$section" alter_id 0)"
 			[ -n "$uuid" ] || { ep_err "node ${tag}: vmess needs uuid"; return 1; }
 			case "$alter_id" in ''|*[!0-9]*) alter_id=0 ;; esac
-			printf '{"type":"vmess","tag":"%s","server":"%s","server_port":%s,"uuid":"%s","alter_id":%s,"security":"auto"}%s' \
+			printf '{"type":"vmess","tag":"%s","server":"%s","server_port":%s,"uuid":"%s","alter_id":%s,"security":"auto"%s}' \
 				"$tag" "$server" "$port" "$(ep_json_escape "$uuid")" "$alter_id" "$tls"
 			;;
 		trojan)
 			password="$(ep_get "$section" password '')"
 			[ -n "$password" ] || { ep_err "node ${tag}: trojan needs password"; return 1; }
-			printf '{"type":"trojan","tag":"%s","server":"%s","server_port":%s,"password":"%s"}%s' \
+			printf '{"type":"trojan","tag":"%s","server":"%s","server_port":%s,"password":"%s"%s}' \
 				"$tag" "$server" "$port" "$(ep_json_escape "$password")" "$tls"
+			;;
+		vless)
+			uuid="$(ep_get "$section" uuid '')"
+			[ -n "$uuid" ] || { ep_err "node ${tag}: vless needs uuid"; return 1; }
+			flow="$(ep_get "$section" flow '')"
+			printf '{"type":"vless","tag":"%s","server":"%s","server_port":%s,"uuid":"%s"' \
+				"$tag" "$server" "$port" "$(ep_json_escape "$uuid")"
+			[ -n "$flow" ] && printf ',"flow":"%s"' "$(ep_json_escape "$flow")"
+			printf '%s}' "$tls"
+			;;
+		hysteria2)
+			password="$(ep_get "$section" password '')"
+			[ -n "$password" ] || { ep_err "node ${tag}: hysteria2 needs password"; return 1; }
+			printf '{"type":"hysteria2","tag":"%s","server":"%s","server_port":%s,"password":"%s"%s}' \
+				"$tag" "$server" "$port" "$(ep_json_escape "$password")" "$tls"
+			;;
+		tuic)
+			uuid="$(ep_get "$section" uuid '')"
+			password="$(ep_get "$section" password '')"
+			[ -n "$uuid" ] || { ep_err "node ${tag}: tuic needs uuid"; return 1; }
+			[ -n "$password" ] || { ep_err "node ${tag}: tuic needs password"; return 1; }
+			printf '{"type":"tuic","tag":"%s","server":"%s","server_port":%s,"uuid":"%s","password":"%s"%s}' \
+				"$tag" "$server" "$port" "$(ep_json_escape "$uuid")" "$(ep_json_escape "$password")" "$tls"
 			;;
 		socks|http)
 			user="$(ep_get "$section" username '')"
@@ -188,6 +213,11 @@ ep_rule_set_ensure() {
 	[ "$(ep_rule_set_state)" = "ready" ]
 }
 
+# Cache file the engine keeps for rule sets and resolved domains
+ep_cache_file() {
+	ep_get main cache_file '/etc/easyproxy/cache.db'
+}
+
 # Local rule-set definitions for the domestic split
 ep_route_rule_sets() {
 	local dir
@@ -198,13 +228,183 @@ ep_route_rule_sets() {
 		"$(ep_json_escape "$dir/geoip-cn.srs")"
 }
 
+
+# --- rule helpers -----------------------------------------------------------
+# Platform split: which well-known services must leave through the node group.
+# Each one is a UCI switch (default on) so an operator can keep a service on
+# the direct path when the node cannot handle it.
+ep_platform_enabled() {
+	[ "$(ep_bool "$(ep_get routing "platform_$1" 1)")" = "1" ]
+}
+
+ep_platform_rule_line() {
+	local key="$1" domains="$2"
+	ep_platform_enabled "$key" || return 0
+	printf '      { "domain_suffix": [%s], "outbound": "proxy" }' "$domains"
+}
+
+# Youtube / Netflix / TikTok: domain lists are inline so no extra rule-set has
+# to be downloaded and the split works on a fresh install without network.
+ep_platform_rules_json() {
+	local items="" _r
+	_r="$(ep_platform_rule_line youtube '"youtube.com", "youtu.be", "googlevideo.com", "ytimg.com", "youtube-nocookie.com", "yt3.ggpht.com"')"
+	[ -n "$_r" ] && items="$_r"
+	_r="$(ep_platform_rule_line netflix '"netflix.com", "netflix.net", "nflxext.com", "nflximg.com", "nflximg.net", "nflxso.net", "nflxvideo.net"')"
+	[ -n "$_r" ] && items="${items:+$items,
+}$_r"
+	_r="$(ep_platform_rule_line tiktok '"tiktok.com", "tiktokv.com", "tiktokcdn.com", "byteoversea.com", "ibytedtos.com", "muscdn.com"')"
+	[ -n "$_r" ] && items="${items:+$items,
+}$_r"
+	printf '%s' "$items"
+}
+
+# Custom rules, "type:value:outbound" entries separated by ';'. The operator
+# order is preserved and they sit between the LAN rules and the CN rule, so a
+# custom entry can force a domain through the proxy or block it outright.
+ep_custom_rules_json() {
+	local raw entry typ rest val out items old_ifs key obj
+	raw="$(ep_get routing custom_rules '')"
+	[ -n "$raw" ] || return 0
+	items=""
+	old_ifs="$IFS"
+	IFS=';'
+	for entry in $raw; do
+		entry="$(printf '%s' "$entry" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+		[ -n "$entry" ] || continue
+		typ="${entry%%:*}"
+		rest="${entry#*:}"
+		val="${rest%%:*}"
+		out="${rest#*:}"
+		[ -n "$typ" ] && [ -n "$val" ] && [ -n "$out" ] || continue
+		case "$out" in
+			direct|proxy|block) ;;
+			*) continue ;;
+		esac
+		case "$typ" in
+			domain) key="domain" ;;
+			domain-suffix|suffix) key="domain_suffix" ;;
+			domain-keyword|keyword) key="domain_keyword" ;;
+			ip|ip-cidr) key="ip_cidr" ;;
+			*) continue ;;
+		esac
+		# built in a variable first: ${items:+...} would stop at the first '}'
+		# inside the JSON object and the quotes would then be eaten by word splitting
+		obj="      { \"$key\": [\"$(ep_json_escape "$val")\"], \"outbound\": \"$out\" }"
+		if [ -n "$items" ]; then
+			items="$items,
+$obj"
+		else
+			items="$obj"
+		fi
+	done
+	IFS="$old_ifs"
+	printf '%s' "$items"
+}
+
+# 1 when a custom rule can land on the block outbound (needed for its tag)
+ep_custom_uses_block() {
+	local raw entry rest out old_ifs
+	raw="$(ep_get routing custom_rules '')"
+	[ -n "$raw" ] || { printf '0'; return 0; }
+	old_ifs="$IFS"
+	IFS=';'
+	for entry in $raw; do
+		rest="${entry#*:}"
+		out="${rest#*:}"
+		if [ "$out" = "block" ]; then
+			IFS="$old_ifs"
+			printf '1'
+			return 0
+		fi
+	done
+	IFS="$old_ifs"
+	printf '0'
+}
+
+# --- custom rule store ------------------------------------------------------
+# Rules live in one UCI string so a backup of /etc/config/easyproxy carries
+# them; the CLI edits that string entry by entry.
+
+ep_rule_entries() {
+	ep_get routing custom_rules '' | tr ';' '\n'
+}
+
+ep_rule_add() {
+	local entry="$1" cur
+	case "$entry" in
+		*:*:*)
+			case "${entry##*:}" in
+				direct|proxy|block) ;;
+				*) echo "outbound must be direct, proxy or block" >&2; return 1 ;;
+			esac
+			;;
+		*) echo "rule must be type:value:outbound" >&2; return 1 ;;
+	esac
+	cur="$(ep_get routing custom_rules '')"
+	if [ -n "$cur" ]; then
+		uci -q set "${EP_CONFIG}.routing.custom_rules" "${cur};${entry}"
+	else
+		uci -q set "${EP_CONFIG}.routing.custom_rules" "$entry"
+	fi
+	uci -q commit "$EP_CONFIG" 2>/dev/null
+	printf '%s' "$entry"
+}
+
+# Remove one rule by its 1-based position (as printed by `rule list`)
+ep_rule_delete() {
+	local idx="$1" old_ifs n=0 out="" entry
+	old_ifs="$IFS"
+	IFS=';'
+	for entry in $(ep_get routing custom_rules ''); do
+		n=$((n + 1))
+		[ "$n" = "$idx" ] && continue
+		out="${out:+$out;}$entry"
+	done
+	IFS="$old_ifs"
+	[ "$n" -gt 0 ] || { echo "no custom rules configured" >&2; return 1; }
+	[ "$idx" -ge 1 ] && [ "$idx" -le "$n" ] || { echo "no rule #$idx" >&2; return 1; }
+	uci -q set "${EP_CONFIG}.routing.custom_rules" "$out"
+	uci -q commit "$EP_CONFIG" 2>/dev/null
+}
+
+# Comma-separated JSON array body of IP literals used as node servers.
+# Traffic to the proxy server itself must never be captured and re-proxied:
+# with a hostname the engine resolves it, with a literal we can pin it here.
+ep_node_server_cidrs() {
+	local section server first=1
+	for section in $(ep_node_sections); do
+		[ "$(ep_get "$section" enabled 1)" = "1" ] || continue
+		server="$(ep_get "$section" server '')"
+		case "$server" in
+			# IPv4 literal
+			[0-9]*.[0-9]*.[0-9]*.[0-9]*)
+				case "$server" in
+					*[!0-9.]*) continue ;;
+				esac
+				[ "$first" = "1" ] || printf ', '
+				printf '"%s/32"' "$(ep_json_escape "$server")"
+				first=0
+				;;
+			# IPv6 literal
+			[0-9a-fA-F:]*:*)
+				case "$server" in
+					*[!0-9a-fA-F:]*) continue ;;
+				esac
+				[ "$first" = "1" ] || printf ', '
+				printf '"%s/128"' "$(ep_json_escape "$server")"
+				first=0
+				;;
+		esac
+	done
+}
+
 # Build the config file. Returns 0 on success, non-zero with EP_ERR set.
 # Exit 2 means the file was assembled but the engine rejected it.
 ep_config_build() {
 	local outfile="$1" engine binary listen listen_port final
 	local tmp out sections tags nodes section line first
-	local proxy dns_local dns_remote split mode locked_msg
-	local transparent tproxy_port
+	local proxy dns_local dns_remote split mode locked_msg node_bypass custom_rules platform_rules
+	local transparent tproxy_port region default_region member_first group_first
 	EP_ERR=""
 
 	outfile="${outfile:-$(ep_engine_config_path "$(ep_get main engine sing-box)")}"
@@ -251,6 +451,7 @@ ep_config_build() {
 	if [ "$nodes" -gt 0 ]; then
 		ep_rule_set_ensure
 	fi
+	node_bypass="$(ep_node_server_cidrs)"
 	mode="$(ep_route_mode "$nodes")"
 	split=0
 	[ "$mode" = "split" ] && split=1
@@ -326,19 +527,39 @@ ep_config_build() {
 		# --- outbounds -----------------------------------------------------
 		printf '  "outbounds": [\n'
 		if [ "$nodes" -gt 0 ]; then
-			# Node outbounds followed by the latency-tested selector
+			# Node outbounds followed by the latency groups and the selector
 			awk '{ printf "    %s,\n", $0 }' "$out"
-			printf '    { "type": "urltest", "tag": "proxy", "outbounds": ['
-			first=1
-			for section in $sections; do
-				[ "$(ep_get "$section" enabled 1)" = "1" ] || continue
-				[ "$first" = "1" ] || printf ', '
-				printf '"%s"' "$(ep_json_escape "$(ep_node_tag "$section")")"
-				first=0
+			# One latency group per region ("auto-hk", "auto-us", ...): urltest
+			# keeps re-picking the fastest node inside that region, which is the
+			# "自动选择可用节点" behaviour without any extra daemon.
+			default_region=""
+			for region in $(ep_node_regions); do
+				[ -n "$default_region" ] || default_region="$region"
+				printf '    { "type": "urltest", "tag": "auto-%s", "outbounds": [' "$region"
+				member_first=1
+				for section in $(ep_node_sections_in_region "$region"); do
+					[ "$member_first" = "1" ] || printf ', '
+					printf '"%s"' "$(ep_json_escape "$(ep_node_tag "$section")")"
+					member_first=0
+					done
+				printf '], "url": "http://www.gstatic.com/generate_204", "interval": "5m", "tolerance": 50 },\n'
 			done
-			printf '], "url": "http://www.gstatic.com/generate_204", "interval": "5m", "tolerance": 50 },\n'
+			# The selector in front of the groups is what route.final points at;
+			# options are the region groups, default is the first region.
+			printf '    { "type": "selector", "tag": "proxy", "outbounds": ['
+			group_first=1
+			for region in $(ep_node_regions); do
+				[ "$group_first" = "1" ] || printf ', '
+				printf '"auto-%s"' "$region"
+				group_first=0
+			done
+			printf '], "default": "auto-%s" },\n' "$default_region"
 		fi
-		printf '    { "type": "direct", "tag": "direct" }\n'
+		printf '    { "type": "direct", "tag": "direct" }'
+		if [ "$(ep_custom_uses_block)" = "1" ]; then
+			printf ',\n    { "type": "block", "tag": "block" }'
+		fi
+		printf '\n'
 		printf '  ],\n'
 
 		# --- route ---------------------------------------------------------
@@ -348,6 +569,25 @@ ep_config_build() {
 		fi
 		printf '    "rules": [\n'
 		printf '      { "ip_is_private": true, "outbound": "direct" }'
+		if [ -n "$node_bypass" ]; then
+			printf ',\n      { "ip_cidr": [%s], "outbound": "direct" }' "$node_bypass"
+		fi
+		# Operator rules first (their order is meaningful), then the platform
+		# splits, then the domestic rule set: a platform domain must be able to
+		# win over the CN rule, and a custom rule must be able to win over both.
+		# Both only make sense while split routing is active: with a missing rule
+		# set the hard lock above already forces every rule to DIRECT, and a
+		# platform rule pointing at "proxy" would quietly reopen that hole.
+		if [ "$split" = "1" ]; then
+			custom_rules="$(ep_custom_rules_json)"
+			if [ -n "$custom_rules" ]; then
+				printf ',\n%s' "$custom_rules"
+			fi
+			platform_rules="$(ep_platform_rules_json)"
+			if [ -n "$platform_rules" ]; then
+				printf ',\n%s' "$platform_rules"
+			fi
+		fi
 		if [ "$split" = "1" ]; then
 			printf ',\n      { "rule_set": ["geosite-cn", "geoip-cn"], "outbound": "direct" }\n'
 		else
@@ -360,6 +600,12 @@ ep_config_build() {
 			printf '    ],\n'
 		fi
 		printf '    "final": "%s"\n' "$final"
+		printf '  },\n'
+		# Keep the rule-set cache across restarts: re-checking a 10 MB .srs file
+		# on every boot is what makes small routers time out on startup.
+		printf '  "experimental": {\n'
+		printf '    "cache_file": { "enabled": true, "path": "%s" }\n' \
+			"$(ep_json_escape "$(ep_cache_file)")"
 		printf '  }\n'
 		printf '}\n'
 	} > "$tmp.file" || { rm -f "$tmp" "$out" "$tmp.file"; EP_ERR="cannot write config"; return 1; }
