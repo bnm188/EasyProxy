@@ -1,124 +1,283 @@
 # EasyProxy
 
-EasyProxy is a modular proxy-management package for ImmortalWrt, with a Chinese
-LuCI management panel.
+EasyProxy 是给 ImmortalWrt 用的模块化代理管理包：一条 SSH 命令装好「面板 + sing-box + dae」三件套，装完在 LuCI 的「服务 → EasyProxy」里用中文面板管理节点、分流、透明代理和维护。
 
-## Current stage — Stage 6: maintenance CLI and multi-page panel (0.6.0)
+- 当前版本：**0.6.0**
+- 适用固件：ImmortalWrt（`opkg` 与 `apk` 两种都支持，也支持 rootfs 直接展开）
+- 内核架构：`x86_64`、`aarch64_cortex-a53`、`arm_cortex-a7_neon-vfpv4`
+- 面板：10 个中文页面
+- 测试：9 套 **471** 项，另有真实 `sing-box 1.10.7` 校验路径
 
-Version `0.6.0` is the first release meant to be installed and used on a real
-router. On top of split routing and reversible transparent capture it adds engine
-management, node/subscription import, a full maintenance CLI and a ten-page
-Chinese dark LuCI panel. One SSH command now also installs the two proxy kernels,
-sing-box and dae, so the panel is usable as soon as it comes up.
+---
 
-| Layer | What exists now |
+## 一、现在能做什么 / 还不能做什么
+
+这一节比功能列表重要：**能做的有代码和实测支撑，不能做的也写清楚**，避免装完发现“说好的功能没有”。
+
+### 能用的
+
+| 能力 | 说明 |
 |---|---|
-| UCI config | `/etc/config/easyproxy` (main, routing, transparent, engine, nodes) |
-| Config generation | `easyproxy config generate` -> sing-box JSON, validated by `sing-box check` |
-| Split routing | `route.rules`: private IPs + CN rule sets -> `direct`; `route.final` -> `proxy` |
-| Rule sets | local `.srs` under `rule_set_dir`, refreshed by `easyproxy ruleset update` |
-| Transparent capture | `table ip easyproxy` (TPROXY) / `table ip6 easyproxy`; `transparent apply|remove|status|audit` |
-| Engines | registry `sing-box:stable`, `dae:dev`; `engine list|health|version`, `node test` |
-| Nodes | 8 share-link formats, `node list|add|import|export|del|test`, subscription fetch |
-| Maintenance | `config backup|restore|reset`, `ruleset update|verify`, `doctor [--json]`, `log rotate`, `uninstall-clean` |
-| LuCI panel | `服务 -> EasyProxy`, ten views: overview, nodes, subscription, split, engines, DNS, rules, logs, backup, settings |
-| Installer | one command installs panel + sing-box + dae; `upgrade` and `status` per component |
+| 一键装三件套 | 面板 + sing-box + dae 一次装完；每个下载都过 `SHA256SUMS`，拒绝错架构包，失败按失败报（不会打印成功） |
+| 节点管理 | 7 种分享链接导入、批量导入、导出、删除；订阅链接拉取（URL 不写 UCI、不进日志） |
+| 分流 | 大陆直连（锁死，不可改）、其余走代理；DNS 国内/国外分离 |
+| 透明代理 | 整个 LAN 无感走代理；nft 对象全在自有命名空间，一条命令回滚，不碰 fw4 |
+| 维护 | 配置备份/恢复/重置、规则集更新/校验、`doctor` 11 项自检、日志轮转、干净卸载 |
+| 升级 | 三组件各自独立升级；内核升级后不能运行会自动回滚旧二进制 |
+| 内核切换基础 | 已装 dae，适配器接口在（但见下方“还不能”） |
 
-### Install in one line (SSH on the router)
+### 还不能的（0.6.0 明确不支持）
+
+| 缺什么 | 现状 | 计划 |
+|---|---|---|
+| 无缝切换 | 换节点 = 改配置 + 重载，连接会断；没有 clash API，也没有 `node select` | Stage 11 |
+| 10 个平台分流 | 只有 YouTube / Netflix / TikTok 三个开关，且共用同一个 `proxy` 组 | Stage 12 |
+| 唯一管理入口 `easyproxy-manager.sh` | 还没有这个脚本，现在是 4 条独立命令 | Stage 10 |
+| 10 个固定分组 | 是按节点名关键词自动分地区桶（hk/tw/jp/sg/us/uk/de/kr/ru/other），不能手动归组、不能选组 | Stage 13 |
+| dae 真正可用 | 只装不用：适配器标记“开发中”，`easyproxy start` 会拒绝它；面板仍允许选中，选中后服务起不来 | Stage 16 决策 |
+| `ssr://` 链接 | **不支持**，会返回 `unsupported share link scheme: ssr` | — |
+| 带宽/丢包测速 | `node test` 只做一次 TCP 握手，QUIC 协议（hysteria2/tuic）会误报不可达 | Stage 13 |
+| 真机验收记录 | 透明代理、tproxy 转发、LuCI 渲染只在沙箱验证过，仓库里没有真机验收记录 | Stage 15 |
+| 发布不可变 | 目前每次 push `main` 都会重建并覆盖 `v0.6.0` 的资产 | Stage 9 |
+
+进度与证据见 [`docs/PROJECT-STATUS.md`](docs/PROJECT-STATUS.md)，路线见 [`docs/DEVELOPMENT-PLAN.md`](docs/DEVELOPMENT-PLAN.md)，历次工作报告见 [`docs/reports/`](docs/reports/)。
+
+---
+
+## 二、三条安全锁（写死在生成器里，不是开关）
+
+| 锁 | 行为 |
+|---|---|
+| 大陆永远直连 | `routing.china_policy='proxy'` 会被**拒绝**：`config generate` 直接失败并提示改成 `direct`。没有任何开关能把大陆流量送进代理 |
+| `fail_closed` 常在 | 大陆规则集缺失**且**下载失败时，生成**纯直连**配置（`route.final` / `dns.final` = `direct`）并返回非 0，绝不退化成全局代理 |
+| 内网永不出路由器 | `10.10.10.10`、`10.0.0.0/8`、`172.16.0.0/12`、`192.168.0.0/16`、所有节点服务器地址、`transparent.exclude`、路由器自身 LAN 地址，全在 bypass 集合或直连规则里；LAN 流量是被路由的，不是被抓包的，永远不进内核 |
+
+读法：规则集坏了，你丢的是国外网站，不是内网。`easyproxy doctor` 会把这两把锁报告成 `ok`。`install.sh` 从不写这些字段，只装二进制并把 UCI 指向它们。
+
+---
+
+## 三、一条命令安装（路由器 SSH 里执行）
 
 ```sh
-# install the panel, sing-box and dae in one go
+# 装面板 + sing-box + dae
 wget -qO- https://raw.githubusercontent.com/bnm188/EasyProxy/main/scripts/install.sh | sh
 
-# what is installed right now
+# 看当前装了什么
 wget -qO- https://raw.githubusercontent.com/bnm188/EasyProxy/main/scripts/install.sh | sh -s status
 
-# upgrade all three components (old -> new version per component, rollback on failure)
+# 三件套一起升级（逐组件打印旧版本 → 新版本，内核坏了回滚）
 wget -qO- https://raw.githubusercontent.com/bnm188/EasyProxy/main/scripts/install.sh | sh -s upgrade
 
-# uninstall (config is kept; append --purge to drop it as well)
+# 卸载（默认保留配置并先打备份；加 --purge 连配置一起删）
 wget -qO- https://raw.githubusercontent.com/bnm188/EasyProxy/main/scripts/uninstall.sh | sh
 ```
 
-Both commands work on opkg and apk firmware, fall back to a version-derived
-asset URL when `api.github.com` is rate-limited, and are safe to re-run. See
-[Install](#install) for every flag, and
-[`docs/router-install-test.md`](docs/router-install-test.md) for the
-step-by-step acceptance test on a real router.
+`opkg` 与 `apk` 固件都支持；`api.github.com` 被限流时会按 `PKG_VERSION` 拼出资产地址；命令可重复执行。想先看再跑：
 
-### Three safety locks (not configurable)
+```sh
+wget -O /tmp/install.sh https://raw.githubusercontent.com/bnm188/EasyProxy/main/scripts/install.sh
+sh /tmp/install.sh
+```
 
-These are compiled into the generator, not options a user can flip:
+### 安装参数
 
-| Lock | Behaviour |
+| 命令 | 作用 |
 |---|---|
-| Mainland China is always `direct` | `china_policy='proxy'` is **rejected**: `config generate` refuses and tells you to set `direct`. There is no switch that turns CN traffic into proxied traffic |
-| `fail_closed` is always on | when the CN rule sets are missing *and* cannot be downloaded, the generator emits a **pure-direct config** (`route.final` / `dns.final` = `direct`) and returns a warning. It never degrades into a full-tunnel proxy |
-| Intranet never leaves the router | `10.10.10.10`, `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, every node server address, `transparent.exclude` and the router's own LAN addresses are all in `bypass_ipv4` / the direct rule set. LAN traffic is routed, not captured: it never enters the engine |
+| `sh install.sh` | 面板 + sing-box + dae |
+| `sh install.sh upgrade` | 三组件升级，先打印版本表 |
+| `sh install.sh upgrade --only dae` | 只升级某一个组件（`package` / `sing-box` / `dae`） |
+| `sh install.sh status` | 三组件的已装版本 |
+| `sh install.sh --ipk` / `--apk` / `--rootfs` | 强制指定包装形式 |
+| `sh install.sh --no-sing-box` / `--no-dae` / `--no-engine` | 只装其中一部分 |
+| `sh install.sh --help` | 用法，不联网 |
 
-Read it as: a broken or missing rule set costs you foreign websites, never your
-LAN. `easyproxy doctor` reports both locks as `ok` when they hold. `install.sh`
-never writes any of these fields: it only installs binaries and points UCI at
-them.
+安装器会做这些事：
 
-### Why rule sets are local files
+1. 检测固件（`opkg` / `apk`），两者都没有且没加 `--rootfs` 就停止；
+2. 从最新 Release 挑匹配本机架构的资产（opkg 优先架构包，拿不到再退 `_all.ipk`）；
+3. **每个下载都先过 `SHA256SUMS`**，校验不过最多重下 3 次（CDN 边缘可能给旧对象），仍不过就失败；
+4. 按「面板 → sing-box → dae」顺序安装，各自来自自己的 Release 资产；没有现成资产时用脚本内固定 sha256 的上游包，解开确认是真正的 ELF 再落到 `/usr/bin/`；
+5. 把装了什么记进 `/etc/easyproxy/owned/`，以后卸载只删这些，用户自己装的 sing-box/dae 不会被碰；
+6. 把 `easyproxy.sing_box.binary` / `easyproxy.dae.binary` 指向它们，`main.engine` 为空时才补值；启用服务并重启 `rpcd` 让菜单出现；
+7. 对两个内核各跑一次 `version`，打印分组件小结，任何一个没装好就退出非 0。
 
-A `type: remote` rule set makes the engine download on startup, and a failed
-download is fatal: `start service: initialize rule-set` kills the whole process,
-so the router cannot start the proxy at boot without internet (verified against
-sing-box 1.10.7). EasyProxy therefore fetches the two `.srs` files during
-`config generate`, stores them under `rule_set_dir`, and emits
-`{"type": "local", "path": ...}`.
+### 装完还不能直接用（重要）
 
-| Situation | Behaviour |
+安装**不会**替你建节点、开开关。默认是 `enabled=0`、`engine=none`、零节点，所以装完要三步：
+
+```sh
+easyproxy node add 'ss://...'          # 或用面板「节点」页导入
+uci set easyproxy.main.engine='sing-box'
+uci set easyproxy.main.enabled='1'
+uci commit easyproxy
+easyproxy config generate              # 首次会下载规则集，写出并用 sing-box check 校验
+/etc/init.d/easyproxy enable
+/etc/init.d/easyproxy start
+easyproxy status
+```
+
+要让整个 LAN 走代理，再开透明抓包：
+
+```sh
+uci set easyproxy.transparent.enabled='1'
+uci set easyproxy.transparent.lan_interfaces="$(uci get network.lan.device 2>/dev/null || echo br-lan)"
+uci commit easyproxy
+easyproxy restart                      # 重新生成配置（加 tproxy 入站）并应用抓包
+easyproxy transparent status
+```
+
+想撤掉抓包、不影响其他配置：
+
+```sh
+easyproxy transparent remove
+uci set easyproxy.transparent.enabled='0'
+uci commit easyproxy
+easyproxy restart
+```
+
+---
+
+## 四、面板
+
+菜单在 LuCI「服务 → EasyProxy」，10 个页面：
+
+| 页面 | 内容 |
 |---|---|
-| files present and fresh | split routing active |
-| files missing, download succeeds | split routing active, files cached locally |
-| files missing, download fails | `fail_closed` takes over: the config is generated **all-direct** and `config generate` exits non-zero, so nothing falls through to the proxy |
-| no enabled nodes | `route.final` and `dns.final` fall back to `direct` / `dns-local` |
+| 总览 | 运行状态、流量曲线、节点数、分流/抓包状态 |
+| 节点 | 列表、增删、导入、测速 |
+| 订阅 | 填订阅地址拉取（一次性导入） |
+| 分流 | 平台开关、自定义规则 |
+| 内核 | 内核选择与健康检查 |
+| DNS | 解析方式与服务器 |
+| 规则 | 规则集状态与更新 |
+| 日志 | 运行日志与轮转 |
+| 备份 | 配置备份/恢复/重置 |
+| 设置 | 主要 UCI 选项 |
 
-The engine start path (`easyproxy run`, and the procd `start_service`) never
-hits the network: downloads only happen in `config generate` / `easyproxy start`.
+面板所有数据都来自 `easyproxy <命令> --json`，不直接读文件，也不解析日志。
 
-### Transparent capture
+---
 
-Everything the capture needs lives in **our own namespace**:
+## 五、分流与 DNS
 
-| Object | Name | Why |
+- `route.rules`：私网 IP + 大陆规则集（geosite-cn / geoip-cn）→ `direct`；`route.final` → `proxy`。
+- DNS：`dns-local`（223.5.5.5，走 direct）与 `dns-remote`（DoH，走 proxy）分离；`.cn`、geosite-cn、私网走本地解析，其余走远端。
+- 规则集用**本地文件**（`type: local`），不用 `type: remote`。原因很实际：remote 型规则集在引擎启动时下载，下载失败会让整个进程 `initialize rule-set` 直接退出，路由器断网时反而起不来（对 1.10.7 实测确认）。
+
+规则集缺失时的行为：
+
+| 情况 | 行为 |
+|---|---|
+| 文件在且没过期 | 分流正常 |
+| 文件缺，下载成功 | 分流正常，文件缓存到本地 |
+| 文件缺，下载失败 | `fail_closed` 生效：生成全直连配置，`config generate` 退出非 0，不会漏成全局代理 |
+| 没有启用的节点 | `route.final` / `dns.final` 退回 `direct` / `dns-local` |
+
+---
+
+## 六、透明代理
+
+抓包需要的对象全在自有命名空间，不碰 fw4：
+
+| 对象 | 名字 | 为什么 |
 |---|---|---|
-| nft table | `table ip easyproxy` | never touches fw4's tables, so removing it cannot damage the router's firewall |
-| chain | `prerouting` (priority `mangle`) | intercepts LAN input before routing |
-| set | `bypass_ipv4` | private ranges + every node server address + `transparent.exclude` |
-| policy rule | `fwmark <mark> lookup <table>` | sends the marked packets back to the local stack |
-| route table | `local default dev lo` | the destination the mark resolves to |
-| generated file | `/etc/easyproxy/nftables.conf` | what actually got loaded, so `nft -f` can be replayed or inspected |
+| nft 表 | `table ip easyproxy` | 不碰 fw4 的表，删它不会破坏路由器防火墙 |
+| 链 | `prerouting`（`mangle` 优先级） | 在路由决策前截获 LAN 入站 |
+| 集合 | `bypass_ipv4` | 私网段 + 所有节点服务器地址 + `transparent.exclude` |
+| 策略规则 | `fwmark <mark> lookup <table>` | 把打了标记的包交回本机协议栈 |
+| 路由表 | `local default dev lo` | 标记包的去向 |
+| 生成文件 | `/etc/easyproxy/nftables.conf` | 实际装载的内容，可 `nft -f` 重放或排查 |
 
-Capture tracer: LAN packet -> `prerouting` (only the listed interfaces, bypass
-set and the `mixed` port return early) -> `tproxy to :7891` + `meta mark set 1` ->
-`tproxy-in` -> sniffed domain -> split routing from Stage 4.
+以下任一条件成立时，`easyproxy transparent apply` **拒绝执行且什么都不改**（因为每一条都会让 LAN 黑洞）：
 
-`easyproxy transparent apply` refuses to run — and applies nothing — when any of
-these is true, because each one would black-hole the LAN:
-
-| Refusal | Reason |
+| 拒绝条件 | 原因 |
 |---|---|
-| `transparent.enabled=0` | feature is off |
-| no enabled nodes | captured traffic would have nowhere to go |
-| `nft` missing or not runnable | nothing to load the rules with |
-| engine not running | a tproxy rule without a listener drops packets |
+| `transparent.enabled=0` | 功能没开 |
+| 没有启用的节点 | 抓了也没地方去 |
+| `nft` 缺失或不可执行 | 没有工具装载规则 |
+| 引擎没在跑 | 有 tproxy 规则却没有监听者，包直接丢 |
 
-Rollback is two deletes plus two `ip` deletes: `easyproxy transparent remove`
-(also invoked automatically by `easyproxy stop` and the init script's
-`stop_service`). It never needs to know what the firewall looked like before.
+回滚只需删表和删规则：`easyproxy transparent remove`（`easyproxy stop` 和 init 的 `stop_service` 也会自动调用）。它不需要知道防火墙原来长什么样。
 
-Kernel note: the tproxy listener needs `CAP_NET_ADMIN` (`IP_TRANSPARENT`). On a
-router the engine runs as root under procd, so this is satisfied; in an
-unprivileged container sing-box exits with
-`configure tproxy TCP listener: operation not permitted` (verified), which means
-the config is correct but the host cannot intercept. `sing-box check` cannot
-detect this — it validates syntax only.
+内核要求：tproxy 监听需要 `CAP_NET_ADMIN`（`IP_TRANSPARENT`）。路由器上 procd 以 root 跑引擎，满足；非特权容器里 sing-box 会报 `configure tproxy TCP listener: operation not permitted`（已实测），说明配置是对的、环境不能抓。`sing-box check` 只校验语法，查不出这种情况。
 
-### Generated config shape
+---
+
+## 七、节点与订阅
+
+每个 `config node` 段对应一个 sing-box 出站；启用的节点放进一个延迟测试组（`urltest`，5 分钟一轮，50 ms 容差）。
+
+```sh
+uci add easyproxy node
+uci set easyproxy.@node[-1].name='hk-01'
+uci set easyproxy.@node[-1].type='shadowsocks'    # shadowsocks | vmess | trojan | socks | http
+uci set easyproxy.@node[-1].server='203.0.113.10'
+uci set easyproxy.@node[-1].port='8388'
+uci set easyproxy.@node[-1].method='aes-256-gcm'
+uci set easyproxy.@node[-1].password='secret'
+uci commit easyproxy
+```
+
+各类型必填：`shadowsocks` 要 `method`+`password`；`vmess` 要 `uuid`（可选 `alter_id`）；`trojan` 要 `password`；`socks`/`http` 的账号密码可选。`tls`+`sni` 用于 `trojan`、`vmess`、`hysteria2`、`tuic`（后两者必须 `tls=1`，手写时漏了会让整份配置生成失败）。任一节点缺字段，生成会指名该节点并中止，不会产出一份跑不起来的配置。
+
+分享链接更快：
+
+```sh
+easyproxy node add '<链接>'    # ss:// vmess:// vless:// trojan:// hysteria2:// tuic:// socks://
+easyproxy node import <文件>   # 批量
+easyproxy node export          # 原样导出
+/usr/lib/easyproxy/subscribe.sh <订阅地址>   # 拉订阅，URL 不落 UCI、不进日志
+```
+
+---
+
+## 八、常用命令
+
+| 命令 | 作用 |
+|---|---|
+| `easyproxy status [--json]` | 运行状态、配置状态、分流/抓包状态 |
+| `easyproxy config generate` | 取规则集、生成并校验 `sing-box.json` |
+| `easyproxy start` / `stop` / `restart` | 启停（`stop` 会先撤抓包） |
+| `easyproxy engine list\|health\|version` | 内核注册表与健康检查 |
+| `easyproxy node list\|add\|import\|export\|del\|test` | 节点操作 |
+| `easyproxy ruleset update\|verify` | 规则集更新/校验 |
+| `easyproxy doctor [--json]` | 11 项自检 |
+| `easyproxy log rotate` | 日志轮转 |
+| `easyproxy config backup\|restore\|reset` | 备份/恢复/重置 |
+| `easyproxy transparent apply\|remove\|status\|audit` | 抓包 |
+| `easyproxy uninstall-clean` | 只删 EasyProxy 自己的 nft 对象 |
+
+---
+
+## 九、主要配置项
+
+分流：
+
+| 选项 | 默认 | 含义 |
+|---|---|---|
+| `routing.china_policy` | `direct` | 锁死：大陆流量永远不走代理，写 `proxy` 会被拒 |
+| `routing.proxy_policy` | `proxy` | 非大陆流量与远端 DNS 使用的组 |
+| `routing.fail_closed` | `1` | 锁死：规则集缺失时全直连，没有全局代理兜底 |
+| `routing.rule_set_dir` | `/etc/easyproxy/ruleset` | `.srs` 文件位置 |
+| `routing.rule_set_update_days` | `7` | 缓存超过多少天就重下 |
+| `routing.dns_local_server` | `223.5.5.5` | 国内解析器 |
+| `routing.dns_remote_server` | `https://1.1.1.1/dns-query` | 远端 DoH |
+
+透明代理：
+
+| 选项 | 默认 | 含义 |
+|---|---|---|
+| `transparent.enabled` | `0` | 总开关，为 1 且引擎在跑才抓包 |
+| `transparent.tproxy_port` | `7891` | tproxy 监听端口，必须与生成的配置一致 |
+| `transparent.fwmark` | `1` | nft 打标记、策略规则匹配 |
+| `transparent.route_table` | `100` | 存放 `local default dev lo` 的表 |
+| `transparent.lan_interfaces` | `br-lan` | 被截获的入站接口，空格分隔 |
+| `transparent.exclude` | 空 | 额外保持直连的地址/CIDR |
+| `transparent.ipv6_policy` | `direct` | `direct` 或 `block`：IPv6 不会被静默抓包 |
+
+---
+
+## 十、生成的配置长什么样
 
 ```json
 {
@@ -137,17 +296,15 @@ detect this — it validates syntax only.
   },
   "inbounds": [
     { "type": "mixed", "tag": "mixed-in", "listen": "127.0.0.1", "listen_port": 7890 },
-    /* only when transparent.enabled=1 and a node exists */
     { "type": "tproxy", "tag": "tproxy-in", "listen": "0.0.0.0", "listen_port": 7891,
       "sniff": true, "sniff_override_destination": true, "udp_timeout": "5m" }
   ],
   "outbounds": [
-    /* one per enabled node */,
     { "type": "urltest", "tag": "proxy", "outbounds": ["hk-01"], "url": "http://www.gstatic.com/generate_204", "interval": "5m", "tolerance": 50 },
     { "type": "direct", "tag": "direct" }
   ],
   "route": {
-    "auto_detect_interface": true,   /* only with the tproxy inbound */
+    "auto_detect_interface": true,
     "rules": [
       { "ip_is_private": true, "outbound": "direct" },
       { "rule_set": ["geosite-cn", "geoip-cn"], "outbound": "direct" }
@@ -161,136 +318,11 @@ detect this — it validates syntax only.
 }
 ```
 
-### Routing options
+（示例省略了每个节点自己的出站；tproxy 入站只在 `transparent.enabled=1` 且有节点时出现。）
 
-| UCI option | Default | Meaning |
-|---|---|---|
-| `routing.china_policy` | `direct` | locked: CN traffic always bypasses the proxy, `proxy` is rejected |
-| `routing.proxy_policy` | `proxy` | group used for non-CN traffic and remote DNS |
-| `routing.fail_closed` | `1` | locked: with CN rule sets missing the config is all-direct; there is no full-tunnel fallback |
-| `routing.rule_set_dir` | `/etc/easyproxy/ruleset` | where the `.srs` files live |
-| `routing.geosite_cn_url` | SagerNet `geosite-cn.srs` | domain rule-set source |
-| `routing.geoip_cn_url` | SagerNet `geoip-cn.srs` | address rule-set source |
-| `routing.rule_set_update_days` | `7` | refresh a cached file older than this |
-| `routing.dns_local_server` | `223.5.5.5` | domestic resolver |
-| `routing.dns_remote_server` | `https://1.1.1.1/dns-query` | remote DoH resolver |
+---
 
-### Transparent capture options
-
-| UCI option | Default | Meaning |
-|---|---|---|
-| `transparent.enabled` | `0` | master switch; nothing is captured unless this is `1` **and** the engine is running |
-| `transparent.tproxy_port` | `7891` | the `tproxy-in` listen port (must match the generated config) |
-| `transparent.fwmark` | `1` | mark written by nft and matched by the policy rule |
-| `transparent.route_table` | `100` | table holding `local default dev lo` |
-| `transparent.lan_interfaces` | `br-lan` | interfaces whose input is captured, space separated |
-| `transparent.exclude` | *(empty)* | extra IPv4 addresses/CIDRs that must stay direct |
-| `transparent.ipv6_policy` | `direct` | `direct` or `block`: IPv6 is never captured silently |
-
-### Runtime model
-
-```
-/etc/config/easyproxy            (nodes, engine, routing, DNS options)
-        ↓ ep_rule_set_ensure     (download .srs into rule_set_dir, cached)
-        ↓ ep_config_build
-/etc/easyproxy/sing-box.json     (validated with `sing-box check`)
-        ↓ easyproxy run
-sing-box (child process)         ← procd supervises the wrapper, respawns on exit
-        ↓ /var/run/easyproxy/easyproxy.pid  (pid + start timestamp)
-easyproxy status --json          (pid, uptime, config state, split state)
-```
-
-### Node schema
-
-Every `config node` section becomes one sing-box outbound. Enabled nodes are put
-behind a latency-tested `proxy` group (`urltest`, 5m interval):
-
-```sh
-uci add easyproxy node
-uci set easyproxy.@node[-1].name='hk-01'
-uci set easyproxy.@node[-1].type='shadowsocks'    # shadowsocks | vmess | trojan | socks | http
-uci set easyproxy.@node[-1].server='203.0.113.10'
-uci set easyproxy.@node[-1].port='8388'
-uci set easyproxy.@node[-1].method='aes-256-gcm'
-uci set easyproxy.@node[-1].password='secret'
-uci commit easyproxy
-```
-
-Per type: `shadowsocks` needs `method` + `password`; `vmess` needs `uuid`
-(optional `alter_id`); `trojan` needs `password`; `socks`/`http` accept optional
-`username`/`password`. `tls` + `sni` apply to `trojan` and `vmess`. Any node can
-be skipped with `enabled '0'`. A node missing a required field aborts generation
-with the section named, rather than emitting a config that would fail later.
-
-Share links are the quicker path — `easyproxy node add '<link>'` understands
-ss://, ssr://, vmess://, trojan://, vless://, hysteria2://, tuic:// and
-socks://; `easyproxy node import <file>` reads a batch, `easyproxy node export`
-prints them back, and `sub.sh`-style subscriptions are fetched by
-`/usr/lib/easyproxy/subscribe.sh <url>` (the URL is never written to UCI or
-the log).
-
-### `easyproxy status --json`
-
-```json
-{
-  "ok": true,
-  "package": "easyproxy",
-  "version": "0.6.0",
-  "stage": 6,
-  "enabled": 1,
-  "engine": "sing-box",
-  "binary": "/usr/bin/sing-box",
-  "binary_ok": 1,
-  "china_policy": "direct",
-  "proxy_policy": "proxy",
-  "fail_closed": 1,
-  "nodes": 2,
-  "nodes_enabled": 2,
-  "runtime": "running",
-  "runtime_pid": 1234,
-  "runtime_uptime": 87,
-  "china_rule": 1,
-  "route_rules": 2,
-  "dns_mode": "split",
-  "rule_set_state": "ready",
-  "transparent": 1,
-  "tproxy_port": 7891,
-  "tproxy_state": "active",
-  "ipv6_policy": "direct",
-  "ipv6_state": "direct",
-  "config_state": "ok",
-  "config_path": "/etc/easyproxy/sing-box.json",
-  "config_file": "/etc/config/easyproxy",
-  "generated": "2026-11-16T05:20:00Z"
-}
-```
-
-| Field | Meaning |
-|---|---|
-| `runtime` | `running` / `stopped`, read from the pid file, not from a flag |
-| `runtime_pid` / `runtime_uptime` | wrapper pid and seconds since it started (`0` when stopped) |
-| `china_rule` | `1` when the CN direct rule is generated, `0` when traffic is fully proxied |
-| `route_rules` | number of `route.rules` entries (`1` = private IP only, `2` = private IP + CN) |
-| `dns_mode` | `split` (domestic + remote resolvers) or `local` (single resolver) |
-| `rule_set_state` | `ready` / `missing`, from the `.srs` files on disk |
-| `transparent` | `1` when capture is configured (not when it is actually loaded) |
-| `tproxy_state` | `active` (table loaded) / `inactive` / `unsupported` (no usable nft) |
-| `ipv6_state` | `direct` / `block` / `unsupported` (no `ip6tables`-capable nft) |
-| `config_state` | `ok` / `invalid` / `missing`, verified with `sing-box check` |
-| `nodes` / `nodes_enabled` | total node sections and how many are enabled |
-
-### Data path
-
-```
-/etc/config/easyproxy
-        ↓ (uci)
-/usr/sbin/easyproxy status --json
-        ↓ (rpcd file.exec, ACL: luci-app-easyproxy)
-/usr/lib/easyproxy/app.js  ->  overview / nodes / subscription / split / engines /
-                              dns / rules / logs / backup / settings
-```
-
-## Layout
+## 十一、目录结构
 
 ```
 package/easyproxy/
@@ -300,321 +332,127 @@ package/easyproxy/
     ├── etc/init.d/easyproxy
     ├── etc/hotplug.d/iface/95-easyproxy
     ├── usr/sbin/easyproxy
-    ├── usr/lib/easyproxy/common.sh
-    ├── usr/lib/easyproxy/config.sh
-    ├── usr/lib/easyproxy/transparent.sh
-    ├── usr/lib/easyproxy/node.sh
-    ├── usr/lib/easyproxy/maint.sh
-    ├── usr/lib/easyproxy/traffic.sh
-    ├── usr/lib/easyproxy/subscribe.sh
+    ├── usr/lib/easyproxy/{common,config,transparent,node,maint,traffic,subscribe}.sh
     ├── usr/lib/easyproxy/adapters/{dae.sh,sing-box.sh}
     ├── usr/share/easyproxy/easyproxy.default
     ├── usr/share/luci/menu.d/luci-app-easyproxy.json
     ├── usr/share/rpcd/acl.d/luci-app-easyproxy.json
     ├── www/luci-static/resources/easyproxy/app.js
-    └── www/luci-static/resources/view/easyproxy/*.js   (10 views)
+    └── www/luci-static/resources/view/easyproxy/*.js   （10 个视图）
 scripts/
-├── make-ipk.sh          # build the ipk (all / x86_64 / ...) from package/easyproxy
-├── make-kernel-ipk.sh   # build sing-box_<ver>_<arch>.ipk / dae_<ver>_<arch>.ipk
-├── install.sh           # one-line installer: panel + sing-box + dae, upgrade, status
-└── uninstall.sh         # one-line uninstaller: backup, --purge, --keep-kernels
-tests/
-├── test-cli.sh             # CLI surface (status/validate/engine/start guard)
-├── test-runtime.sh         # config generation + start/stop lifecycle
-├── test-routing.sh         # split routing, DNS block, rule-set handling
-├── test-transparent.sh     # tproxy inbound, nft/ip takeover, IPv6 policy, rollback
-├── test-engine.sh          # engine registry, health probes, node probe, dev refusal
-├── test-nodes.sh           # share-link parsing, groups, platform/custom rules
-├── test-maintenance.sh     # backup/restore/reset, ruleset update+verify, doctor, log rotate
-├── test-ipk-layout.sh      # ipk payload + control metadata, all and x86_64
-└── test-install-scripts.sh # installer/uninstaller against stubbed opkg/apk/curl
+├── make-ipk.sh          # 从 package/easyproxy 打 ipk（all / x86_64 / …）
+├── make-kernel-ipk.sh   # 打 sing-box_<ver>_<arch>.ipk / dae_<ver>_<arch>.ipk
+├── install.sh           # 一键安装：面板 + 两内核，含 upgrade / status
+└── uninstall.sh         # 一键卸载：备份、--purge、--keep-kernels
+tests/                   # 9 套 471 项
 docs/
-└── router-install-test.md  # step-by-step acceptance test on a real router
+├── PROJECT-STATUS.md    # 真实完成度
+├── DEVELOPMENT-PLAN.md  # 阶段路线
+├── reports/             # 每次工作的独立报告（NNN-日期-任务）
+└── router-install-test.md  # 真机验收清单（尚未有验收记录）
 ```
 
-## Tests
+---
 
-All suites run on any Linux shell, without OpenWrt and without a real engine
-(a stub `sing-box` is generated inside a temp sandbox; the routing suite compiles
-its own rule-set fixtures with the real binary when one is supplied):
+## 十二、测试与 CI
+
+9 套测试都能在任意 Linux 上跑，不需要 OpenWrt，也不需要真内核（沙箱里生成 stub 版 `sing-box`）：
 
 ```sh
 for t in tests/test-*.sh; do sh "$t" || break; done
+```
 
-# additionally validate the generated config against a real binary:
-EP_SING_BOX_BIN=/usr/bin/sing-box sh tests/test-runtime.sh
+| 套件 | 项数 |
+|---|---|
+| `test-routing.sh` | 32 |
+| `test-transparent.sh` | 84 |
+| `test-nodes.sh` | 61 |
+| `test-engine.sh` | 44 |
+| `test-maintenance.sh` | 44 |
+| `test-install-scripts.sh` | 126 |
+| `test-ipk-layout.sh` | 40 |
+| `test-cli.sh` | 21 |
+| `test-runtime.sh` | 19 |
+| **合计** | **471** |
+
+补上真实内核校验（会多跑几条用真二进制的用例）：
+
+```sh
 EP_SING_BOX_BIN=/usr/bin/sing-box sh tests/test-routing.sh
 EP_SING_BOX_BIN=/usr/bin/sing-box sh tests/test-transparent.sh
+EP_SING_BOX_BIN=/usr/bin/sing-box sh tests/test-runtime.sh
 ```
 
-Nine suites, 471 checks: routing 32, transparent 84, nodes 61, engine 44,
-maintenance 44, install scripts 126, ipk layout 40, CLI 21, runtime 19
-(`runtime` and `transparent` hold 19 and 84 without a real `sing-box` binary,
-which is also what CI runs).
+CI 用 `.github/workflows/build.yml`：下载官方 ImmortalWrt SDK（25.12.2，x86-64）→ 跑仓库测试套件（失败即停，不会发布）→ 编译原生包 → 用上游归档打三架构的 sing-box / dae 内核包（各自校验固定 sha256）→ 写 `KERNEL-VERSIONS` → 上传 `easyproxy-immortalwrt-25.12.2` artifact → 发布。
 
-The install-script suite stubs `opkg`, `apk`, `curl`, `uci` and the init/rpcd
-scripts in a sandbox, so it covers both package managers, the API-unreachable
-fallback, the rootfs route, the arch-matched ipk choice, the three-component
-install, both kernels (sha256, architecture, reuse, failure), `upgrade` with its
-version table and rollback, a corrupt download that must be retried and one
-that must stay fatal, `status`, and the uninstall ordering, backup,
-`--purge` and `--keep-kernels` without touching `/etc` at all.
+**CI 的已知短板（如实写）**：CI 不安装 `sing-box`，`test-routing.sh` 里真实内核校验那条会走“跳过”分支且被计为通过，所以 CI 的 471 项只能证明配置形状与脚本逻辑，不能证明“内核接受这份配置”。这件事已列入 Stage 9。
 
-The transparent suite stubs `nft` and `ip`, so the takeover state machine is
-exercised (apply, idempotent re-apply, rollback, refusals, missing nft)
-without touching the host's firewall and without root.
+---
 
-## Build
+## 十三、发布资产
 
-`.github/workflows/build.yml` downloads the official ImmortalWrt SDK
-(25.12.2, x86-64), runs the repo test suites, copies `package/easyproxy` into the
-SDK and builds the native package, then builds the two kernel packages for
-x86_64, `aarch64_cortex-a53` and `arm_cortex-a7_neon-vfpv4` out of the official
-upstream archives (each checked against a pinned sha256), writes `KERNEL-VERSIONS`
-and uploads the `easyproxy-immortalwrt-25.12.2` artifact. Runs on push/PR to `main`,
-on `workflow_dispatch`, and on `v*` tags. A failing suite stops the build before
-anything is published.
-
-Every release carries the three components as separate packages plus checksums:
-
-| Asset | For |
+| 资产 | 用途 |
 |---|---|
-| `easyproxy_<ver>-1_all.ipk` | any opkg firmware, architecture-independent |
-| `easyproxy_<ver>-1_x86_64.ipk` | opkg firmware that refuses `Architecture: all` (x86_64 targets) |
-| `easyproxy-<ver>-1.apk` | ImmortalWrt 25.x images using `apk` |
-| `easyproxy-<ver>-rootfs.tar.gz` | no matching package manager: extract at `/` |
-| `sing-box_<ver>_<arch>.ipk` | sing-box kernel, one package per architecture |
-| `dae_<ver>_<arch>.ipk` | dae kernel, binary plus `/usr/share/dae` routing assets |
-| `SHA256SUMS` | sha256 of every asset above, kernels included |
-| `KERNEL-VERSIONS` | the kernel versions and architectures this release pins |
+| `easyproxy_0.6.0-1_all.ipk` | 任意 opkg 固件，架构无关 |
+| `easyproxy_0.6.0-1_x86_64.ipk` | 拒绝 `Architecture: all` 的 opkg 固件（x86_64） |
+| `easyproxy-0.6.0-r1.apk` | 用 `apk` 的 ImmortalWrt 25.x 镜像 |
+| `easyproxy-0.6.0-rootfs.tar.gz` | 没有匹配包管理器时直接解到 `/` |
+| `sing-box_1.10.7_<arch>.ipk` | sing-box 内核，按架构分包 |
+| `dae_2.1.2_<arch>.ipk` | dae 内核（二进制 + `/usr/share/dae` 路由数据） |
+| `SHA256SUMS` | 上面的 sha256，安装器逐项校验 |
+| `KERNEL-VERSIONS` | 本版本固定了哪些内核版本与架构 |
 
-`<arch>` is one of `x86_64`, `aarch64_cortex-a53`, `arm_cortex-a7_neon-vfpv4`.
-The kernels cannot live inside `easyproxy_..._all.ipk`: that package is
-architecture-independent, so an amd64 binary would be installed on an ARM router.
-Three separate packages also mean three separate upgrades and three separate
-removals, which is what the installer drives.
+内核不能塞进 `_all.ipk`：那个包架构无关，塞了 amd64 二进制就会装到 ARM 路由器上。三个包也意味着三者可以分别升级、分别卸载，安装器就是按这个设计的。
 
-`sh scripts/make-ipk.sh package/easyproxy dist all` and
-`sh scripts/make-ipk.sh package/easyproxy dist x86_64` build the two ipk flavours
-locally; the architecture is stamped into the `control` member.
-`sh scripts/make-kernel-ipk.sh sing-box x86_64 dist` and
-`sh scripts/make-kernel-ipk.sh dae x86_64 dist` build the kernel packages the
-same way the workflow does.
+**当前发布方式的问题**：每次推 `main`（哪怕只改文档）都会触发 CI 重建并 `--clobber` 覆盖 `v0.6.0` 的整组资产，所以同一个版本号在不同时间下载到的字节可能不同。修复计划见 Stage 9（tag 触发构建 + 不可变发布）。
 
-## Install
-
-### One-line install from GitHub
-
-On the router, over SSH, the whole install is one command:
+本地构建：
 
 ```sh
-wget -qO- https://raw.githubusercontent.com/bnm188/EasyProxy/main/scripts/install.sh | sh
+sh scripts/make-ipk.sh package/easyproxy dist all
+sh scripts/make-ipk.sh package/easyproxy dist x86_64
+sh scripts/make-kernel-ipk.sh sing-box x86_64 dist
+sh scripts/make-kernel-ipk.sh dae x86_64 dist
 ```
 
-One command installs all three components. It:
+---
 
-1. detects the firmware (`opkg` or `apk`) and refuses to continue when neither
-   exists and `--rootfs` was not asked for;
-2. picks the matching asset of the **latest release**: on opkg firmware the ipk
-   that matches this host's architecture (falling back to `_all.ipk` when there
-   is no arch-specific one or when it fails to download), on apk images the
-   `.apk`, and for `--rootfs` the rootfs archive;
-3. verifies **every** download against `SHA256SUMS` before anything is installed
-   and refuses a package that is not the one the checksum file describes. A
-   checksum mismatch is re-downloaded up to three times first, because a CDN
-   edge can serve a stale object under an immutable release URL;
-4. installs the panel, then the sing-box kernel, then the dae kernel - each from
-   its own release asset when the release carries one
-   (`sing-box_<ver>_<arch>.ipk`, `dae_<ver>_<arch>.ipk`, installed through the
-   package manager so opkg owns the files), otherwise from the official upstream
-   archive with the sha256 pinned inside the script, unpacked, checked to be a
-   real ELF executable and installed to `/usr/bin/sing-box` and `/usr/bin/dae`
-   (`/usr/share/dae` for dae's `geoip.dat` / `geosite.dat`);
-5. records what it installed in `/etc/easyproxy/owned/`, so a later uninstall
-   removes only those files and never a kernel the user installed themselves;
-6. points `easyproxy.sing_box.binary` / `easyproxy.dae.binary` at them, leaves
-   `main.engine` untouched unless it is still empty or `none`, enables the
-   service and restarts `rpcd` so the LuCI menu shows up;
-7. runs `<binary> version` on both kernels, prints a per-component summary and
-   exits non-zero if anything did not install. A failed download or checksum is
-   reported as a failure - the script never prints success over a broken install.
+## 十四、开发与报告制度
 
-Re-running it is safe: an already present kernel of the right version is reused
-instead of downloaded again.
+每次开发、修 bug、跑测试、编译，都必须留一份独立报告在 [`docs/reports/`](docs/reports/)，规则见 [`docs/reports/README.md`](docs/reports/README.md)，核心是：
 
-| Command | What it does |
-|---|---|
-| `sh install.sh` | install panel + sing-box + dae |
-| `sh install.sh upgrade` | upgrade all three, with a version table |
-| `sh install.sh upgrade --only dae` | upgrade one component only |
-| `sh install.sh status` | installed versions of all three |
-| `sh install.sh --ipk` | force the `.ipk` asset |
-| `sh install.sh --apk` | force the `.apk` asset |
-| `sh install.sh --rootfs` | skip the package manager, extract the rootfs archive at `/` |
-| `sh install.sh --no-sing-box` | panel + dae only |
-| `sh install.sh --no-dae` | panel + sing-box only |
-| `sh install.sh --no-engine` | panel only, no kernel |
-| `sh install.sh --help` | usage, no network access |
+- 编号连续（`NNN-YYYY-MM-DD-任务名.md`），只增不减、不覆盖、不删除；
+- 报告必填 14 项：目标、文件、逐文件改动、新增功能、未实现功能、删除理由、测试、测试结果、编译、产物、Commit SHA、遗留、下一步、阶段判定；
+- 没跑测试不写通过，没真跑不写可用，没产物不写交付；失败记录必须保留；
+- 先提交代码，再提交报告，报告里写代码提交的 SHA。
 
-### Upgrade and status
+现状与路线：`docs/PROJECT-STATUS.md`、`docs/DEVELOPMENT-PLAN.md`。最近一次全量审计见 `docs/reports/001-2026-11-16-audit.md`。
 
-```sh
-# all three components, after printing what changes
-wget -qO- https://raw.githubusercontent.com/bnm188/EasyProxy/main/scripts/install.sh | sh -s upgrade
+---
 
-# one component only
-wget -qO- https://raw.githubusercontent.com/bnm188/EasyProxy/main/scripts/install.sh | sh -s upgrade --only package    # panel
-wget -qO- https://raw.githubusercontent.com/bnm188/EasyProxy/main/scripts/install.sh | sh -s upgrade --only sing-box  # kernel
-wget -qO- https://raw.githubusercontent.com/bnm188/EasyProxy/main/scripts/install.sh | sh -s upgrade --only dae       # kernel
+## 十五、路线图
 
-# what is on disk right now
-wget -qO- https://raw.githubusercontent.com/bnm188/EasyProxy/main/scripts/install.sh | sh -s status
-```
+| 阶段 | 内容 | 状态 |
+|---|---|---|
+| 1 | 打包修复，让面板出现在 LuCI | 完成 |
+| 2 | 面板读到真实状态与校验数据 | 完成 |
+| 3 | sing-box 配置生成 + procd 托管运行时 | 完成 |
+| 4 | 分流 + DNS（大陆直连、其余代理），本地规则集 | 完成 |
+| 5 | 透明抓包：自有 nft 表 + 策略路由，一条命令回滚 | 完成（沙箱验证） |
+| 6 | 内核注册表、节点/订阅导入、维护 CLI、10 页面板 | 完成（0.6.0） |
+| 7 | 编译/安装/卸载验证：双 ipk、CI 门禁、架构感知安装器、真机清单 | 部分完成（安装与内核回滚已验；面板回滚、升级前备份、磁盘/兼容检查、统一入口未做） |
+| 8 | 文档与报告制度 | 完成 |
+| 9 | 发布合规：tag 驱动、不可变、CI 真内核校验、测试报告产物 | 未开始 |
+| 10 | 唯一入口 `easyproxy-manager.sh`（9 项菜单） | 未开始 |
+| 11 | 无缝切换（clash API，不重启内核） | 未开始 |
+| 12 | 10 个平台分流 + 可绑定地区组 | 未开始 |
+| 13 | 测速升级 + 多订阅/定时/到期 | 未开始 |
+| 14 | P1/P2 缺陷修复 | 未开始 |
+| 15 | 真机验收与稳定化 | 未开始 |
+| 16 | dae：真正可用或正式下线 | 未开始 |
 
-`upgrade` prints the current and newest version of each component first, then
-upgrades only those whose version differs:
+---
 
-```
-component    current      newest
-easyproxy    0.6.0-1      0.6.0-1
-sing-box     1.9.0        1.10.7
-dae          2.1.0        2.1.2
-```
+## 十六、许可证
 
-Before a kernel is replaced its old binary is copied to
-`/etc/easyproxy/backup/<kernel>.old`. The new one must answer `<binary> version`,
-otherwise the old binary is restored, the component is reported as
-`upgrade incomplete` and the command exits non-zero. The service is stopped for
-the duration of the upgrade and started again afterwards.
-
-Without a pipe, the same two actions run from a local copy:
-`sh scripts/install.sh upgrade` and `sh scripts/install.sh status`.
-
-### Uninstall
-
-```sh
-wget -qO- https://raw.githubusercontent.com/bnm188/EasyProxy/main/scripts/uninstall.sh | sh
-```
-
-It removes the nftables capture first, then stops the service, then removes the
-package — in that order, so LAN traffic is never left pointing at a dead listener.
-Before anything is removed, a backup of the config and state is written to
-`/root/easyproxy-backup-<date>-<time>.tar.gz` and its path is printed.
-`/etc/config/easyproxy` and `/etc/easyproxy` are kept afterwards.
-
-| Command | What it does |
-|---|---|
-| `sh uninstall.sh` | remove everything, keep config and state, keep a backup |
-| `sh uninstall.sh --purge` | remove the package, the config and the state too |
-| `sh uninstall.sh --keep-config` | explicit alias of the default |
-| `sh uninstall.sh --keep-kernels` | remove only the panel, leave sing-box and dae |
-| `sh uninstall.sh --no-backup` | do not write the backup archive |
-
-The kernels are only removed when this installer put them there: their paths are
-listed in `/etc/easyproxy/owned/`, and a `sing-box` or `dae` the user installed
-themselves has no such record, so it is never touched.
-
-Both scripts are idempotent, and both still work when `api.github.com` is
-rate-limited or unreachable: the asset URL is then rebuilt from `PKG_VERSION`
-in `package/easyproxy/Makefile`. Only `curl` or `wget` is required.
-
-Prefer to read before running? Fetch, inspect, then execute:
-
-```sh
-wget -O /tmp/install.sh https://raw.githubusercontent.com/bnm188/EasyProxy/main/scripts/install.sh
-sh /tmp/install.sh
-```
-
-### From a package you downloaded yourself
-
-```sh
-opkg install --force-reinstall /tmp/easyproxy_*.ipk
-opkg install /tmp/sing-box_*.ipk   # or install the kernel yourself and point
-opkg install /tmp/dae_*.ipk        # easyproxy.sing_box.binary / easyproxy.dae.binary at it
-/etc/init.d/rpcd restart
-rm -f /tmp/luci-indexcache*
-```
-
-For apk-based images: `apk add --allow-untrusted /tmp/easyproxy_*.apk`.
-
-Then configure and start it from the shell:
-
-```sh
-uci set easyproxy.main.engine='sing-box'
-uci set easyproxy.main.enabled='1'
-uci commit easyproxy
-easyproxy config generate       # downloads rule sets, writes and validates the config
-/etc/init.d/easyproxy enable
-/etc/init.d/easyproxy start
-easyproxy status
-```
-
-`config generate` needs network access the first time so the two `.srs` files
-can be cached. On a router without internet, copy `geosite-cn.srs` and
-`geoip-cn.srs` to `/etc/easyproxy/ruleset/` by hand and run it again —
-`fail_closed` takes over until the two files are back: the config is generated
-all-direct, `config generate` exits non-zero, and `status` reports
-`rule_set_state: missing`. CN sites and the LAN never depend on them; only
-foreign sites wait.
-
-Capture is off by default. To let the router proxy the whole LAN:
-
-```sh
-uci set easyproxy.transparent.enabled='1'
-uci set easyproxy.transparent.lan_interfaces="$(uci get network.lan.device 2>/dev/null || echo br-lan)"
-uci commit easyproxy
-easyproxy restart          # regenerates the config (adds tproxy-in), applies the capture
-easyproxy transparent status
-```
-
-A LAN client then needs nothing configured at all. To roll the capture back
-without touching anything else:
-
-```sh
-easyproxy transparent remove
-uci set easyproxy.transparent.enabled='0'
-uci commit easyproxy
-easyproxy restart
-```
-
-`remove` deletes `table ip easyproxy` and the policy rule/route it created;
-nothing else on the router is modified. To stop EasyProxy entirely:
-`easyproxy stop` (which removes the capture first) and
-`uci set easyproxy.main.enabled='0'`.
-
-## Maintenance
-
-```sh
-easyproxy config backup        # /etc/easyproxy/backups/easyproxy-<date>.tar.gz
-easyproxy config restore <f>   # keeps <config>.before-restore first
-easyproxy config reset         # back to the packaged defaults, keeps .before-reset
-easyproxy ruleset update       # download .new then move it, a failure keeps the old file
-easyproxy ruleset verify       # exists / non-empty / SRS magic / plausible size
-easyproxy doctor [--json]      # 11 checks: locks, engines, rule sets, capture, config
-easyproxy log rotate           # <log> -> <log>.1, then truncate
-easyproxy uninstall-clean      # delete only EasyProxy's own nft objects
-```
-
-`uninstall-clean` is what `scripts/uninstall.sh` calls first, and it prints
-`stock ImmortalWrt rules untouched` — the router's own firewall is never
-rewritten, not even during removal.
-
-## Roadmap
-
-| Stage | Scope |
-|---|---|
-| 1 | Packaging fix so the panel appears in LuCI |
-| 2 | Panel reads real status/validation data |
-| 3 | sing-box config generation + procd-supervised runtime |
-| 4 | Split routing + DNS (China direct, others proxied), local rule sets |
-| 5 | Transparent capture: own nft table + policy routing, reversible in one command |
-| **6 (current, 0.6.0)** | Engine registry, node/subscription import, maintenance CLI (`config backup/restore/reset`, `ruleset update/verify`, `doctor`, `log rotate`, `uninstall-clean`), ten-page panel |
-| 7 (done in 0.6.0) | Compile/install/uninstall verification: dual ipk (all + x86_64), CI test gate, arch-aware installer, on-router acceptance checklist in `docs/router-install-test.md` |
-
-Transparent capture got its own stage because it is the one change that touches
-firewall state on the user's router. It is kept out of fw4 entirely and ships
-with a rollback that only deletes objects EasyProxy created.
-
-## License
-
-MIT — see `LICENSE`.
+MIT，见 `LICENSE`。
