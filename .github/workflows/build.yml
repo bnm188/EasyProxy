@@ -147,14 +147,27 @@ jobs:
             exit 1
           fi
 
+      # The kernel versions are read from the package filenames the previous
+      # steps actually produced, not from the packaging script source: a filename
+      # cannot drift away from the package it names, and it needs no fragile sed
+      # escaping.
       - name: Write KERNEL-VERSIONS
         run: |
           set -euo pipefail
-          cd dist
-          SB_VER="$(sed -n 's/^SING_BOX_VER=.*:-\\([0-9][0-9.]*\\)}.*/\\1/p' ../scripts/make-kernel-ipk.sh)"
-          DAE_VER="$(sed -n 's/^DAE_VER=.*:-\\([0-9][0-9.]*\\)}.*/\\1/p' ../scripts/make-kernel-ipk.sh)"
-          [ -n "$SB_VER" ] && [ -n "$DAE_VER" ] || { echo "::error::cannot read the kernel versions"; exit 1; }
-          VER="$(sed -n 's/^PKG_VERSION:=//p' ../package/easyproxy/Makefile | head -1)"
+          SB_VER=""
+          for f in dist/sing-box_*_x86_64.ipk; do
+            [ -f "$f" ] || continue
+            SB_VER="${f#dist/sing-box_}"
+            SB_VER="${SB_VER%_x86_64.ipk}"
+          done
+          DAE_VER=""
+          for f in dist/dae_*_x86_64.ipk; do
+            [ -f "$f" ] || continue
+            DAE_VER="${f#dist/dae_}"
+            DAE_VER="${DAE_VER%_x86_64.ipk}"
+          done
+          [ -n "$SB_VER" ] && [ -n "$DAE_VER" ] || { echo "::error::cannot read the kernel versions from dist"; exit 1; }
+          VER="$(sed -n 's/^PKG_VERSION:=//p' package/easyproxy/Makefile | head -1)"
           {
             echo "component   version   upstream"
             echo "easyproxy   ${VER}     https://github.com/${GITHUB_REPOSITORY}"
@@ -165,8 +178,8 @@ jobs:
             echo "kernel adapter: dae 适配器开发中，运行时分流仍由 sing-box 承担"
             echo "built from commit: ${GITHUB_SHA}"
             echo "built from ref: ${GITHUB_REF_NAME}"
-          } > KERNEL-VERSIONS
-          cat KERNEL-VERSIONS
+          } > dist/KERNEL-VERSIONS
+          cat dist/KERNEL-VERSIONS
 
       - name: Checksums
         run: |
