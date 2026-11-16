@@ -28,23 +28,28 @@ D="$STAGE/data"
 mkdir -p "$STAGE/control"
 mkdir -p "$D/etc/config" "$D/etc/init.d" "$D/etc/hotplug.d/iface" "$D/usr/sbin" \
 	"$D/usr/lib/easyproxy/adapters" \
+	"$D/usr/share/easyproxy" \
 	"$D/www/luci-static/resources/view/easyproxy" \
 	"$D/usr/share/luci/menu.d" "$D/usr/share/rpcd/acl.d" \
 	"$D/etc/easyproxy/ruleset"
 
 F="$SRC_DIR/files"
 install -m 0644 "$F/etc/config/easyproxy" "$D/etc/config/easyproxy"
+install -m 0644 "$F/usr/share/easyproxy/easyproxy.default" "$D/usr/share/easyproxy/easyproxy.default"
 install -m 0755 "$F/etc/init.d/easyproxy" "$D/etc/init.d/easyproxy"
 install -m 0755 "$F/etc/hotplug.d/iface/95-easyproxy" "$D/etc/hotplug.d/iface/95-easyproxy"
 install -m 0755 "$F/usr/sbin/easyproxy" "$D/usr/sbin/easyproxy"
-for lib in common.sh config.sh transparent.sh; do
-	install -m 0644 "$F/usr/lib/easyproxy/$lib" "$D/usr/lib/easyproxy/$lib"
+# Every library in usr/lib/easyproxy is copied, not a hand-written list: a new
+# library can no longer be missing from the opkg build while the SDK has it.
+for lib in "$F"/usr/lib/easyproxy/*.sh; do
+	install -m 0644 "$lib" "$D/usr/lib/easyproxy/$(basename "$lib")"
 done
-for adapter in dae.sh sing-box.sh; do
-	install -m 0644 "$F/usr/lib/easyproxy/adapters/$adapter" "$D/usr/lib/easyproxy/adapters/$adapter"
+for adapter in "$F"/usr/lib/easyproxy/adapters/*.sh; do
+	install -m 0644 "$adapter" "$D/usr/lib/easyproxy/adapters/$(basename "$adapter")"
 done
-install -m 0644 "$F/www/luci-static/resources/view/easyproxy/overview.js" \
-	"$D/www/luci-static/resources/view/easyproxy/overview.js"
+for view in "$F"/www/luci-static/resources/view/easyproxy/*; do
+	install -m 0644 "$view" "$D/www/luci-static/resources/view/easyproxy/$(basename "$view")"
+done
 install -m 0644 "$F/usr/share/luci/menu.d/luci-app-easyproxy.json" \
 	"$D/usr/share/luci/menu.d/luci-app-easyproxy.json"
 install -m 0644 "$F/usr/share/rpcd/acl.d/luci-app-easyproxy.json" \
