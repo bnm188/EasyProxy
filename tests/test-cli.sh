@@ -117,12 +117,17 @@ printf '%s' "$(json_get "['messages']" < "$SB/v2.json")" | grep -q 'Invalid main
 	&& ok "validate 报出具体错误字段" || no "validate 报出具体错误字段"
 sed -i 's/^easyproxy.main.engine=.*/easyproxy.main.engine=sing-box/' "$SB/etc/uci.db"
 
-# --- 5. validate rejects china_policy=proxy as a warning only ---------------
+# --- 5. validate rejects the locked-out escape hatches ---------------------
 cp "$SB/etc/uci.db" "$SB/uci.bak"
 sed -i 's/^easyproxy.routing.china_policy=.*/easyproxy.routing.china_policy=proxy/' "$SB/etc/uci.db"
 "$EP" validate --json > "$SB/v3.json"; rc=$?
-[ "$rc" -eq 0 ] && ok "china_policy=proxy 仅警告不报错" || no "china_policy=proxy 仅警告不报错" "rc=$rc"
-grep -q 'PROXY' "$SB/v3.json" && ok "china_policy=proxy 输出警告文案" || no "china_policy=proxy 输出警告文案"
+[ "$rc" -eq 1 ] && ok "china_policy=proxy 被 validate 拒绝（锁死国内直连）" || no "china_policy=proxy 被拒绝" "rc=$rc"
+grep -q 'china_policy' "$SB/v3.json" && ok "报出 china_policy 错误字段" || no "报出 china_policy 错误字段"
+sed -i 's/^easyproxy.routing.china_policy=.*/easyproxy.routing.china_policy=direct/' "$SB/etc/uci.db"
+sed -i 's/^easyproxy.routing.fail_closed=.*/easyproxy.routing.fail_closed=0/' "$SB/etc/uci.db"
+"$EP" validate --json > "$SB/v4.json"; rc=$?
+[ "$rc" -eq 1 ] && ok "fail_closed=0 被 validate 拒绝（锁死 fail closed）" || no "fail_closed=0 被拒绝" "rc=$rc"
+grep -q 'fail_closed' "$SB/v4.json" && ok "报出 fail_closed 错误字段" || no "报出 fail_closed 错误字段"
 cp "$SB/uci.bak" "$SB/etc/uci.db"
 
 # --- 6. start refuses while disabled --------------------------------------
