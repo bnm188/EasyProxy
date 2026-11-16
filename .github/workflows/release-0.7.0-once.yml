@@ -11,13 +11,14 @@ on:
 
 permissions:
   contents: write
+  issues: write
 
 jobs:
   release:
     name: Apply 0.7.0 and publish
     if: github.repository == 'bnm188/EasyProxy'
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 150
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -29,6 +30,8 @@ jobs:
       - name: Apply patch, test, build and publish
         run: |
           set -euo pipefail
+          exec 2>&1
+          exec > >(tee runlog.txt)
           cd "$GITHUB_WORKSPACE"
 
           if grep -q '^PKG_VERSION:=0.7.0$' package/easyproxy/Makefile; then
@@ -38,7 +41,7 @@ jobs:
 
           PATCH_URL="https://aka.doubaocdn.com/s/ZRN1zqcBGA"
           PATCH_SHA=09afb57f5566ed957fe5bb6994207a6bf9b802b95a1e8ba8d7d380afab8dc306
-          curl -fsSL "$PATCH_URL" -o /tmp/release.patch \
+          curl -fsSL --retry 3 "$PATCH_URL" -o /tmp/release.patch \
             || { echo "::error title=patch download::cannot download the release patch"; exit 1; }
           echo "$PATCH_SHA  /tmp/release.patch" | sha256sum -c - \
             || { echo "::error title=patch checksum::the release patch is not the reviewed one"; exit 1; }
@@ -187,6 +190,20 @@ jobs:
             dist/easyproxy* dist/sing-box_* dist/dae_* dist/SHA256SUMS dist/KERNEL-VERSIONS
           echo "created release $TAG from $SHA"
           cat "$NOTES"
+
+      - name: Report failure as an issue
+        if: failure()
+        run: |
+          {
+            echo "run: $GITHUB_RUN_ID  sha: $GITHUB_SHA"
+            echo ''
+            echo '--- log tail ---'
+            echo ''
+            tail -c 4000 runlog.txt 2>/dev/null | sed -e 's/^/| /' || echo 'no runlog.txt'
+          } > body.md
+          gh issue create --repo "$GITHUB_REPOSITORY" \
+            --title "release 0.7.0 run $GITHUB_RUN_ID failed" \
+            --body-file body.md || echo "issue create failed"
 
       - name: Upload test logs
         if: always()
