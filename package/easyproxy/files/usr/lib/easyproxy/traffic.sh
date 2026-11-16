@@ -21,7 +21,7 @@ while IFS= read -r line; do
 	[ "$name" = "$iface" ] || continue
 	found=1
 	rx="$2"
-	tx="$10"
+	tx="${10}"
 	done <<EOF
 $(LC_ALL=C awk 'NR > 2 { gsub(":", " "); print }' /proc/net/dev)
 EOF

@@ -3,10 +3,12 @@
 		"description": "EasyProxy panel: run the CLI, read/write its UCI section, read its log",
 		"read": {
 			"ubus": {
-				"file": [ "exec", "read", "list" ]
+				"file": [ "read" ]
 			},
 			"uci": [ "easyproxy" ],
 			"file": {
+				"/usr/lib/easyproxy/traffic.sh": [ "read" ],
+				"/usr/lib/easyproxy/subscribe.sh": [ "read" ],
 				"/etc/config/easyproxy": [ "read" ],
 				"/etc/easyproxy/*": [ "read" ],
 				"/var/log/easyproxy.log": [ "read" ],
@@ -14,8 +16,14 @@
 			}
 		},
 		"write": {
+			"ubus": {
+				"file": [ "exec" ]
+			},
 			"uci": [ "easyproxy" ],
 			"file": {
+				"/bin/sh": [ "exec" ],
+				"/usr/lib/easyproxy/traffic.sh": [ "exec" ],
+				"/usr/lib/easyproxy/subscribe.sh": [ "exec" ],
 				"/etc/easyproxy/*": [ "write" ]
 			}
 		}
