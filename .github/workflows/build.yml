@@ -22,8 +22,15 @@ jobs:
     runs-on: ubuntu-24.04
 
     steps:
+      # Release notes are generated from the commits since the previous release,
+      # so the history must be there: the default shallow checkout (1 commit)
+      # made `v0.7.0..HEAD` empty and the publish step aborted with "range has no
+      # commit" in run 43955772351. Tags are fetched for the same reason.
       - name: Checkout EasyProxy
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
 
       # Three ways can ask for a release, resolved once here so every later
       # step uses the same tag:
