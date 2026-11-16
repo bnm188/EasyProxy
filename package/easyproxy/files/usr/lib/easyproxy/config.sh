@@ -8,6 +8,7 @@
 # Stage 4 adds the routing layer: China domains/addresses go out through
 # `direct`, everything else falls through to the node group, and DNS is split
 # the same way (domestic resolvers for CN names, remote DoH for the rest).
+# Stage 5 adds the tproxy inbound used by the transparent-proxy takeover.
 
 EP_ERR=""
 EP_ERR_FILE=""
@@ -172,6 +173,7 @@ ep_config_build() {
 	local outfile="$1" engine binary listen listen_port final
 	local tmp out sections tags nodes section line
 	local china proxy dns_local dns_remote split
+	local transparent tproxy_port
 	EP_ERR=""
 
 	outfile="${outfile:-$(ep_engine_config_path "$(ep_get main engine sing-box)")}"
@@ -208,6 +210,11 @@ ep_config_build() {
 	proxy="$(ep_get routing proxy_policy proxy)"
 	dns_local="$(ep_get routing dns_local_server '223.5.5.5')"
 	dns_remote="$(ep_get routing dns_remote_server 'https://1.1.1.1/dns-query')"
+	transparent="$(ep_bool "$(ep_get transparent enabled 0)")"
+	tproxy_port="$(ep_get transparent tproxy_port '7891')"
+	case "$tproxy_port" in
+		''|*[!0-9]*) tproxy_port=7891 ;;
+	esac
 
 	if [ "$nodes" -gt 0 ]; then
 		final="$proxy"
@@ -261,8 +268,15 @@ ep_config_build() {
 
 		# --- inbounds ------------------------------------------------------
 		printf '  "inbounds": [\n'
-		printf '    { "type": "mixed", "tag": "mixed-in", "listen": "%s", "listen_port": %s }\n' \
+		printf '    { "type": "mixed", "tag": "mixed-in", "listen": "%s", "listen_port": %s }' \
 			"$(ep_json_escape "$listen")" "$listen_port"
+		if [ "$transparent" = "1" ] && [ "$nodes" -gt 0 ]; then
+			printf ',\n'
+			printf '    { "type": "tproxy", "tag": "tproxy-in", "listen": "0.0.0.0", "listen_port": %s, "sniff": true, "sniff_override_destination": true, "udp_timeout": "5m" }\n' \
+				"$tproxy_port"
+		else
+			printf '\n'
+		fi
 		printf '  ],\n'
 
 		# --- outbounds -----------------------------------------------------
@@ -285,6 +299,9 @@ ep_config_build() {
 
 		# --- route ---------------------------------------------------------
 		printf '  "route": {\n'
+		if [ "$transparent" = "1" ] && [ "$nodes" -gt 0 ]; then
+			printf '    "auto_detect_interface": true,\n'
+		fi
 		printf '    "rules": [\n'
 		printf '      { "ip_is_private": true, "outbound": "direct" }'
 		if [ "$split" = "1" ]; then
