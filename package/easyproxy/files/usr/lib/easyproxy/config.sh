@@ -4,9 +4,14 @@
 # Turns the "config node" sections of /etc/config/easyproxy into a sing-box
 # config file. Only enabled nodes are emitted; the result is validated with
 # `sing-box check` before it replaces the live file.
+#
+# Stage 4 adds the routing layer: China domains/addresses go out through
+# `direct`, everything else falls through to the node group, and DNS is split
+# the same way (domestic resolvers for CN names, remote DoH for the rest).
 
 EP_ERR=""
 EP_ERR_FILE=""
+EP_WARN=""
 
 # Map an OpenWrt/syslog log level onto a sing-box log level
 ep_singbox_log_level() {
@@ -103,11 +108,70 @@ ep_node_outbound() {
 	esac
 }
 
+# 1 when the domestic split (CN direct, rest proxied) is actually wired up:
+# it needs both the policy and at least one usable node.
+ep_china_split_active() {
+	local china nodes
+	china="$(ep_get routing china_policy direct)"
+	[ "$china" = "direct" ] || return 1
+	nodes="${1:-0}"
+	[ "$nodes" -gt 0 ] || return 1
+	[ "$(ep_rule_set_state)" = "ready" ] || return 1
+	return 0
+}
+
+# Download one rule set into the local directory when it is absent or stale.
+# A failure here is not fatal: the split simply degrades to full proxy.
+ep_rule_set_fetch() {
+	local url="$1" file="$2" days="$3" tmp
+	[ -n "$url" ] || return 1
+	[ -z "${EP_RULE_SET_NO_FETCH:-}" ] || return 1
+	if [ -s "$file" ] && [ -z "$(find "$file" -mtime "+${days:-7}" 2>/dev/null)" ]; then
+		return 0
+	fi
+	mkdir -p "$(dirname "$file")" 2>/dev/null || return 1
+	tmp="$file.part"
+	if command -v curl >/dev/null 2>&1; then
+		curl -fsSL --max-time 30 -o "$tmp" "$url" 2>/dev/null || { rm -f "$tmp"; return 1; }
+	elif command -v wget >/dev/null 2>&1; then
+		wget -q -T 30 -O "$tmp" "$url" 2>/dev/null || { rm -f "$tmp"; return 1; }
+	else
+		return 1
+	fi
+	[ -s "$tmp" ] || { rm -f "$tmp"; return 1; }
+	mv "$tmp" "$file" 2>/dev/null || { rm -f "$tmp"; return 1; }
+	return 0
+}
+
+# Make sure both CN rule sets are available locally (no network at engine start)
+ep_rule_set_ensure() {
+	local dir days geoip geosite
+	[ "$(ep_get routing china_policy direct)" = "direct" ] || return 0
+	dir="$(ep_rule_set_dir)"
+	days="$(ep_get routing rule_set_update_days 7)"
+	geosite="$(ep_get routing geosite_cn_url 'https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-cn.srs')"
+	geoip="$(ep_get routing geoip_cn_url 'https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-cn.srs')"
+	ep_rule_set_fetch "$geosite" "$dir/geosite-cn.srs" "$days"
+	ep_rule_set_fetch "$geoip" "$dir/geoip-cn.srs" "$days"
+	[ "$(ep_rule_set_state)" = "ready" ]
+}
+
+# Local rule-set definitions for the domestic split
+ep_route_rule_sets() {
+	local dir
+	dir="$(ep_rule_set_dir)"
+	printf '      { "type": "local", "tag": "geosite-cn", "format": "binary", "path": "%s" },\n' \
+		"$(ep_json_escape "$dir/geosite-cn.srs")"
+	printf '      { "type": "local", "tag": "geoip-cn", "format": "binary", "path": "%s" }\n' \
+		"$(ep_json_escape "$dir/geoip-cn.srs")"
+}
+
 # Build the config file. Returns 0 on success, non-zero with EP_ERR set.
 # Exit 2 means the file was assembled but the engine rejected it.
 ep_config_build() {
 	local outfile="$1" engine binary listen listen_port final
 	local tmp out sections tags nodes section line
+	local china proxy dns_local dns_remote split
 	EP_ERR=""
 
 	outfile="${outfile:-$(ep_engine_config_path "$(ep_get main engine sing-box)")}"
@@ -140,20 +204,68 @@ ep_config_build() {
 		nodes=$((nodes + 1))
 	done
 
+	china="$(ep_get routing china_policy direct)"
+	proxy="$(ep_get routing proxy_policy proxy)"
+	dns_local="$(ep_get routing dns_local_server '223.5.5.5')"
+	dns_remote="$(ep_get routing dns_remote_server 'https://1.1.1.1/dns-query')"
+
 	if [ "$nodes" -gt 0 ]; then
-		final="proxy"
+		final="$proxy"
 	else
 		final="direct"
+	fi
+
+	EP_WARN=""
+	if [ "$nodes" -gt 0 ] && [ "$china" = "direct" ]; then
+		ep_rule_set_ensure
+	fi
+	if ep_china_split_active "$nodes"; then
+		split=1
+	else
+		split=0
+		if [ "$nodes" -gt 0 ] && [ "$china" = "direct" ]; then
+			EP_WARN="china_policy=direct, but the CN rule sets are not available; routing degraded to full proxy. Run 'easyproxy config generate' with network access, or place geosite-cn.srs and geoip-cn.srs under $(ep_rule_set_dir)."
+		fi
 	fi
 
 	{
 		printf '{\n'
 		printf '  "log": { "level": "%s", "timestamp": true },\n' \
 			"$(ep_singbox_log_level "$(ep_get main log_level notice)")"
+
+		# --- dns -----------------------------------------------------------
+		printf '  "dns": {\n'
+		printf '    "servers": [\n'
+		printf '      { "tag": "dns-local", "address": "%s", "detour": "direct" }' \
+			"$(ep_json_escape "$dns_local")"
+		if [ "$nodes" -gt 0 ]; then
+			printf ',\n      { "tag": "dns-remote", "address": "%s", "detour": "proxy" }\n' \
+				"$(ep_json_escape "$dns_remote")"
+		else
+			printf '\n'
+		fi
+		printf '    ],\n'
+		if [ "$split" = "1" ]; then
+			printf '    "rules": [\n'
+			printf '      { "domain_suffix": [".cn"], "server": "dns-local" },\n'
+			printf '      { "rule_set": ["geosite-cn"], "server": "dns-local" },\n'
+			printf '      { "ip_is_private": true, "server": "dns-local" }\n'
+			printf '    ],\n'
+		fi
+		if [ "$nodes" -gt 0 ]; then
+			printf '    "final": "dns-remote"\n'
+		else
+			printf '    "final": "dns-local"\n'
+		fi
+		printf '  },\n'
+
+		# --- inbounds ------------------------------------------------------
 		printf '  "inbounds": [\n'
 		printf '    { "type": "mixed", "tag": "mixed-in", "listen": "%s", "listen_port": %s }\n' \
 			"$(ep_json_escape "$listen")" "$listen_port"
 		printf '  ],\n'
+
+		# --- outbounds -----------------------------------------------------
 		printf '  "outbounds": [\n'
 		if [ "$nodes" -gt 0 ]; then
 			# Node outbounds followed by the latency-tested selector
@@ -170,7 +282,24 @@ ep_config_build() {
 		fi
 		printf '    { "type": "direct", "tag": "direct" }\n'
 		printf '  ],\n'
-		printf '  "route": { "final": "%s" }\n' "$final"
+
+		# --- route ---------------------------------------------------------
+		printf '  "route": {\n'
+		printf '    "rules": [\n'
+		printf '      { "ip_is_private": true, "outbound": "direct" }'
+		if [ "$split" = "1" ]; then
+			printf ',\n      { "rule_set": ["geosite-cn", "geoip-cn"], "outbound": "direct" }\n'
+		else
+			printf '\n'
+		fi
+		printf '    ],\n'
+		if [ "$split" = "1" ]; then
+			printf '    "rule_set": [\n'
+			ep_route_rule_sets
+			printf '    ],\n'
+		fi
+		printf '    "final": "%s"\n' "$final"
+		printf '  }\n'
 		printf '}\n'
 	} > "$tmp.file" || { rm -f "$tmp" "$out" "$tmp.file"; EP_ERR="cannot write config"; return 1; }
 
@@ -194,5 +323,6 @@ ep_config_build() {
 	rm -f "$tmp" "$out" "$EP_ERR_FILE"
 	EP_NODES="$nodes"
 	EP_FINAL="$final"
+	EP_SPLIT="$split"
 	return 0
 }

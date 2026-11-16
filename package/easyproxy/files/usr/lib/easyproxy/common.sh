@@ -2,8 +2,8 @@
 
 EP_CONFIG="easyproxy"
 EP_CONFIG_FILE="/etc/config/easyproxy"
-EP_VERSION="0.3.0"
-EP_STAGE="3"
+EP_VERSION="0.4.0"
+EP_STAGE="4"
 
 EP_RUNTIME_DIR="${EP_RUNTIME_DIR:-/var/run/easyproxy}"
 EP_PID_FILE="$EP_RUNTIME_DIR/easyproxy.pid"
@@ -123,6 +123,22 @@ ep_runtime_uptime() {
 	[ -n "${started:-}" ] || { printf '0'; return 0; }
 	now="$(date +%s)"
 	[ "$now" -gt "$started" ] 2>/dev/null && printf '%s' "$((now - started))" || printf '0'
+}
+
+# Directory holding the local rule-set files used by the domestic split
+ep_rule_set_dir() {
+	ep_get routing rule_set_dir '/etc/easyproxy/ruleset'
+}
+
+# ready | missing — both CN rule sets present and non-empty
+ep_rule_set_state() {
+	local dir
+	dir="$(ep_rule_set_dir)"
+	if [ -s "$dir/geosite-cn.srs" ] && [ -s "$dir/geoip-cn.srs" ]; then
+		printf '%s' 'ready'
+	else
+		printf '%s' 'missing'
+	fi
 }
 
 # ok | invalid | missing — validated with the engine binary when one is installed
