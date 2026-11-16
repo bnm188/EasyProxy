@@ -154,7 +154,7 @@ fi
 if python3 - "$APP" <<'PY'
 import re, sys
 src = open(sys.argv[1]).read()
-code = re.sub(r"/*.*?*/", "", src, flags=re.S)
+code = re.sub(r"/\*.*?\*/", "", src, flags=re.S)
 code = re.sub(r"(^|\s)//[^\n]*", "", code)
 sys.exit(1 if "/bin/sh" in code else 0)
 PY
