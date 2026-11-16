@@ -1,11 +1,14 @@
 #!/bin/sh
-# Transparent proxy takeover (Stage 5).
+# Transparent proxy takeover (Stage 5, hardened in Stage 6).
 #
 # LAN traffic is captured with TPROXY and handed to the sing-box `tproxy`
 # inbound, then marked so the kernel routes it into a dedicated table. Everything
 # lives in our own `table ip easyproxy` and our own policy rule/table, never
 # inside fw4's tables, so `easyproxy transparent remove` is two deletes and
 # leaves the router's firewall exactly as it was.
+#
+# Only IPv4 is captured. IPv6 is left untouched on purpose: an unsupported
+# capture must fail open for the LAN, never silently drop local traffic.
 
 EP_NFT_BIN="${EP_NFT_BIN:-nft}"
 EP_IP_BIN="${EP_IP_BIN:-ip}"
@@ -53,7 +56,7 @@ ep_transparent_state() {
 # server (capturing the proxy's own upstream would loop) plus operator excludes.
 ep_transparent_bypass() {
 	local section server extra
-	printf '127.0.0.0/8, 169.254.0.0/16, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16'
+	printf '127.0.0.0/8, 169.254.0.0/16, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, 192.0.0.0/24, 198.18.0.0/15, 240.0.0.0/4'
 	for section in $(ep_node_sections); do
 		[ "$(ep_get "$section" enabled 1)" = "1" ] || continue
 		server="$(ep_get "$section" server '')"

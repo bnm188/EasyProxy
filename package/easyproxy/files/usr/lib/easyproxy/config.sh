@@ -9,6 +9,7 @@
 # `direct`, everything else falls through to the node group, and DNS is split
 # the same way (domestic resolvers for CN names, remote DoH for the rest).
 # Stage 5 adds the tproxy inbound used by the transparent-proxy takeover.
+# Stage 6 makes fail_closed real and keeps every LAN destination direct.
 
 EP_ERR=""
 EP_ERR_FILE=""
@@ -121,8 +122,28 @@ ep_china_split_active() {
 	return 0
 }
 
+# split | direct | proxy — what the routing layer will really do.
+#   split  : CN direct, everything else through the node group
+#   direct : nothing is proxied (no enabled node, or fail_closed with rule sets missing)
+#   proxy  : everything through the node group (china_policy=proxy, or degraded with fail_closed=0)
+ep_route_mode() {
+	local china nodes fc
+	china="$(ep_get routing china_policy direct)"
+	nodes="${1:-0}"
+	[ "$nodes" -gt 0 ] 2>/dev/null || nodes=0
+	[ "$nodes" -gt 0 ] || { printf '%s' 'direct'; return 0; }
+	[ "$china" = "direct" ] || { printf '%s' 'proxy'; return 0; }
+	[ "$(ep_rule_set_state)" = "ready" ] && { printf '%s' 'split'; return 0; }
+	fc="$(ep_bool "$(ep_get routing fail_closed 1)")"
+	if [ "$fc" = "1" ]; then
+		printf '%s' 'direct'
+	else
+		printf '%s' 'proxy'
+	fi
+}
+
 # Download one rule set into the local directory when it is absent or stale.
-# A failure here is not fatal: the split simply degrades to full proxy.
+# A failure here is not fatal: ep_route_mode() decides the safe fallback.
 ep_rule_set_fetch() {
 	local url="$1" file="$2" days="$3" tmp
 	[ -n "$url" ] || return 1
@@ -171,8 +192,8 @@ ep_route_rule_sets() {
 # Exit 2 means the file was assembled but the engine rejected it.
 ep_config_build() {
 	local outfile="$1" engine binary listen listen_port final
-	local tmp out sections tags nodes section line
-	local china proxy dns_local dns_remote split
+	local tmp out sections tags nodes section line first
+	local china proxy dns_local dns_remote split mode
 	local transparent tproxy_port
 	EP_ERR=""
 
@@ -216,24 +237,29 @@ ep_config_build() {
 		''|*[!0-9]*) tproxy_port=7891 ;;
 	esac
 
-	if [ "$nodes" -gt 0 ]; then
-		final="$proxy"
-	else
-		final="direct"
-	fi
-
-	EP_WARN=""
 	if [ "$nodes" -gt 0 ] && [ "$china" = "direct" ]; then
 		ep_rule_set_ensure
 	fi
-	if ep_china_split_active "$nodes"; then
-		split=1
-	else
-		split=0
-		if [ "$nodes" -gt 0 ] && [ "$china" = "direct" ]; then
-			EP_WARN="china_policy=direct, but the CN rule sets are not available; routing degraded to full proxy. Run 'easyproxy config generate' with network access, or place geosite-cn.srs and geoip-cn.srs under $(ep_rule_set_dir)."
+	mode="$(ep_route_mode "$nodes")"
+	split=0
+	[ "$mode" = "split" ] && split=1
+
+	# fail_closed decides what happens when the CN rule sets are missing: with
+	# fail_closed=1 nothing is proxied (traffic stays direct, foreign sites are
+	# simply unreachable), with fail_closed=0 routing degrades to full proxy.
+	EP_WARN=""
+	if [ "$nodes" -gt 0 ] && [ "$china" = "direct" ] && [ "$mode" != "split" ]; then
+		if [ "$mode" = "direct" ]; then
+			EP_WARN="china_policy=direct but the CN rule sets are unavailable and fail_closed=1; routing pinned to direct, nothing is proxied until the rule sets exist. Run 'easyproxy config generate' with network access, or place geosite-cn.srs and geoip-cn.srs under $(ep_rule_set_dir)."
+		else
+			EP_WARN="china_policy=direct but the CN rule sets are unavailable and fail_closed=0; routing degraded to full proxy, domestic traffic leaves the router. Run 'easyproxy config generate' with network access, or place geosite-cn.srs and geoip-cn.srs under $(ep_rule_set_dir)."
 		fi
 	fi
+
+	case "$mode" in
+		split|proxy) final="$proxy" ;;
+		*) final="direct" ;;
+	esac
 
 	{
 		printf '{\n'
@@ -245,21 +271,30 @@ ep_config_build() {
 		printf '    "servers": [\n'
 		printf '      { "tag": "dns-local", "address": "%s", "detour": "direct" }' \
 			"$(ep_json_escape "$dns_local")"
-		if [ "$nodes" -gt 0 ]; then
+		if [ "$nodes" -gt 0 ] && [ "$mode" != "direct" ]; then
 			printf ',\n      { "tag": "dns-remote", "address": "%s", "detour": "proxy" }\n' \
 				"$(ep_json_escape "$dns_remote")"
 		else
 			printf '\n'
 		fi
 		printf '    ],\n'
-		if [ "$split" = "1" ]; then
+		# LAN first: private addresses and local host names must always be
+		# resolved by the router itself, never by the remote DoH endpoint —
+		# otherwise LAN devices lose name resolution when traffic is proxied.
+		if [ "$nodes" -gt 0 ] && [ "$mode" != "direct" ]; then
 			printf '    "rules": [\n'
-			printf '      { "domain_suffix": [".cn"], "server": "dns-local" },\n'
-			printf '      { "rule_set": ["geosite-cn"], "server": "dns-local" },\n'
-			printf '      { "ip_is_private": true, "server": "dns-local" }\n'
+			printf '      { "ip_is_private": true, "server": "dns-local" },\n'
+			printf '      { "domain_suffix": [".lan", ".local", ".localdomain", ".home.arpa", ".internal"], "server": "dns-local" }'
+			if [ "$split" = "1" ]; then
+				printf ',\n'
+				printf '      { "domain_suffix": [".cn"], "server": "dns-local" },\n'
+				printf '      { "rule_set": ["geosite-cn"], "server": "dns-local" }\n'
+			else
+				printf '\n'
+			fi
 			printf '    ],\n'
 		fi
-		if [ "$nodes" -gt 0 ]; then
+		if [ "$nodes" -gt 0 ] && [ "$mode" != "direct" ]; then
 			printf '    "final": "dns-remote"\n'
 		else
 			printf '    "final": "dns-local"\n'
@@ -341,5 +376,6 @@ ep_config_build() {
 	EP_NODES="$nodes"
 	EP_FINAL="$final"
 	EP_SPLIT="$split"
+	EP_ROUTE_MODE="$mode"
 	return 0
 }
