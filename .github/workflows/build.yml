@@ -61,6 +61,15 @@ jobs:
             -czf "dist/easyproxy-${VER}-rootfs.tar.gz" -C package/easyproxy/files .
           ls -l dist
 
+      # The SDK build above produces whatever package format the target uses
+      # (apk on ImmortalWrt 25.x). This adds the opkg-readable twin of the same
+      # files so opkg-based firmware can install the identical release.
+      - name: Package ipk for opkg-based firmware
+        run: |
+          set -euo pipefail
+          sh scripts/make-ipk.sh package/easyproxy dist
+          ls -l dist
+
       - name: Collect packages
         run: |
           set -euo pipefail
