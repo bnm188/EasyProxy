@@ -180,6 +180,62 @@ and DNS keep working during and after removal.
 
 `/etc/config/easyproxy` and `/etc/easyproxy` survive; `--purge` drops them too.
 
+## Step 8 - the three components and their independent lifecycle
+
+One command installs the panel and both kernels:
+
+```sh
+wget -qO- https://raw.githubusercontent.com/bnm188/EasyProxy/main/scripts/install.sh | sh
+```
+
+Expected, at the end of the run:
+
+```
+components:
+  easyproxy  <version>  (/usr/sbin/easyproxy)
+  sing-box   <version>  (/usr/bin/sing-box)
+  dae        <version>  (/usr/bin/dae)  [adapter 开发中]
+```
+
+Check each piece separately:
+
+```sh
+sing-box version                 # sing-box version 1.10.7
+dae --version                    # dae version v2.1.2
+ls -l /usr/share/dae             # geoip.dat, geosite.dat for dae
+ls /etc/easyproxy/owned          # sing-box, dae - proof this installer put them there
+opkg list-installed | grep -E 'easyproxy|sing-box|dae'
+wget -qO- .../install.sh | sh -s status
+```
+
+Then the upgrade path, on a router where an older kernel is installed:
+
+```sh
+wget -qO- .../install.sh | sh -s upgrade
+```
+
+Expected: a `component / current / newest` table, `sing-box: 1.9.0 -> 1.10.7`
+style lines only for the components that changed, `upgrade done` and exit 0.
+`/etc/easyproxy/backup/<kernel>.old` holds the previous binary. If the new kernel
+cannot run, the old one is restored and the command exits non-zero with
+`upgrade incomplete`.
+
+`--only package`, `--only sing-box` and `--only dae` each upgrade exactly one
+component; the untouched ones keep their version.
+
+Then removal, checking that a user-installed kernel is never touched:
+
+```sh
+# install a kernel by hand first, outside EasyProxy's records
+wget -qO- .../uninstall.sh | sh                      # panel gone, config kept
+ls /usr/bin/dae                                      # still there only if you installed it
+wget -qO- .../uninstall.sh | sh -s -- --keep-kernels  # panel gone, kernels kept
+```
+
+After a plain uninstall nothing from the installer is left in `/usr/bin`, the
+nftables capture is gone, and `/root/easyproxy-backup-*.tar.gz` holds the
+config that was removed from service.
+
 ## Report template
 
 ```
@@ -193,6 +249,11 @@ step 4 capture + intranet: ok / fail
 step 5 reboot recovery:  ok / fail
 step 6 maintenance:      ok / fail
 step 7 rollback:         ok / fail
+step 8 kernels:          ok / fail
+sing-box version:
+dae --version:
+upgrade:                 ok / fail (versions before -> after)
+uninstall:               ok / fail (kernels removed / kept)
 doctor output:
 logread excerpt:
 ```
