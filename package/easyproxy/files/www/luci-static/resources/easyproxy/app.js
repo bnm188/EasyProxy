@@ -82,6 +82,23 @@ function errCard(text) {
 	return E('div', { class: 'ep-err' }, text);
 }
 
+// The dae adapter is still 开发中: a dae engine cannot start, because the
+// renderer refuses a config it cannot run. The panel therefore keeps the
+// previous choice and says why instead of writing dae into main.engine, which
+// would leave the service unable to start after the next reload.
+function saveEngine(pick) {
+	if (pick === 'dae') {
+		notify('dae 适配器开发中，暂不可选：请继续使用 sing-box', 'error');
+		return Promise.resolve();
+	}
+	return saveUci({ 'main.engine': pick }).then(function () {
+		notify('已保存内核选择', 'success');
+		reload();
+	}).catch(function (e) {
+		notify('保存失败：' + e, 'error');
+	});
+}
+
 function hero(title, sub, tags) {
 	return E('div', { class: 'ep-hero' }, [
 		E('h2', {}, title),
@@ -263,7 +280,7 @@ function pageOverview(status) {
 	injectStyle();
 	if (!status)
 		return E('div', { class: 'ep-wrap' }, [
-			herrCard('无法读取 EasyProxy 状态：未安装，或 /usr/sbin/easyproxy 不可执行。'),
+			errCard('无法读取 EasyProxy 状态：未安装，或 /usr/sbin/easyproxy 不可执行。'),
 			card('下一步', E('div', { class: 'ep-hint', style: 'margin:0' }, '在路由器上执行 opkg list-installed | grep easyproxy 确认安装；用 opkg install <ipk> 重装后再回本页刷新。'))
 		]);
 
@@ -543,16 +560,11 @@ function pageEngines(data) {
 			]),
 			row('切换内核', E('select', { id: 'ep-engine', class: 'ep-in' }, [
 				E('option', { value: 'sing-box', selected: st.engine === 'sing-box' ? 'selected' : null }, 'sing-box（稳定）'),
-				E('option', { value: 'dae', selected: st.engine === 'dae' ? 'selected' : null }, 'dae（开发中）'),
+				E('option', { value: 'dae', disabled: 'disabled', selected: st.engine === 'dae' ? 'selected' : null }, 'dae（开发中）'),
 				E('option', { value: 'none', selected: st.engine === 'none' ? 'selected' : null }, '不选择')
 			])),
 			button('保存选择', 'ep-primary', function () {
-				return saveUci({ 'main.engine': valOf('ep-engine') }).then(function () {
-					notify('已保存内核选择', 'success');
-					reload();
-				}).catch(function (e) {
-					notify('保存失败：' + e, 'error');
-				});
+				return saveEngine(valOf('ep-engine'));
 			})
 		], '切换内核后需要重新生成配置并重启服务。'),
 		card('健康检查', items.length ? E('div', {}, items) : E('div', { class: 'ep-hint', style: 'margin:0' }, '未获取到检查结果'),
