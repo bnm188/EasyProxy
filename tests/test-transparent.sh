@@ -117,13 +117,17 @@ if [ "$1" = "addr" ] || [ "$1" = "-4" ] || [ "$1" = "-o" ]; then
 	case "$dev" in
 		br-lan) echo "2: br-lan    inet 192.168.10.1/24 brd 192.168.10.255 scope global br-lan" ;;
 		br-guest) echo "3: br-guest    inet 10.10.10.10/24 brd 10.10.10.255 scope global br-guest" ;;
+		br-mgmt) echo "4: br-mgmt    inet 198.51.100.9/24 brd 198.51.100.255 scope global br-mgmt" ;;
 		*) [ "$EP_TEST_IP_NOADDR" = "1" ] || echo "1: lo    inet 127.0.0.1/8 scope host lo" ;;
 	esac
 	exit 0
 fi
 if [ "$1" = "route" ]; then
 	case "$2" in
-		add) grep -q "route $tbl local default dev lo" "$S" || echo "route $tbl local default dev lo" >> "$S" ;;
+		add)
+			[ "$EP_TEST_IP_ROUTE_FAIL" = "1" ] && exit 1
+			grep -q "route $tbl local default dev lo" "$S" || echo "route $tbl local default dev lo" >> "$S"
+			;;
 		del) grep -v "route $tbl local default dev lo" "$S" > "$S.tmp" 2>/dev/null; mv "$S.tmp" "$S" ;;
 		show) sed -n "s/^route $tbl //p" "$S" 2>/dev/null ;;
 	esac
@@ -233,8 +237,32 @@ grep -q '203.0.113.10' "$EP_NFT_FILE" && ok "节点服务器地址进入 bypass 
 grep -q '192.168.0.0/16' "$EP_NFT_FILE" && ok "私有网段进入 bypass 集合" || no "私有网段进入 bypass 集合"
 grep -q '10.0.0.0/8' "$EP_NFT_FILE" && ok "10.0.0.0/8 进入 bypass 集合" || no "10.0.0.0/8 进入 bypass 集合"
 grep -q '172.16.0.0/12' "$EP_NFT_FILE" && ok "172.16.0.0/12 进入 bypass 集合" || no "172.16.0.0/12 进入 bypass 集合"
-grep -q '10.10.10.10' "$EP_NFT_FILE" && ok "10.10.10.10 显式列入 bypass" || no "10.10.10.10 显式列入 bypass" "$(cat "$EP_NFT_FILE")"
-grep -q '192.168.10.1/32' "$EP_NFT_FILE" && ok "路由器自身 LAN 地址进入 bypass" || no "路由器自身 LAN 地址进入 bypass" "$(cat "$EP_NFT_FILE")"
+grep 'elements = {' "$EP_NFT_FILE" | grep -q '10.10.10.10/32' && no "bypass 集合不应出现被 10.0.0.0/8 覆盖的 10.10.10.10/32" "$(grep elements "$EP_NFT_FILE")" || ok "bypass 集合没有 10.10.10.10/32 这种被大段覆盖的条目"
+grep -q '# covered by 10.0.0.0/8: 10.10.10.10/32' "$EP_NFT_FILE" && ok "10.10.10.10 的覆盖关系写进注释（仍受保护且可审计）" || no "10.10.10.10 的覆盖关系写进注释" "$(cat "$EP_NFT_FILE")"
+grep -q '# covered by 192.168.0.0/16: 192.168.10.1/32' "$EP_NFT_FILE" && ok "路由器自身 LAN 地址的覆盖关系写进注释" || no "路由器自身 LAN 地址的覆盖关系写进注释" "$(cat "$EP_NFT_FILE")"
+if python3 - "$EP_NFT_FILE" >"$SB/iv" 2>&1 <<'PY'
+import re, sys
+txt = open(sys.argv[1]).read()
+m = re.search(r'elements\s*=\s*\{([^}]*)\}', txt, re.S)
+if not m:
+    sys.exit("no elements block")
+items = [x.strip() for x in m.group(1).split(',') if x.strip()]
+def span(c):
+    parts = c.split('/')
+    ip = parts[0]
+    octets = [int(x) for x in ip.split('.')]
+    bits = int(parts[1]) if len(parts) > 1 else 32
+    start = (octets[0] << 24) | (octets[1] << 16) | (octets[2] << 8) | octets[3]
+    size = 1 << (32 - bits)
+    start -= start % size
+    return start, start + size - 1
+spans = sorted((span(c)[0], span(c)[1], c) for c in items)
+for a, b in zip(spans, spans[1:]):
+    if b[0] <= a[1]:
+        sys.exit("overlap: %s and %s" % (a[2], b[2]))
+print("disjoint %d" % len(spans))
+PY
+then ok "bypass 区间互不重叠（nftables interval 集合不会报 File exists）"; else no "bypass 区间互不重叠" "$(cat "$SB/iv")"; fi
 grep -q 'iifname != "br-lan"' "$EP_NFT_FILE" && ok "只接管 br-lan 入向流量" || no "只接管 br-lan 入向流量" "$(cat "$EP_NFT_FILE")"
 grep -q 'tproxy to :7891' "$EP_NFT_FILE" && ok "tproxy 指向 7891" || no "tproxy 指向 7891"
 grep -q 'meta mark set 1' "$EP_NFT_FILE" && ok "打上 fwmark 1" || no "打上 fwmark 1"
@@ -263,7 +291,15 @@ gen
 "$EP" transparent apply >/dev/null 2>&1
 grep -q '198.51.100.7/32' "$EP_NFT_FILE" && ok "transparent.exclude 进入 bypass 集合" || no "transparent.exclude 进入 bypass 集合" "$(cat "$EP_NFT_FILE")"
 grep -q 'iifname != { "br-lan", "br-guest" }' "$EP_NFT_FILE" && ok "多个接口渲染为集合" || no "多个接口渲染为集合"
-grep -q '10.10.10.10/32' "$EP_NFT_FILE" && ok "br-guest 的管理地址 10.10.10.10 以 /32 保护" || no "10.10.10.10/32 进入 bypass"
+grep 'elements = {' "$EP_NFT_FILE" | grep -q '10.10.10.10/32' && no "10.10.10.10/32 不应作为独立元素出现" "$(grep elements "$EP_NFT_FILE")" || ok "多接口场景下 bypass 仍无 10.10.10.10/32 嵌套条目"
+grep -q '# covered by 10.0.0.0/8: 10.10.10.10/32' "$EP_NFT_FILE" && ok "多接口场景下 10.10.10.10 仍在覆盖注释里" || no "多接口场景下 10.10.10.10 仍在覆盖注释里" "$(cat "$EP_NFT_FILE")"
+
+# --- 8b. LAN address outside RFC1918 stays an explicit /32 ---------------
+"$EP" transparent remove >/dev/null 2>&1
+write_ucis 1 7891 1 100 "br-mgmt" ""
+gen
+"$EP" transparent apply >/dev/null 2>&1
+grep -q '198.51.100.9/32' "$EP_NFT_FILE" && ok "公网段管理地址 198.51.100.9 以 /32 进 bypass" || no "公网段管理地址 198.51.100.9 以 /32 进 bypass" "$(cat "$EP_NFT_FILE")"
 
 # --- 9. remove rolls everything back -------------------------------------
 "$EP" transparent remove >/dev/null 2>&1; rc=$?
@@ -275,6 +311,18 @@ grep -q 'route 100 local default dev lo' "$EP_TEST_IP_STATE" && no "remove 后 r
 out="$("$EP" status --json)"
 json_py "import json,sys;print(json.loads(sys.argv[1])['tproxy_state'])" "$out" > "$SB/s3"
 [ "$(cat "$SB/s3")" = "inactive" ] && ok "remove 后 status 报 inactive" || no "remove 后 status 报 inactive" "$(cat "$SB/s3")"
+
+# --- 9b. partial policy-routing failure rolls the rule back --------------
+"$EP" transparent remove >/dev/null 2>&1
+write_ucis 1
+gen
+EP_TEST_IP_ROUTE_FAIL=1 "$EP" transparent apply >"$SB/fb.out" 2>&1; rc=$?
+[ "$rc" -ne 0 ] && ok "路由表写入失败时 apply 失败" || no "路由表写入失败时 apply 失败" "rc=$rc $(cat "$SB/fb.out")"
+grep -q 'rule fwmark 0x1 lookup 100' "$EP_TEST_IP_STATE" && no "失败后不应残留 fwmark 规则" "$(cat "$EP_TEST_IP_STATE")" || ok "失败后 fwmark 规则已回滚"
+grep -q 'route 100 local default dev lo' "$EP_TEST_IP_STATE" && no "失败后不应残留路由表" || ok "失败后路由表已回滚"
+[ -f "$EP_TEST_NFT_TABLE" ] && no "失败后不应留下 nft 表" || ok "失败后没有留下 nft 表"
+"$EP" transparent apply >/dev/null 2>&1
+grep -q 'rule fwmark 0x1 lookup 100' "$EP_TEST_IP_STATE" && ok "回滚后重新 apply 仍能建立接管" || no "回滚后重新 apply 仍能建立接管" "$(cat "$EP_TEST_IP_STATE")"
 
 # --- 10. unsupported host: no nft --------------------------------------
 touch "$EP_TEST_NFT_BROKEN"
