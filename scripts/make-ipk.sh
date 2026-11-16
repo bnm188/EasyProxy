@@ -26,7 +26,7 @@ trap 'rm -rf "$STAGE"' EXIT
 
 D="$STAGE/data"
 mkdir -p "$STAGE/control"
-mkdir -p "$D/etc/config" "$D/etc/init.d" "$D/usr/sbin" \
+mkdir -p "$D/etc/config" "$D/etc/init.d" "$D/etc/hotplug.d/iface" "$D/usr/sbin" \
 	"$D/usr/lib/easyproxy/adapters" \
 	"$D/www/luci-static/resources/view/easyproxy" \
 	"$D/usr/share/luci/menu.d" "$D/usr/share/rpcd/acl.d" \
@@ -35,6 +35,7 @@ mkdir -p "$D/etc/config" "$D/etc/init.d" "$D/usr/sbin" \
 F="$SRC_DIR/files"
 install -m 0644 "$F/etc/config/easyproxy" "$D/etc/config/easyproxy"
 install -m 0755 "$F/etc/init.d/easyproxy" "$D/etc/init.d/easyproxy"
+install -m 0755 "$F/etc/hotplug.d/iface/95-easyproxy" "$D/etc/hotplug.d/iface/95-easyproxy"
 install -m 0755 "$F/usr/sbin/easyproxy" "$D/usr/sbin/easyproxy"
 for lib in common.sh config.sh transparent.sh; do
 	install -m 0644 "$F/usr/lib/easyproxy/$lib" "$D/usr/lib/easyproxy/$lib"
