@@ -36,8 +36,23 @@ cat > "$SB/fix/api.json" <<'JSON'
 JSON
 printf 'PKG_VERSION:=0.9.9\nPKG_RELEASE:=1\n' > "$SB/fix/Makefile"
 printf 'APK-BYTES\n' > "$SB/fix/asset.apk"
-printf 'IPK-BYTES\n' > "$SB/fix/asset.ipk"
+{ printf '!<arch>\n'; printf 'IPK-BYTES\n'; } > "$SB/fix/asset.ipk"
 tar -czf "$SB/fix/asset.tar.gz" --files-from /dev/null 2>/dev/null || tar -czf "$SB/fix/asset.tar.gz" -C "$SB" .
+printf 'all 1\nx86_64 10\n' > "$SB/fix/opkg.arch"
+: > "$SB/fix/SHA256SUMS"
+h_ipk="$(sha256sum "$SB/fix/asset.ipk" | awk '{ print $1 }')"
+h_apk="$(sha256sum "$SB/fix/asset.apk" | awk '{ print $1 }')"
+h_tgz="$(sha256sum "$SB/fix/asset.tar.gz" | awk '{ print $1 }')"
+for n in easyproxy_0.5.0-1_all.ipk easyproxy_0.5.0-1_x86_64.ipk easyproxy_0.9.9-1_all.ipk easyproxy_0.9.9-1_x86_64.ipk; do
+	printf '%s  %s\n' "$h_ipk" "$n" >> "$SB/fix/SHA256SUMS"
+done
+for n in easyproxy-0.5.0-r1.apk easyproxy-0.9.9-r1.apk; do
+	printf '%s  %s\n' "$h_apk" "$n" >> "$SB/fix/SHA256SUMS"
+done
+for n in easyproxy-0.5.0-rootfs.tar.gz easyproxy-0.9.9-rootfs.tar.gz; do
+	printf '%s  %s\n' "$h_tgz" "$n" >> "$SB/fix/SHA256SUMS"
+done
+sed 's/^[0-9a-f]/0/' "$SB/fix/SHA256SUMS" > "$SB/fix/SHA256SUMS.bad"
 
 # --- stubs ----------------------------------------------------------------
 cat > "$SB/bin/curl" <<'STUB'
@@ -57,6 +72,7 @@ case "$url" in
 	*.apk) f="$EP_TEST_FIX/asset.apk" ;;
 	*_x86_64.ipk) [ -f "$EP_TEST_LOG/x86.fail" ] && exit 22; f="$EP_TEST_FIX/asset.ipk" ;;
 	*.ipk) f="$EP_TEST_FIX/asset.ipk" ;;
+	*SHA256SUMS) f="${EP_TEST_SUMS:-$EP_TEST_FIX/SHA256SUMS}" ;;
 	*.tar.gz) f="$EP_TEST_FIX/asset.tar.gz" ;;
 	*) exit 22 ;;
 esac
@@ -76,6 +92,7 @@ printf 'opkg %s\n' "$*" >> "$EP_TEST_LOG/pm.log"
 printf 'pm %s\n' "$*" >> "$EP_TEST_LOG/timeline"
 case "$1" in
 	install) : > "$EP_TEST_LOG/installed" ;;
+	print-architecture) cat "${EP_TEST_OPKG_ARCH:-$EP_TEST_FIX/opkg.arch}" ;;
 esac
 exit 0
 STUB
@@ -203,14 +220,57 @@ reset
 touch "$EP_TEST_LOG/x86.fail"
 EP_TEST_API_FIX="$SB/fix/api-two.json" EP_TEST_UNAME=x86_64 sh "$INSTALL" > "$SB/out" 2>&1; rc=$?
 [ "$rc" -eq 0 ] && ok "架构包 404 时退回 all 包仍能安装" || no "架构包 404 时退回 all 包仍能安装" "rc=$rc $(cat "$SB/out")"
-[ "$(tail -1 "$EP_TEST_LOG/curl.urls")" = "https://example.test/dl/easyproxy_0.5.0-1_all.ipk" ] \
+grep -q '_all\.ipk$' "$EP_TEST_LOG/curl.urls" 2>/dev/null \
 	&& ok "退回时确实改用 all 地址" || no "退回时确实改用 all 地址" "$(cat "$EP_TEST_LOG/curl.urls")"
 
 reset
-EP_TEST_API_FIX="$SB/fix/api-two.json" EP_TEST_UNAME=riscv64 sh "$INSTALL" > "$SB/out" 2>&1; rc=$?
+printf 'all 1\nriscv64 10\n' > "$SB/fix/opkg.arch.rv"
+EP_TEST_API_FIX="$SB/fix/api-two.json" EP_TEST_OPKG_ARCH="$SB/fix/opkg.arch.rv" sh "$INSTALL" > "$SB/out" 2>&1; rc=$?
 [ "$rc" -eq 0 ] && ok "无匹配架构时仍能安装" || no "无匹配架构时仍能安装" "rc=$rc $(cat "$SB/out")"
 grep -q '_all\.ipk$' "$EP_TEST_LOG/curl.urls" 2>/dev/null \
 	&& ok "无匹配架构时退回 all 包" || no "无匹配架构时退回 all 包" "$(cat "$EP_TEST_LOG/curl.urls" 2>/dev/null)"
+
+# --- install: opkg knows its own architectures --------------------------
+reset
+EP_TEST_API_FIX="$SB/fix/api-two.json" EP_TEST_UNAME=aarch64 sh "$INSTALL" > "$SB/out" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && ok "按 opkg 架构选包时安装成功" || no "按 opkg 架构选包时安装成功" "rc=$rc $(cat "$SB/out")"
+grep -q '_x86_64\.ipk$' "$EP_TEST_LOG/curl.urls" 2>/dev/null \
+	&& ok "信 opkg 的架构列表而不是 uname" || no "信 opkg 的架构列表而不是 uname" "$(cat "$EP_TEST_LOG/curl.urls" 2>/dev/null)"
+
+reset
+printf 'all 1\naarch64_cortex-a53 10\n' > "$SB/fix/opkg.arch.arm"
+EP_TEST_API_FIX="$SB/fix/api-two.json" EP_TEST_OPKG_ARCH="$SB/fix/opkg.arch.arm" sh "$INSTALL" > "$SB/out" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && ok "无对应架构包时不装错包、退回 all" || no "无对应架构包时不装错包、退回 all" "rc=$rc $(cat "$SB/out")"
+grep -q '_all\.ipk$' "$EP_TEST_LOG/curl.urls" 2>/dev/null \
+	&& ok "退回的是 all 包" || no "退回的是 all 包" "$(cat "$EP_TEST_LOG/curl.urls" 2>/dev/null)"
+
+# --- install: never install a package this opkg would reject -----------
+reset
+printf 'riscv64 10\n' > "$SB/fix/opkg.arch.noall"
+cat > "$SB/fix/api-only-all.json" <<'JSON'
+{
+  "tag_name": "v0.5.0",
+  "assets": [
+    { "name": "easyproxy_0.5.0-1_all.ipk", "browser_download_url": "https://example.test/dl/easyproxy_0.5.0-1_all.ipk" }
+  ]
+}
+JSON
+EP_TEST_API_FIX="$SB/fix/api-only-all.json" EP_TEST_OPKG_ARCH="$SB/fix/opkg.arch.noall" sh "$INSTALL" > "$SB/out" 2>&1; rc=$?
+[ "$rc" -ne 0 ] && ok "opkg 不收 all 且无对应架构包时拒绝安装" || no "不收 all 时拒绝安装" "rc=$rc $(cat "$SB/out")"
+grep -qi 'no installable ipk' "$SB/out" && ok "拒绝原因说明没有可装的包" || no "拒绝原因说明没有可装的包" "$(cat "$SB/out")"
+[ -f "$EP_TEST_LOG/installed" ] && no "拒绝时不应调用包管理器" || ok "拒绝时不调用包管理器"
+
+# --- install: never install a bad download ----------------------------
+reset
+EP_TEST_SUMS="$SB/fix/SHA256SUMS.bad" sh "$INSTALL" > "$SB/out" 2>&1; rc=$?
+[ "$rc" -ne 0 ] && ok "校验和不符时拒绝安装（非 0）" || no "校验和不符时拒绝安装" "rc=$rc $(cat "$SB/out")"
+grep -riq 'checksum' "$SB/out" && ok "拒绝原因提到校验和" || no "拒绝原因提到校验和" "$(cat "$SB/out")"
+[ -f "$EP_TEST_LOG/installed" ] && no "校验失败时不应调用包管理器" || ok "校验失败时不调用包管理器"
+
+reset
+sh "$INSTALL" > "$SB/out" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && ok "校验和对得上时正常安装" || no "校验和对得上时正常安装" "rc=$rc $(cat "$SB/out")"
+grep -q 'sha256' "$SB/out" && ok "安装前打印了校验结果" || no "安装前打印了校验结果" "$(cat "$SB/out")"
 
 # --- uninstall --------------------------------------------------------
 reset
