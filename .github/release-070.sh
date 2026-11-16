@@ -1,45 +1,38 @@
 #!/usr/bin/env bash
-# 一次性发布脚本：应用已审阅的 0.7.0 补丁、跑测试与构建、创建 v0.7.0 Release。
-# 由 .github/workflows/release-0.7.0-once.yml 调用一次，发布后由文档提交删除。
-#
-# 注意：GITHUB_TOKEN 没有 workflows 权限，机器人提交里不能包含 .github/workflows/
-# 下的任何改动，所以 build.yml 的 sing-box pin 由维护者单独推送，本补丁只含其余文件。
+# 一次性发布脚本（第二版）：0.7.0 的代码已在 main 上，本脚本只在需要时应用补丁，
+# 然后跑测试与构建、创建 v0.7.0 Release。由 .github/workflows/release-0.7.0-once.yml 调用。
 set -euo pipefail
 
-echo "[1/9] guard"
 cd "${GITHUB_WORKSPACE:-.}"
+SHA="$(git rev-parse HEAD)"
+
 if grep -q '^PKG_VERSION:=0.7.0$' package/easyproxy/Makefile; then
-  echo "0.7.0 already applied, nothing to do"
-  exit 0
+  echo "[1/9] patch already applied on main, skipping the apply step"
+else
+  echo "[1/9] download the reviewed patch"
+  PATCH_URL="https://aka.doubaocdn.com/s/OqYUm19kOf"
+  PATCH_SHA=0077eee2309b94f488afa4ac15aca7832b7b1bb7147701c9ea64c077f5072a59
+  curl -fsSL --retry 3 "$PATCH_URL" -o /tmp/release.patch || { echo "::error title=patch download::cannot download the reviewed patch"; exit 1; }
+  echo "$PATCH_SHA  /tmp/release.patch" | sha256sum -c - || { echo "::error title=patch checksum::patch is not the reviewed one"; exit 1; }
+  git apply --check /tmp/release.patch || { echo "::error title=apply::patch does not apply to main"; exit 1; }
+  git apply /tmp/release.patch
+  git config user.name "github-actions[bot]"
+  git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+  git add -A
+  git commit -q -m "release: EasyProxy 0.7.0 (sing-box 1.14.4, schema 迁移与 pin 一致性测试)" || { echo "::error title=commit::git commit failed"; exit 1; }
+  git push origin HEAD:main || { echo "::error title=push::git push failed"; exit 1; }
+  SHA="$(git rev-parse HEAD)"
+  echo "[1/9] committed $SHA"
 fi
 
-echo "[2/9] download the reviewed patch"
-PATCH_URL="https://aka.doubaocdn.com/s/OqYUm19kOf"
-PATCH_SHA=0077eee2309b94f488afa4ac15aca7832b7b1bb7147701c9ea64c077f5072a59
-curl -fsSL --retry 3 "$PATCH_URL" -o /tmp/release.patch || { echo "::error title=patch download::cannot download the reviewed patch"; exit 1; }
-echo "$PATCH_SHA  /tmp/release.patch" | sha256sum -c - || { echo "::error title=patch checksum::patch is not the reviewed one"; exit 1; }
-
-echo "[3/9] apply the patch and commit"
-git apply --check /tmp/release.patch || { echo "::error title=apply::patch does not apply to main"; exit 1; }
-git apply /tmp/release.patch
-git config user.name "github-actions[bot]"
-git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-git add -A
-git commit -q -m "release: EasyProxy 0.7.0 (sing-box 1.14.4, schema 迁移与 pin 一致性测试)" || { echo "::error title=commit::git commit failed"; exit 1; }
-echo "local commit $(git rev-parse HEAD)"
-git push origin HEAD:main || { echo "::error title=push::git push failed"; exit 1; }
-SHA="$(git rev-parse HEAD)"
-echo "[3/9] committed $SHA"
-git show --stat --oneline HEAD | head -20
-
-echo "[4/9] build dependencies"
+echo "[2/9] build dependencies"
 sudo apt-get update -qq
 sudo apt-get install -y -qq \
   build-essential clang flex bison g++ gawk gcc-multilib gettext git \
   libncurses-dev libssl-dev python3 python3-setuptools rsync unzip \
   zlib1g-dev file wget curl zstd
 
-echo "[5/9] pinned sing-box for the suites"
+echo "[3/9] pinned sing-box for the suites"
 SB_VER=1.14.4
 SB_URL="https://github.com/SagerNet/sing-box/releases/download/v${SB_VER}/sing-box-${SB_VER}-linux-amd64.tar.gz"
 SB_SHA=699a1b510aa4396b2176d32d1181920399ebf1e267835da6f3b598d0f7c24968
@@ -51,10 +44,10 @@ cp "sing-box-${SB_VER}-linux-amd64/sing-box" /opt/easyproxy-ci/sing-box
 chmod +x /opt/easyproxy-ci/sing-box
 /opt/easyproxy-ci/sing-box version
 
-echo "[6/9] test suites with the real kernel"
+echo "[4/9] test suites with the real kernel"
 EP_SING_BOX_BIN=/opt/easyproxy-ci/sing-box EP_TEST_LOG_DIR=test-logs bash tests/run-all.sh
 
-echo "[7/9] SDK and package build"
+echo "[5/9] SDK and package build"
 SDK_URL="https://downloads.immortalwrt.org/releases/25.12.2/targets/x86/64/immortalwrt-sdk-25.12.2-x86-64_gcc-14.3.0_musl.Linux-x86_64.tar.zst"
 SDK_SHA="4d4631f134c2f27215a91aa7ef5bf9a01ea96c2450d3b8a5c38048c32462ac60"
 curl -fL "$SDK_URL" -o sdk.tar.zst || { echo "::error title=SDK download::cannot download the SDK"; exit 1; }
@@ -65,7 +58,6 @@ tar --zstd -xf sdk.tar.zst -C sdk --strip-components=1
 mkdir -p dist
 VER="$(sed -n 's/^PKG_VERSION:=//p' package/easyproxy/Makefile | head -1)"
 [ -n "$VER" ] || { echo "::error::cannot read PKG_VERSION"; exit 1; }
-[ "$VER" = "0.7.0" ] || { echo "::error::patch did not set PKG_VERSION to 0.7.0"; exit 1; }
 echo "PKG_VERSION=$VER"
 
 ( cd sdk && mkdir -p package/easyproxy && cp -a ../package/easyproxy/. package/easyproxy/ \
@@ -86,11 +78,13 @@ done
 find sdk/bin/packages -type f \( -name 'easyproxy*.apk' -o -name 'easyproxy*.ipk' \) -exec cp -v {} dist/ \;
 compgen -G 'dist/easyproxy*' > /dev/null || { echo "::error::EasyProxy package not found"; exit 1; }
 
-echo "[8/9] KERNEL-VERSIONS and SHA256SUMS"
+echo "[6/9] KERNEL-VERSIONS and SHA256SUMS"
+SB_VER_PKG="$(sed -n 's/^SING_BOX_VER=.*:-\\([0-9][0-9.]*\\)}.*/\\1/p' scripts/make-kernel-ipk.sh)"
+DAE_VER_PKG="$(sed -n 's/^DAE_VER=.*:-\\([0-9][0-9.]*\\)}.*/\\1/p' scripts/make-kernel-ipk.sh)"
+[ -n "$SB_VER_PKG" ] && [ -n "$DAE_VER_PKG" ] || { echo "::error title=kernel versions::cannot read the kernel versions"; exit 1; }
+echo "sing-box $SB_VER_PKG / dae $DAE_VER_PKG"
+
 ( cd dist
-  SB_VER_PKG="$(sed -n 's/^SING_BOX_VER=.*:-\\([0-9][0-9.]*\\)}.*/\\1/p' ../scripts/make-kernel-ipk.sh)"
-  DAE_VER_PKG="$(sed -n 's/^DAE_VER=.*:-\\([0-9][0-9.]*\\)}.*/\\1/p' ../scripts/make-kernel-ipk.sh)"
-  [ -n "$SB_VER_PKG" ] && [ -n "$DAE_VER_PKG" ] || { echo "::error::cannot read the kernel versions"; exit 1; }
   {
     echo "component   version   upstream"
     echo "easyproxy   ${VER}     https://github.com/${GITHUB_REPOSITORY}"
@@ -115,7 +109,7 @@ for ipk in dist/*.ipk; do
   grep -q "$base" dist/SHA256SUMS || { echo "::error title=checksum gap::SHA256SUMS does not cover $base"; exit 1; }
 done
 
-echo "[9/9] publish the release"
+echo "[7/9] publish the release"
 TAG="v${VER}"
 if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
   echo "::error title=version already released::release $TAG already exists"; exit 1
@@ -165,5 +159,5 @@ gh release create "$TAG" \
   --title "EasyProxy ${VER}" \
   --notes-file "$NOTES" \
   dist/easyproxy* dist/sing-box_* dist/dae_* dist/SHA256SUMS dist/KERNEL-VERSIONS || { echo "::error title=release::gh release create failed"; exit 1; }
-echo "created release $TAG from $SHA"
+echo "[7/9] created release $TAG from $SHA"
 cat "$NOTES"
