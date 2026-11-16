@@ -261,11 +261,16 @@ package/easyproxy/
     ├── usr/share/luci/menu.d/luci-app-easyproxy.json
     ├── usr/share/rpcd/acl.d/luci-app-easyproxy.json
     └── www/luci-static/resources/view/easyproxy/overview.js
+scripts/
+├── make-ipk.sh          # build the all-arch .ipk from package/easyproxy
+├── install.sh           # one-line installer used by the README
+└── uninstall.sh         # one-line uninstaller used by the README
 tests/
-├── test-cli.sh          # CLI surface (status/validate/engine/start guard)
-├── test-runtime.sh      # config generation + start/stop lifecycle
-├── test-routing.sh      # split routing, DNS block, rule-set handling
-└── test-transparent.sh  # tproxy inbound, nft/ip takeover, idempotent rollback
+├── test-cli.sh            # CLI surface (status/validate/engine/start guard)
+├── test-runtime.sh        # config generation + start/stop lifecycle
+├── test-routing.sh        # split routing, DNS block, rule-set handling
+├── test-transparent.sh    # tproxy inbound, nft/ip takeover, idempotent rollback
+└── test-install-scripts.sh # installer/uninstaller against stubbed opkg/apk/curl
 ```
 
 ## Tests
@@ -279,11 +284,16 @@ sh tests/test-cli.sh
 sh tests/test-runtime.sh
 sh tests/test-routing.sh
 sh tests/test-transparent.sh
+sh tests/test-install-scripts.sh
 # additionally validate the generated config against a real binary:
 EP_SING_BOX_BIN=/usr/bin/sing-box sh tests/test-runtime.sh
 EP_SING_BOX_BIN=/usr/bin/sing-box sh tests/test-routing.sh
 EP_SING_BOX_BIN=/usr/bin/sing-box sh tests/test-transparent.sh
 ```
+
+The install-script suite stubs `opkg`, `apk`, `curl` and the init/rpcd scripts
+in a sandbox, so it covers both package managers, the API-unreachable fallback,
+the rootfs route and the uninstall ordering without touching `/etc` at all.
 
 The transparent suite stubs `nft` and `ip`, so the takeover state machine is
 exercised (apply, idempotent re-apply, rollback, refusals, missing nft)
@@ -297,6 +307,54 @@ without touching the host's firewall and without root.
 artifact. Runs on push/PR to `main`, on `workflow_dispatch`, and on `v*` tags.
 
 ## Install
+
+### One-line install from GitHub
+
+On the router, over SSH, the whole install is one command:
+
+```sh
+wget -qO- https://raw.githubusercontent.com/bnm188/EasyProxy/main/scripts/install.sh | sh
+```
+
+It detects whether the firmware has `opkg` or `apk`, picks the matching asset of
+the **latest release** (`.ipk` for opkg, `.apk` for apk-based images), installs it,
+enables the service and restarts `rpcd` so the LuCI menu shows up. Re-running it
+simply installs the newest release again.
+
+| Command | What it does |
+|---|---|
+| `... install.sh` | detect opkg/apk and install the matching package |
+| `sh install.sh --ipk` | force the `.ipk` asset |
+| `sh install.sh --apk` | force the `.apk` asset |
+| `sh install.sh --rootfs` | skip the package manager, extract the rootfs archive at `/` |
+| `sh install.sh --help` | usage, no network access |
+
+Uninstall is the same shape:
+
+```sh
+wget -qO- https://raw.githubusercontent.com/bnm188/EasyProxy/main/scripts/uninstall.sh | sh
+```
+
+It removes the nftables capture first, then stops the service, then removes the
+package — in that order, so LAN traffic is never left pointing at a dead listener.
+`/etc/config/easyproxy` and `/etc/easyproxy` are kept; to drop them as well:
+
+```sh
+wget -qO- https://raw.githubusercontent.com/bnm188/EasyProxy/main/scripts/uninstall.sh | sh -s -- --purge
+```
+
+Both scripts are idempotent, and both still work when `api.github.com` is
+rate-limited or unreachable: the asset URL is then rebuilt from `PKG_VERSION`
+in `package/easyproxy/Makefile`. Only `curl` or `wget` is required.
+
+Prefer to read before running? Fetch, inspect, then execute:
+
+```sh
+wget -O /tmp/install.sh https://raw.githubusercontent.com/bnm188/EasyProxy/main/scripts/install.sh
+sh /tmp/install.sh
+```
+
+### From a package you downloaded yourself
 
 ```sh
 opkg install --force-reinstall /tmp/easyproxy_*.ipk
