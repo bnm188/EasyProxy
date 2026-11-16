@@ -220,6 +220,7 @@ test-transparent               87        0      0
 | 1 | 首次全量：`test-security` 1 项 `FAIL traffic 经固定入口的 tx 仍是第 10 列`（期望 14904160，实际 14904488） | **与本轮改动无关的既有竞态**：测试先读 `/proc/net/dev` 计数、再调 CLI 读一次，全量并行时接口计数已增长 | 单跑 `test-security` 连续 3 次 33/0；随后两次全量 588/0、591/0。**未改该测试**（超出本轮"只修固件识别与兼容性"的范围），作为遗留问题登记 |
 | 2 | 中途全量：`test-install-scripts` 3 项 `FAIL`（"无匹配架构时仍能安装 / 退回 all 包 / 拒绝原因说明没有可装的包"） | 我第一版 `check_arch()` 写成**硬 `die`**，误伤了"面板 `_all.ipk` 架构无关、mipsel/riscv 也能装面板"的既有正确行为 | 改为提示而非阻断，保留既有行为；重跑该套件 126/0 |
 | 3 | 一次性工作流 `kwrt-fix-once.yml` 第 2 次运行 **failed**（run 页可见） | 我把 7 668 字符 base64 载荷推上去时错了一个字符（`SL7BX/` 应为 `SL7BW/`），`gzip -d` 失败 | 新增 `kwrt-fix-once-2.yml` 定点修正该字符后再解码应用，成功；两个工作流在同一提交内自删 |
+| 4 | 一次性文档工作流 `docs-008-once.yml` #1 **failed**（Actions 页可见，`0 jobs`） | 我把 xz+base64 载荷写进 YAML 时没有按 `run: |` 块缩进，heredoc 内容顶格，工作流文件语法无效，GitHub 判为无效工作流、未产生任何 job | 新增 `docs-008-once2.yml`：不再重发载荷，改为从已推送的 `docs-008-once.yml` 里提取 base64 解码（补丁 `sha256sum -c` 校验 `2df75d7a…` 通过）后 `git apply`，两个工作流在同一提交内自删 |
 
 ---
 
@@ -227,7 +228,8 @@ test-transparent               87        0      0
 
 - **是否成功：未执行编译**（原因：本轮只改 shell 脚本、测试与文档，未触碰 `package/easyproxy/Makefile`、未要求产出 IPK/apk；本地无 ImmortalWrt SDK 编译环境）。
 - 语法检查：`sh -n scripts/install.sh` → 通过；`sh -n tests/test-regressions.sh` → 通过。
-- CI：仓库 `build.yml` 会在 push `main` 时跑（构建 + 打包 + 校验），其结论以 Actions 页为准；**本轮不以 CI 结论代替本地测试结论**（CI 状态见第 9 节记录时点）。
+- CI（实查 Actions 页，2026-11-17）：`EasyProxy package and kernel build` **#156（`6fb2a14`）SUCCESS**、**#157（`2ab2cc8`）SUCCESS**；两个提交的树都含本次修复后的 `scripts/install.sh`。**不以 CI 结论代替本地 591 通过 / 0 失败。**
+- 说明：`5b84c2b`（代码）与 `670607a`（文档）是 `GITHUB_TOKEN` 在 Actions 内 `git push` 产生的，GitHub 不为其再触发工作流，所以这两个 SHA **没有独立 build run**；改以随后人工 push 的 `6fb2a14`/`2ab2cc8` 的 SUCCESS 作为覆盖同一份代码的 CI 证据。
 
 ---
 
@@ -235,6 +237,7 @@ test-transparent               87        0      0
 
 - 本轮**没有**新的 IPK / apk / rootfs / 内核包产物（未编译、未发布新 Release）。
 - 仓库产物：代码提交 `5b84c2b`（3 个文件实质修改 + 2 个一次性工作流删除），以及本报告与索引行。
+- 文档提交：`670607a`（008 报告 + 索引 008 行 + `docs/PROJECT-STATUS.md` 更新）已推送到 `main`。
 - 远端核对：`git fetch` 后逐文件比对 `sha256sum`，`scripts/install.sh`、`tests/test-regressions.sh`、`README.md` 三个文件**本地与远端完全一致**（`4ce2f5aa…`、`18615d1b…`、`c8e4fb98…`）。
 
 ---
@@ -242,7 +245,7 @@ test-transparent               87        0      0
 ## 10. 提交
 
 - 代码/文档提交：`5b84c2b`（`fix(installer): recognise Kwrt firmware, its opkg baseline and arch limits`），由一次性工作流在仓库内 `git apply` 后提交并推送，作者 `EasyProxy Bot`。
-- 报告提交：本报告与 `docs/reports/README.md` 索引行、`docs/PROJECT-STATUS.md` 同一次提交；该提交 SHA 见 GitHub 提交历史（避免自引用）。
+- 报告提交：`670607a`（`docs: 008 报告（Kwrt 固件识别兼容性修复）+ 索引行 + 状态更新`），同一提交含本报告、`docs/reports/README.md` 的 008 索引行与 `docs/PROJECT-STATUS.md` 更新；推送后 `git fetch` 逐文件比对，远端与本地 `sha256sum` 一致（`da8310b8…`、`af28dc88…`、`b5ef6dc4…`）。
 
 ---
 
