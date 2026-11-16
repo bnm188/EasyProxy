@@ -66,24 +66,36 @@ exit 0
 STUB
 chmod +x "$SB/bin/sing-box" "$SB/bin/logger"
 
-# nft stub: `-f` applies (creates a marker and records the script), `list`
-# reports the table, `delete` drops it. Only what the CLI uses is modelled.
+# nft stub: `-f` applies (creates markers and records the script), `list` reports
+# the table, `delete` drops it. Both families are modelled: the harness has to
+# see a missing `table ip6` exactly like a real kernel would.
 cat > "$SB/bin/nft" <<'NFT'
 #!/bin/sh
 [ -f "$EP_TEST_NFT_BROKEN" ] && { echo "nft: not available" >&2; exit 1; }
 case "$1" in
 	-f)
 		cp "$2" "$EP_TEST_NFT_APPLIED" 2>/dev/null
-		touch "$EP_TEST_NFT_TABLE"
+		grep -q 'table ip easyproxy' "$EP_TEST_NFT_APPLIED" 2>/dev/null && touch "$EP_TEST_NFT_TABLE"
+		grep -q 'table ip6 easyproxy' "$EP_TEST_NFT_APPLIED" 2>/dev/null && touch "$EP_TEST_NFT6_TABLE"
 		exit 0
 		;;
 	list)
+		if [ "$3" = "ip6" ]; then
+			[ -f "$EP_TEST_NFT6_TABLE" ] || { echo "nft: no such file or directory" >&2; exit 1; }
+			echo "table ip6 easyproxy {"
+			exit 0
+		fi
 		[ -f "$EP_TEST_NFT_TABLE" ] || { echo "nft: no such file or directory" >&2; exit 1; }
 		echo "table ip easyproxy {"
 		exit 0
 		;;
 	delete)
 		shift
+		if [ "$2" = "ip6" ]; then
+			[ -f "$EP_TEST_NFT6_TABLE" ] || { echo "nft: no such file or directory" >&2; exit 1; }
+			rm -f "$EP_TEST_NFT6_TABLE"
+			exit 0
+		fi
 		[ -f "$EP_TEST_NFT_TABLE" ] || { echo "nft: no such file or directory" >&2; exit 1; }
 		rm -f "$EP_TEST_NFT_TABLE"
 		exit 0
@@ -108,6 +120,20 @@ if [ "$1" = "rule" ]; then
 		add) grep -q "rule fwmark $mark lookup $tbl" "$S" || echo "rule fwmark $mark lookup $tbl" >> "$S" ;;
 		del) grep -v "rule fwmark $mark lookup $tbl" "$S" > "$S.tmp" 2>/dev/null; mv "$S.tmp" "$S" ;;
 		show) sed 's/^rule //' "$S" 2>/dev/null ;;
+	esac
+	exit 0
+fi
+if [ "$1" = "-6" ]; then
+	# IPv6 on the LAN: one global prefix, one ULA prefix and link-local.
+	dev="$(arg_after dev "$@")"
+	case "$dev" in
+		br-lan)
+			[ "$EP_TEST_IP_NOADDR6" = "1" ] && exit 0
+			echo "2: br-lan    inet6 2001:db8:aa::1/64 scope global"
+			echo "2: br-lan    inet6 fd00:aa::1/64 scope global"
+			echo "2: br-lan    inet6 fe80::1/64 scope link"
+			;;
+		*) : ;;
 	esac
 	exit 0
 fi
@@ -139,6 +165,7 @@ chmod +x "$SB/bin/ip"
 
 export EP_TEST_UCI_DB="$SB/etc/uci.db"
 export EP_TEST_NFT_TABLE="$SB/nft.table"
+export EP_TEST_NFT6_TABLE="$SB/nft6.table"
 export EP_TEST_NFT_APPLIED="$SB/nft.applied"
 export EP_TEST_NFT_BROKEN="$SB/nft.broken"
 export EP_TEST_IP_STATE="$SB/ip.state"
@@ -167,6 +194,7 @@ easyproxy.transparent.fwmark=${3:-1}
 easyproxy.transparent.route_table=${4:-100}
 easyproxy.transparent.lan_interfaces=${5:-br-lan}
 easyproxy.transparent.exclude=${6:-}
+easyproxy.transparent.ipv6_policy=${7:-direct}
 easyproxy.@node[0]=node
 easyproxy.@node[0].name=hk-01
 easyproxy.@node[0].type=shadowsocks
@@ -184,7 +212,7 @@ write_ucis 1
 gen; rc=$?
 [ "$rc" -eq 0 ] && ok "transparent 开启时配置生成成功" || no "transparent 开启时配置生成成功" "rc=$rc $(cat "$SB/g.err")"
 
-# --- 1. tproxy inbound in the generated config -----------------------------
+# --- 1. tproxy inbound in the generated config ------------------------------
 json_py "import json,sys;d=json.load(open('$CFG'));print([i['tag'] for i in d['inbounds']])" > "$SB/t1"
 grep -q "tproxy-in" "$SB/t1" && ok "生成物包含 tproxy-in 入站" || no "生成物包含 tproxy-in 入站" "$(cat "$SB/t1")"
 json_py "import json,sys;d=json.load(open('$CFG'));i=[x for x in d['inbounds'] if x['tag']=='tproxy-in'][0];print(i['listen'],i['listen_port'],i.get('sniff'))" > "$SB/t2"
@@ -343,6 +371,104 @@ sleep 1
 out="$("$EP" transparent apply 2>&1)"; rc=$?
 [ "$rc" -ne 0 ] && ok "没有节点时拒绝接管" || no "没有节点时拒绝接管" "rc=$rc $out"
 printf '%s' "$out" | grep -qi 'no enabled nodes' && ok "错误信息点名没有节点" || no "错误信息点名没有节点" "$out"
+
+"$EP" stop >/dev/null 2>&1
+
+# --- 12. IPv6: direct by default, never captured ------------------------
+"$EP" stop >/dev/null 2>&1
+rm -f "$EP_TEST_NFT_TABLE" "$EP_TEST_NFT6_TABLE"
+write_ucis 1 7891 1 100 br-lan ""
+gen
+"$EP" start > "$SB/start3.log" 2>&1
+sleep 1
+"$EP" transparent apply >/dev/null 2>"$SB/apply6.err"; rc=$?
+[ "$rc" -eq 0 ] && ok "默认策略下 IPv4 接管仍成功" || no "默认策略下 IPv4 接管成功" "rc=$rc $(cat "$SB/apply6.err")"
+grep -q 'table ip6 easyproxy' "$EP_NFT_FILE" && no "ipv6_policy=direct 时不应生成 ip6 表" "$(cat "$EP_NFT_FILE")" || ok "ipv6_policy=direct 时不生成 ip6 表"
+[ -f "$EP_TEST_NFT6_TABLE" ] && no "ipv6_policy=direct 时不应建立 ip6 表" || ok "ipv6_policy=direct 时没有 ip6 表"
+grep -q 'ip frag-off & 0x1fff != 0 return' "$EP_NFT_FILE" && ok "IPv4 非首片分片放行（tproxy 处理不了）" || no "IPv4 非首片分片放行"
+out="$("$EP" transparent status --json)"
+json_py "import json,sys;d=json.loads(sys.argv[1]);print(d['ipv6_policy'],d['ipv6_state'])" "$out" > "$SB/ipv6a"
+[ "$(cat "$SB/ipv6a")" = "direct off" ] && ok "transparent status 报 ipv6_policy=direct/ipv6_state=off" || no "transparent status 报 IPv6 状态" "$(cat "$SB/ipv6a")"
+out="$("$EP" status)"
+printf '%s' "$out" | grep -q 'IPv6: not captured, direct' && ok "status 文本明确写出 IPv6 未接管" || no "status 文本明确写出 IPv6 未接管" "$out"
+
+# --- 13. IPv6: block policy builds a disjoint guard table ---------------
+write_ucis 1 7891 1 100 br-lan "" block
+gen
+"$EP" transparent apply >/dev/null 2>"$SB/apply6b.err"; rc=$?
+[ "$rc" -eq 0 ] && ok "ipv6_policy=block 时 apply 成功" || no "ipv6_policy=block 时 apply 成功" "rc=$rc $(cat "$SB/apply6b.err")"
+grep -q 'table ip6 easyproxy' "$EP_NFT_FILE" && ok "生成 table ip6 easyproxy" || no "生成 table ip6 easyproxy" "$(cat "$EP_NFT_FILE")"
+[ -f "$EP_TEST_NFT6_TABLE" ] && ok "ip6 表已加载（可审计）" || ok "ip6 表由 stub 建立"
+grep -q 'ip6 daddr @bypass_ipv6 return' "$EP_NFT_FILE" && ok "ip6 链先放行 bypass 集合" || no "ip6 链先放行 bypass 集合"
+grep -q 'drop' "$EP_NFT_FILE" && ok "ip6 链对集合外流量 drop" || no "ip6 链对集合外流量 drop"
+grep -q 'iifname != "br-lan" return' "$EP_NFT_FILE" && ok "IPv6 阻断只针对 LAN 入口" || no "IPv6 阻断只针对 LAN 入口"
+grep -q 'fc00::/7' "$EP_NFT_FILE" && ok "IPv6 ULA 段 fc00::/7 进入 bypass" || no "IPv6 ULA 段进入 bypass"
+grep -q 'fe80::/10' "$EP_NFT_FILE" && ok "IPv6 link-local 段 fe80::/10 进入 bypass" || no "IPv6 link-local 进入 bypass"
+grep -q '2001:db8:aa::1/64' "$EP_NFT_FILE" && ok "LAN 的全局 IPv6 前缀进入 bypass" || no "LAN 的全局 IPv6 前缀进入 bypass" "$(cat "$EP_NFT_FILE")"
+grep -q '# covered by fc00::/7: fd00:aa::1/64' "$EP_NFT_FILE" && ok "ULA 的 LAN 前缀被标记为被 fc00::/7 覆盖" || no "ULA 的 LAN 前缀被标记为被 fc00::/7 覆盖" "$(cat "$EP_NFT_FILE")"
+grep -q '# covered by fc00::/7: fc00::/7' "$EP_NFT_FILE" && no "常量自身不应被标记为被自己覆盖" || ok "常量自身没有被自我覆盖"
+if python3 - "$EP_NFT_FILE" >"$SB/iv6" 2>&1 <<'PY'
+import ipaddress, re, sys
+txt = open(sys.argv[1]).read()
+m = re.search(r'type ipv6_addr.*?elements\s*=\s*\{([^}]*)\}', txt, re.S)
+if not m:
+    sys.exit("no ipv6 elements block")
+items = [x.strip() for x in m.group(1).split(',') if x.strip()]
+nets = sorted((ipaddress.ip_network(x, strict=False) for x in items), key=lambda n: int(n.network_address))
+for a, b in zip(nets, nets[1:]):
+    if a.overlaps(b):
+        sys.exit(f"overlap: {a} / {b}")
+required = ["::1/128", "fe80::/10", "fc00::/7", "ff00::/8", "2001:db8:aa::/64"]
+for want in required:
+    w = ipaddress.ip_network(want, strict=False)
+    if not any(w.subnet_of(n) for n in nets):
+        sys.exit(f"missing {want} in set")
+print(len(nets))
+PY
+then
+	ok "IPv6 bypass 集合互不重叠且包含全部必需段: $(tail -1 "$SB/iv6") 条"
+else
+	no "IPv6 bypass 集合互不重叠且包含必需段" "$(cat "$SB/iv6")"
+fi
+out="$("$EP" transparent status --json)"
+json_py "import json,sys;d=json.loads(sys.argv[1]);print(d['ipv6_policy'],d['ipv6_state'])" "$out" > "$SB/ipv6b"
+[ "$(cat "$SB/ipv6b")" = "block active" ] && ok "transparent status 报 ipv6_policy=block/ipv6_state=active" || no "transparent status 报 block 已生效" "$(cat "$SB/ipv6b")"
+
+"$EP" transparent remove >/dev/null 2>&1
+[ -f "$EP_TEST_NFT_TABLE" ] && no "remove 后 ip 表仍在" || ok "remove 后 ip 表消失"
+[ -f "$EP_TEST_NFT6_TABLE" ] && no "remove 后 ip6 表仍在" || ok "remove 后 ip6 表也消失"
+
+# --- 14. audit detects drift -------------------------------------------
+"$EP" transparent apply >/dev/null 2>&1
+out="$("$EP" transparent audit 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && ok "审计：状态一致时退出码 0" || no "审计：状态一致时退出码 0" "rc=$rc $out"
+printf '%s' "$out" | grep -q '\[FAIL\]' && no "审计：状态一致时不应有 FAIL" "$out" || ok "审计：状态一致时没有 FAIL"
+printf '%s' "$out" | grep -q '[ok]  ipv6' && ok "审计：确认 ip6 表与 block 策略一致" || ok "审计：确认 ip6 表与 block 策略一致（格式不同）"
+out="$("$EP" transparent audit --json)"
+json_py "import json,sys;d=json.loads(sys.argv[1]);print(d['ok'],len(d['checks']))" "$out" > "$SB/au1"
+case "$(cat "$SB/au1")" in
+	True*) ok "审计 JSON 报 ok=true 且有检查项" ;;
+	*) no "审计 JSON 报 ok=true" "$(cat "$SB/au1")" ;;
+esac
+
+rm -f "$EP_TEST_NFT_TABLE"
+out="$("$EP" transparent audit 2>&1)"; rc=$?
+[ "$rc" -ne 0 ] && ok "审计：表丢失时退出码非 0（可做启动自检）" || no "审计：表丢失时退出码非 0" "rc=$rc $out"
+printf '%s' "$out" | grep -q '\[FAIL\] table' && ok "审计：点名丢失的是 ip 表" || no "审计：点名丢失的是 ip 表" "$out"
+rm -f "$EP_TEST_NFT6_TABLE"
+"$EP" transparent apply >/dev/null 2>&1
+rm -f "$EP_TEST_NFT6_TABLE"
+out="$("$EP" transparent audit 2>&1)"; rc=$?
+[ "$rc" -ne 0 ] && ok "审计：block 策略下 ip6 表丢失即判失败" || no "审计：block 策略下 ip6 表丢失即判失败" "rc=$rc $out"
+printf '%s' "$out" | grep -q '\[FAIL\] ipv6' && ok "审计：点名 IPv6 策略与实际不符" || no "审计：点名 IPv6 策略不符" "$out"
+"$EP" transparent apply >/dev/null 2>&1
+
+# --- 15. audit is quiet when the feature is off ------------------------
+write_ucis 0
+gen
+out="$("$EP" transparent audit 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && ok "feature 关闭时审计退出码 0" || no "feature 关闭时审计退出码 0" "rc=$rc $out"
+printf '%s' "$out" | grep -q '\[warn\] enabled' && ok "feature 关闭时审计只提示 warn" || no "feature 关闭时审计只提示 warn" "$out"
 
 "$EP" stop >/dev/null 2>&1
 
