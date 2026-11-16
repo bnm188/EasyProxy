@@ -5,31 +5,74 @@
 PROG="easyproxy"
 
 usage() {
-	cat <<'EOF'
-EasyProxy 0.1.0 — Stage 1
+	cat <<EOF
+EasyProxy ${EP_VERSION} — Stage ${EP_STAGE} (read-only data backend)
 Usage:
-  easyproxy status       Show current configuration status
-  easyproxy validate     Validate safe configuration values
-  easyproxy engine       Show selected engine and binary availability
-  easyproxy start        Guarded start (not enabled until Stage 2)
-  easyproxy stop         Stop placeholder (Stage 2 runtime required)
-  easyproxy help         Show this help
+  easyproxy status [--json]    Show real configuration and runtime status
+  easyproxy validate [--json]  Validate configuration values
+  easyproxy engine             Show selected engine and binary availability
+  easyproxy start              Guarded start (runtime arrives in Stage 3)
+  easyproxy stop               Stop placeholder
+  easyproxy help               Show this help
 EOF
 }
 
-cmd_status() {
-	local enabled engine china
-	enabled="$(ep_get main enabled 0)"
+cmd_status_text() {
+	local enabled engine binary bstate china proxy fail_closed nodes
+	enabled="$(ep_bool "$(ep_get main enabled 0)")"
 	engine="$(ep_get main engine none)"
+	binary="$(ep_engine_binary "$engine")"
+	bstate="$(ep_binary_state "$binary")"
 	china="$(ep_get routing china_policy direct)"
-	printf 'EasyProxy: Stage 1 scaffold\n'
+	proxy="$(ep_get routing proxy_policy proxy)"
+	fail_closed="$(ep_bool "$(ep_get routing fail_closed 1)")"
+	nodes="$(ep_node_count)"
+
+	printf 'EasyProxy %s (Stage %s)\n' "$EP_VERSION" "$EP_STAGE"
 	printf 'Enabled: %s\n' "$enabled"
 	printf 'Engine: %s\n' "$engine"
+	if [ -n "$binary" ]; then
+		printf 'Binary: %s (%s)\n' "$binary" "$bstate"
+	else
+		printf 'Binary: n/a\n'
+	fi
 	printf 'China policy: %s\n' "$china"
-	printf 'Runtime: not implemented in Stage 1\n'
+	printf 'Proxy policy: %s\n' "$proxy"
+	printf 'Fail closed: %s\n' "$fail_closed"
+	printf 'Nodes: %s\n' "$nodes"
+	printf 'Runtime: not implemented (no proxy process managed)\n'
+	printf 'Config: %s\n' "$EP_CONFIG_FILE"
 }
 
-cmd_validate() {
+cmd_status_json() {
+	local enabled engine binary bstate china proxy fail_closed nodes
+	enabled="$(ep_bool "$(ep_get main enabled 0)")"
+	engine="$(ep_get main engine none)"
+	binary="$(ep_engine_binary "$engine")"
+	bstate="$(ep_binary_state "$binary")"
+	china="$(ep_get routing china_policy direct)"
+	proxy="$(ep_get routing proxy_policy proxy)"
+	fail_closed="$(ep_bool "$(ep_get routing fail_closed 1)")"
+	nodes="$(ep_node_count)"
+	[ -n "$nodes" ] || nodes="0"
+
+	printf '{"ok":true,"package":"%s","version":"%s","stage":%s,"enabled":%s,"engine":"%s","binary":"%s","binary_ok":%s,"china_policy":"%s","proxy_policy":"%s","fail_closed":%s,"nodes":%s,"runtime":"not_implemented","config_file":"%s","generated":"%s"}\n' \
+		"$(ep_json_escape "$PROG")" \
+		"$(ep_json_escape "$EP_VERSION")" \
+		"$EP_STAGE" \
+		"$enabled" \
+		"$(ep_json_escape "$engine")" \
+		"$(ep_json_escape "$binary")" \
+		"$([ "$bstate" = "available" ] && printf '1' || printf '0')" \
+		"$(ep_json_escape "$china")" \
+		"$(ep_json_escape "$proxy")" \
+		"$fail_closed" \
+		"$nodes" \
+		"$(ep_json_escape "$EP_CONFIG_FILE")" \
+		"$(ep_utc_now)"
+}
+
+cmd_validate_text() {
 	local enabled engine china fail_closed
 	enabled="$(ep_get main enabled 0)"
 	engine="$(ep_get main engine none)"
@@ -38,25 +81,59 @@ cmd_validate() {
 
 	case "$enabled" in 0|1) ;; *) echo "Invalid main.enabled: expected 0 or 1" >&2; return 1 ;; esac
 	ep_valid_engine "$engine" || { echo "Invalid main.engine: $engine" >&2; return 1; }
-	[ "$china" = "direct" ] || { echo "Unsafe china_policy: Stage 1 only accepts direct" >&2; return 1; }
+	case "$china" in direct|proxy) ;; *) echo "Invalid routing.china_policy: $china" >&2; return 1 ;; esac
 	case "$fail_closed" in 0|1) ;; *) echo "Invalid routing.fail_closed: expected 0 or 1" >&2; return 1 ;; esac
 
 	echo "Configuration values are valid."
-	echo "Safety check: China policy is DIRECT."
-	echo "Note: this validates UCI values only; no routing is active in Stage 1."
+	if [ "$china" = "direct" ]; then
+		echo "Safety check: China policy is DIRECT."
+	else
+		echo "Warning: China policy is PROXY; domestic traffic would leave the router."
+	fi
+	echo "Note: this validates UCI values only; no routing is active in Stage 2."
+}
+
+cmd_validate_json() {
+	local enabled engine china fail_closed messages code
+	enabled="$(ep_get main enabled 0)"
+	engine="$(ep_get main engine none)"
+	china="$(ep_get routing china_policy direct)"
+	fail_closed="$(ep_get routing fail_closed 1)"
+	messages=""
+	code=0
+
+	case "$enabled" in 0|1) ;; *) messages="${messages}\"Invalid main.enabled: expected 0 or 1\","; code=1 ;; esac
+	if ! ep_valid_engine "$engine"; then
+		messages="${messages}\"Invalid main.engine: $(ep_json_escape "$engine")\","; code=1
+	fi
+	case "$china" in
+		direct) ;;
+		proxy) messages="${messages}\"Warning: China policy is PROXY\"," ;;
+		*) messages="${messages}\"Invalid routing.china_policy: $(ep_json_escape "$china")\","; code=1 ;;
+	esac
+	case "$fail_closed" in 0|1) ;; *) messages="${messages}\"Invalid routing.fail_closed: expected 0 or 1\","; code=1 ;; esac
+
+	[ "$code" = "0" ] && messages="${messages}\"Configuration values are valid.\",\"China policy: $(ep_json_escape "$china")\","
+	messages="$(printf '%s' "$messages" | sed -e 's/,$//')"
+
+	printf '{"ok":%s,"version":"%s","messages":[%s],"generated":"%s"}\n' \
+		"$([ "$code" = "0" ] && printf 'true' || printf 'false')" \
+		"$(ep_json_escape "$EP_VERSION")" \
+		"$messages" \
+		"$(ep_utc_now)"
+	return "$code"
 }
 
 cmd_engine() {
-	local engine binary
+	local engine binary bstate
 	engine="$(ep_get main engine none)"
 	echo "Selected engine: $engine"
 	case "$engine" in
-		dae) binary="$(ep_get dae binary /usr/bin/dae)" ;;
-		sing-box) binary="$(ep_get sing_box binary /usr/bin/sing-box)" ;;
 		none) echo "No engine selected."; return 0 ;;
-		*) echo "Invalid engine selection." >&2; return 1 ;;
 	esac
-	if [ -x "$binary" ]; then
+	binary="$(ep_engine_binary "$engine")"
+	bstate="$(ep_binary_state "$binary")"
+	if [ "$bstate" = "available" ]; then
 		echo "Binary: available ($binary)"
 	else
 		echo "Binary: missing ($binary)"
@@ -64,24 +141,38 @@ cmd_engine() {
 }
 
 cmd_start() {
-	local enabled engine
-	enabled="$(ep_get main enabled 0)"
+	local enabled engine binary
+	enabled="$(ep_bool "$(ep_get main enabled 0)")"
 	engine="$(ep_get main engine none)"
 	[ "$enabled" = "1" ] || { echo "EasyProxy is disabled. Set easyproxy.main.enabled=1 to enable." >&2; return 1; }
 	[ "$engine" != "none" ] || { echo "No proxy engine selected." >&2; return 1; }
-	echo "Start blocked: Stage 2 runtime adapters are not implemented."
+	binary="$(ep_engine_binary "$engine")"
+	[ "$(ep_binary_state "$binary")" = "available" ] || { echo "Engine binary is missing: $binary" >&2; return 1; }
+	echo "Start blocked: the runtime adapter is implemented in Stage 3."
 	echo "No firewall, DNS or route changes were made."
 	return 2
 }
 
 cmd_stop() {
-	echo "No EasyProxy proxy process is managed in Stage 1."
+	echo "No EasyProxy proxy process is managed in Stage 2."
 	return 0
 }
 
+CMD="$1"
+[ $# -gt 0 ] && shift
+
+JSON=0
 case "$1" in
-	status) cmd_status ;;
-	validate) cmd_validate ;;
+	--json) JSON=1 ;;
+esac
+
+case "$CMD" in
+	status)
+		if [ "$JSON" = "1" ]; then cmd_status_json; else cmd_status_text; fi
+		;;
+	validate)
+		if [ "$JSON" = "1" ]; then cmd_validate_json; else cmd_validate_text; fi
+		;;
 	engine) cmd_engine ;;
 	start) cmd_start ;;
 	stop) cmd_stop ;;
