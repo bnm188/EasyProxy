@@ -215,8 +215,13 @@ gen; rc=$?
 # --- 1. tproxy inbound in the generated config ------------------------------
 json_py "import json,sys;d=json.load(open('$CFG'));print([i['tag'] for i in d['inbounds']])" > "$SB/t1"
 grep -q "tproxy-in" "$SB/t1" && ok "生成物包含 tproxy-in 入站" || no "生成物包含 tproxy-in 入站" "$(cat "$SB/t1")"
-json_py "import json,sys;d=json.load(open('$CFG'));i=[x for x in d['inbounds'] if x['tag']=='tproxy-in'][0];print(i['listen'],i['listen_port'],i.get('sniff'))" > "$SB/t2"
-[ "$(cat "$SB/t2")" = "0.0.0.0 7891 True" ] && ok "tproxy 监听 0.0.0.0:7891 且开启 sniff" || no "tproxy 监听与 sniff" "$(cat "$SB/t2")"
+json_py "import json,sys;d=json.load(open('$CFG'));i=[x for x in d['inbounds'] if x['tag']=='tproxy-in'][0];print(i['listen'],i['listen_port'])" > "$SB/t2"
+[ "$(cat "$SB/t2")" = "0.0.0.0 7891" ] && ok "tproxy 监听 0.0.0.0:7891" || no "tproxy 监听" "$(cat "$SB/t2")"
+# sniff 已从入站字段迁到路由动作（1.11 起弃用、1.13 起删除入站写法）
+json_py "import json,sys;d=json.load(open('$CFG'));print([r.get('inbound') for r in d['route']['rules'] if r.get('action')=='sniff'])" > "$SB/t2b"
+grep -q "tproxy-in" "$SB/t2b" && ok "sniff 是路由动作且挂在 tproxy-in（1.11+ 写法）" || no "sniff 路由动作" "$(cat "$SB/t2b")"
+json_py "import json,sys;d=json.load(open('$CFG'));i=[x for x in d['inbounds'] if x['tag']=='tproxy-in'][0];print([k for k in ('sniff','sniff_override_destination','udp_timeout') if k in i])" > "$SB/t2c"
+[ "$(cat "$SB/t2c")" = "[]" ] && ok "tproxy 入站不再带 1.13 已删除的旧字段" || no "tproxy 入站旧字段" "$(cat "$SB/t2c")"
 json_py "import json,sys;d=json.load(open('$CFG'));print(d['route'].get('auto_detect_interface'))" > "$SB/t3"
 [ "$(cat "$SB/t3")" = "True" ] && ok "透明模式启用 auto_detect_interface" || no "透明模式启用 auto_detect_interface" "$(cat "$SB/t3")"
 json_py "import json,sys;d=json.load(open('$CFG'));print(len(d['inbounds']))" > "$SB/t4"

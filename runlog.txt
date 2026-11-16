@@ -1,0 +1,4 @@
+[1/9] guard
+[2/9] download the reviewed patch
+/tmp/release.patch: OK
+[3/9] apply the patch and commit

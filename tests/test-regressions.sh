@@ -109,12 +109,12 @@ mkdir -p "$SBI/bin" "$SBI/fix" "$SBI/log" "$SBI/tmp" \
 { mkdir -p "$SBI/root/etc/init.d"; } 2>/dev/null || true
 
 printf '!<arch>\nIPK-BYTES\n' > "$SBI/fix/asset.ipk"
-printf 'PKG_VERSION:=0.6.0\nPKG_RELEASE:=1\n' > "$SBI/fix/Makefile"
+printf 'PKG_VERSION:=0.7.0\nPKG_RELEASE:=1\n' > "$SBI/fix/Makefile"
 H="$(sha256sum "$SBI/fix/asset.ipk" | awk '{ print $1 }')"
 {
 	printf '%s  %s\n' "$H" easyproxy_0.9.9-1_x86_64.ipk
 	printf '%s  %s\n' "$H" easyproxy_0.9.9-1_all.ipk
-	printf '%s  %s\n' "$H" easyproxy_0.6.0-1_all.ipk
+	printf '%s  %s\n' "$H" easyproxy_0.7.0-1_all.ipk
 } > "$SBI/fix/SHA256SUMS"
 
 cat > "$SBI/fix/api.json" <<'JSON'
@@ -122,8 +122,8 @@ cat > "$SBI/fix/api.json" <<'JSON'
   "assets": [
     { "name": "easyproxy_0.9.9-1_x86_64.ipk", "browser_download_url": "https://example.test/dl/easyproxy_0.9.9-1_x86_64.ipk" },
     { "name": "easyproxy_0.9.9-1_all.ipk", "browser_download_url": "https://example.test/dl/easyproxy_0.9.9-1_all.ipk" },
-    { "name": "easyproxy_0.6.0-1_all.ipk", "browser_download_url": "https://example.test/dl/easyproxy_0.6.0-1_all.ipk" },
-    { "name": "sing-box_1.10.7_x86_64.ipk", "browser_download_url": "https://example.test/dl/sing-box_1.10.7_x86_64.ipk" },
+    { "name": "easyproxy_0.7.0-1_all.ipk", "browser_download_url": "https://example.test/dl/easyproxy_0.7.0-1_all.ipk" },
+    { "name": "sing-box_1.14.4_x86_64.ipk", "browser_download_url": "https://example.test/dl/sing-box_1.14.4_x86_64.ipk" },
     { "name": "dae_2.1.2_x86_64.ipk", "browser_download_url": "https://example.test/dl/dae_2.1.2_x86_64.ipk" },
     { "name": "SHA256SUMS", "browser_download_url": "https://example.test/dl/SHA256SUMS" }
   ]
@@ -169,7 +169,7 @@ case "\$1" in
 esac
 exit 0
 STUB
-printf '#!/bin/sh\necho "sing-box version 1.10.7"\n' > "$SBI/bin/sb-probe"
+printf '#!/bin/sh\necho "sing-box version 1.14.4"\n' > "$SBI/bin/sb-probe"
 printf '#!/bin/sh\necho "dae version v2.1.2"\n' > "$SBI/bin/dae-probe"
 printf '#!/bin/sh\nexit 0\n' > "$SBI/bin/uci"
 chmod +x "$SBI/bin/curl" "$SBI/bin/wget" "$SBI/bin/opkg" "$SBI/bin/sb-probe" "$SBI/bin/dae-probe" "$SBI/bin/uci"
@@ -283,14 +283,33 @@ else
 	no "同版本重复发布时工作流直接失败" "没有已发布检查"
 fi
 if grep -q 'SagerNet/sing-box/releases/download' "$WF" && grep -q 'linux-amd64.tar.gz' "$WF" && grep -q 'sha256sum -c' "$WF"; then
-	ok "CI 下载并校验真实 sing-box 1.10.7"
+	ok "CI 下载并校验真实 sing-box 1.14.4"
 else
-	no "CI 下载并校验真实 sing-box 1.10.7" "工作流里没有真实内核下载"
+	no "CI 下载并校验真实 sing-box 1.14.4" "工作流里没有真实内核下载"
 fi
 if grep -q 'EP_SING_BOX_BIN' "$WF"; then
 	ok "CI 把真实内核路径传给测试套件"
 else
 	no "CI 把真实内核路径传给测试套件" "没有 EP_SING_BOX_BIN"
+fi
+# 版本与校验值必须是同一个数：工作流、打包脚本、安装器各存一份 pin，最容易
+# 出现“升了打包脚本却忘了 CI/安装器”的半升级，那会让测试用一个内核、发布
+# 另一个内核。三处必须一致，amd64 的 sha256 也必须一致。
+CI_VER="$(sed -n 's/^ *SB_VER=\([0-9][0-9.]*\)$/\1/p' "$WF" | head -1)"
+MK_VER="$(sed -n 's/^SING_BOX_VER=.*:-\([0-9][0-9.]*\)}.*/\1/p' scripts/make-kernel-ipk.sh)"
+IN_VER="$(sed -n 's/^SING_BOX_VER=.*:-\([0-9][0-9.]*\)}.*/\1/p' scripts/install.sh)"
+if [ "$CI_VER" = "$MK_VER" ] && [ "$MK_VER" = "$IN_VER" ] && [ -n "$CI_VER" ]; then
+	ok "工作流/打包脚本/安装器的 sing-box 版本一致（$CI_VER）"
+else
+	no "三处 sing-box 版本一致" "CI=$CI_VER 打包=$MK_VER 安装器=$IN_VER"
+fi
+CI_SHA="$(sed -n 's/^ *SB_SHA=\([0-9a-f]*\)$/\1/p' "$WF" | head -1)"
+MK_SHA="$(sed -n 's/.*sing-box:amd64) echo \([0-9a-f]*\) ;;/\1/p' scripts/make-kernel-ipk.sh)"
+IN_SHA="$(sed -n 's/.*amd64) printf .%s. .\([0-9a-f]\{64\}\).*/\1/p' scripts/install.sh | head -1)"
+if [ "$CI_SHA" = "$MK_SHA" ] && [ "$MK_SHA" = "$IN_SHA" ] && [ -n "$CI_SHA" ]; then
+	ok "工作流/打包脚本/安装器的 amd64 sha256 一致"
+else
+	no "三处 amd64 sha256 一致" "CI=${CI_SHA:-空} 打包=${MK_SHA:-空} 安装器=${IN_SHA:-空}"
 fi
 if grep -n 'GITHUB_ENV' "$WF" | grep -q 'EP_SING_BOX_BIN'; then
 	no "工作流没有把内核路径泄漏成全局环境变量" "EP_SING_BOX_BIN 仍被写进 \$GITHUB_ENV，安装套件会误认为内核已存在而跳过下载"

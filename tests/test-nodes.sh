@@ -96,7 +96,7 @@ chmod +x "$SB/bin/uci"
 
 printf '#!/bin/sh\nexit 0\n' > "$SB/bin/logger"
 chmod +x "$SB/bin/logger"
-printf '#!/bin/sh\necho "sing-box version 1.10.7"\nexit 0\n' > "$SB/bin/sing-box"
+printf '#!/bin/sh\necho "sing-box version 1.14.4"\nexit 0\n' > "$SB/bin/sing-box"
 chmod +x "$SB/bin/sing-box"
 
 export EP_TEST_UCI_DB="$SB/etc/uci.db"

@@ -398,6 +398,47 @@ ep_node_server_cidrs() {
 	done
 }
 
+# One DNS server in the shape sing-box 1.12+ requires. The legacy `address`
+# field (`https://host/path`, `tls://host`, `223.5.5.5`) was deprecated in
+# 1.12.0 and removed in 1.14.0, so the scheme becomes `type` and the host,
+# port and path become separate fields. `detour` is kept: it is still the
+# outbound tag the query leaves through.
+ep_dns_server_json() {
+	local tag="$1" addr="$2" detour="$3"
+	local type rest host port path
+	type=udp
+	case "$addr" in
+		https://*) type=https; rest="${addr#https://}" ;;
+		tls://*)   type=tls;   rest="${addr#tls://}" ;;
+		quic://*)  type=quic;  rest="${addr#quic://}" ;;
+		h3://*)    type=h3;    rest="${addr#h3://}" ;;
+		*://*)     type=udp;   rest="${addr#*://}" ;;
+		*)         type=udp;   rest="$addr" ;;
+	esac
+	path=""
+	case "$rest" in
+		*/*) host="${rest%%/*}"; path="/${rest#*/}" ;;
+		*)   host="$rest" ;;
+	esac
+	port=""
+	case "$host" in
+		*:*:*) : ;;
+		*:*) port="${host##*:}"; host="${host%:*}" ;;
+	esac
+	[ -n "$host" ] || return 1
+	[ -n "$path" ] || { [ "$type" = https ] && path="/dns-query"; }
+	# 新格式里 `detour: "direct"` 会被内核直接拒绝（"detour to an empty
+	# direct outbound makes no sense"）：直连出站没有任何拨号字段，不是合法
+	# 的 DNS 出站。指向 direct 时省略 detour 才是真正的直连解析。
+	[ "$detour" = "direct" ] && detour=""
+	printf '{ "type": "%s", "tag": "%s", "server": "%s"' \
+		"$type" "$(ep_json_escape "$tag")" "$(ep_json_escape "$host")"
+	[ -n "$port" ] && printf ', "server_port": %s' "$port"
+	[ "$type" = https ] && [ -n "$path" ] && printf ', "path": "%s"' "$(ep_json_escape "$path")"
+	[ -n "$detour" ] && printf ', "detour": "%s"' "$(ep_json_escape "$detour")"
+	printf ' }'
+}
+
 # Build the config file. Returns 0 on success, non-zero with EP_ERR set.
 # Exit 2 means the file was assembled but the engine rejected it.
 ep_config_build() {
@@ -479,11 +520,20 @@ ep_config_build() {
 		# --- dns -----------------------------------------------------------
 		printf '  "dns": {\n'
 		printf '    "servers": [\n'
-		printf '      { "tag": "dns-local", "address": "%s", "detour": "direct" }' \
-			"$(ep_json_escape "$dns_local")"
+		printf '      '
+		ep_dns_server_json "dns-local" "$dns_local" "direct" || {
+			EP_ERR="routing.dns_local_server is not a usable DNS server"
+			rm -f "$tmp" "$out" "$EP_ERR_FILE"
+			return 1
+		}
 		if [ "$nodes" -gt 0 ] && [ "$mode" != "direct" ]; then
-			printf ',\n      { "tag": "dns-remote", "address": "%s", "detour": "proxy" }\n' \
-				"$(ep_json_escape "$dns_remote")"
+			printf ',\n      '
+			ep_dns_server_json "dns-remote" "$dns_remote" "proxy" || {
+				EP_ERR="routing.dns_remote_server is not a usable DNS server"
+				rm -f "$tmp" "$out" "$EP_ERR_FILE"
+				return 1
+			}
+			printf '\n'
 		else
 			printf '\n'
 		fi
@@ -517,7 +567,7 @@ ep_config_build() {
 			"$(ep_json_escape "$listen")" "$listen_port"
 		if [ "$transparent" = "1" ] && [ "$nodes" -gt 0 ]; then
 			printf ',\n'
-			printf '    { "type": "tproxy", "tag": "tproxy-in", "listen": "0.0.0.0", "listen_port": %s, "sniff": true, "sniff_override_destination": true, "udp_timeout": "5m" }\n' \
+			printf '    { "type": "tproxy", "tag": "tproxy-in", "listen": "0.0.0.0", "listen_port": %s }\n' \
 				"$tproxy_port"
 		else
 			printf '\n'
@@ -564,10 +614,22 @@ ep_config_build() {
 
 		# --- route ---------------------------------------------------------
 		printf '  "route": {\n'
+		# sing-box 1.12 made a missing domain resolver fatal for dial fields
+		# (node server hostnames would no longer resolve at all from 1.14.0), so
+		# the local resolver is named explicitly as the default.
+		printf '    "default_domain_resolver": { "server": "dns-local" },\n'
 		if [ "$transparent" = "1" ] && [ "$nodes" -gt 0 ]; then
 			printf '    "auto_detect_interface": true,\n'
 		fi
 		printf '    "rules": [\n'
+		# Sniffing moved out of the inbound: since sing-box 1.11 it is a route
+		# action, and the legacy inbound fields (sniff, sniff_override_destination,
+		# udp_timeout) were removed in 1.13.0. The action still rewrites the
+		# destination from the sniffed domain for the rules that follow, which is
+		# what the tproxy capture needs.
+		if [ "$transparent" = "1" ] && [ "$nodes" -gt 0 ]; then
+			printf '      { "action": "sniff", "inbound": ["tproxy-in"] },\n'
+		fi
 		printf '      { "ip_is_private": true, "outbound": "direct" }'
 		if [ -n "$node_bypass" ]; then
 			printf ',\n      { "ip_cidr": [%s], "outbound": "direct" }' "$node_bypass"

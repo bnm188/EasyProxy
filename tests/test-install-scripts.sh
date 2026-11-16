@@ -47,7 +47,7 @@ h_ipk="$(sha256sum "$SB/fix/asset.ipk" | awk '{ print $1 }')"
 h_apk="$(sha256sum "$SB/fix/asset.apk" | awk '{ print $1 }')"
 h_tgz="$(sha256sum "$SB/fix/asset.tar.gz" | awk '{ print $1 }')"
 for n in easyproxy_0.5.0-1_all.ipk easyproxy_0.5.0-1_x86_64.ipk easyproxy_0.9.9-1_all.ipk easyproxy_0.9.9-1_x86_64.ipk \
-	sing-box_1.10.7_x86_64.ipk dae_2.1.2_x86_64.ipk; do
+	sing-box_1.14.4_x86_64.ipk dae_2.1.2_x86_64.ipk; do
 	printf '%s  %s\n' "$h_ipk" "$n" >> "$SB/fix/SHA256SUMS"
 done
 for n in easyproxy-0.5.0-r1.apk easyproxy-0.9.9-r1.apk; do
@@ -65,7 +65,7 @@ cat > "$SB/fix/api-kernels.json" <<'JSON'
   "tag_name": "v0.5.0",
   "assets": [
     { "name": "easyproxy_0.5.0-1_all.ipk", "browser_download_url": "https://example.test/dl/easyproxy_0.5.0-1_all.ipk" },
-    { "name": "sing-box_1.10.7_x86_64.ipk", "browser_download_url": "https://example.test/dl/sing-box_1.10.7_x86_64.ipk" },
+    { "name": "sing-box_1.14.4_x86_64.ipk", "browser_download_url": "https://example.test/dl/sing-box_1.14.4_x86_64.ipk" },
     { "name": "dae_2.1.2_x86_64.ipk", "browser_download_url": "https://example.test/dl/dae_2.1.2_x86_64.ipk" },
     { "name": "SHA256SUMS", "browser_download_url": "https://example.test/dl/SHA256SUMS" }
   ]
@@ -74,23 +74,23 @@ JSON
 
 # sing-box fixture: same layout as the official archive, and it answers
 # `version` the way the real binary does.
-mkdir -p "$SB/fix/singbox/sing-box-1.10.7-linux-amd64"
-cat > "$SB/fix/singbox/sing-box-1.10.7-linux-amd64/sing-box" <<'STUB'
+mkdir -p "$SB/fix/singbox/sing-box-1.14.4-linux-amd64"
+cat > "$SB/fix/singbox/sing-box-1.14.4-linux-amd64/sing-box" <<'STUB'
 #!/bin/sh
-echo "sing-box version 1.10.7"
+echo "sing-box version 1.14.4"
 STUB
-chmod +x "$SB/fix/singbox/sing-box-1.10.7-linux-amd64/sing-box"
-tar -czf "$SB/fix/sing-box.tar.gz" -C "$SB/fix/singbox" sing-box-1.10.7-linux-amd64
+chmod +x "$SB/fix/singbox/sing-box-1.14.4-linux-amd64/sing-box"
+tar -czf "$SB/fix/sing-box.tar.gz" -C "$SB/fix/singbox" sing-box-1.14.4-linux-amd64
 h_sb="$(sha256sum "$SB/fix/sing-box.tar.gz" | awk '{ print $1 }')"
 
 # A kernel that installs but cannot run: the upgrade must roll it back.
-mkdir -p "$SB/fix/singbox-broken/sing-box-1.10.7-linux-amd64"
-cat > "$SB/fix/singbox-broken/sing-box-1.10.7-linux-amd64/sing-box" <<'STUB'
+mkdir -p "$SB/fix/singbox-broken/sing-box-1.14.4-linux-amd64"
+cat > "$SB/fix/singbox-broken/sing-box-1.14.4-linux-amd64/sing-box" <<'STUB'
 #!/bin/sh
 exit 1
 STUB
-chmod +x "$SB/fix/singbox-broken/sing-box-1.10.7-linux-amd64/sing-box"
-tar -czf "$SB/fix/sing-box.broken.tar.gz" -C "$SB/fix/singbox-broken" sing-box-1.10.7-linux-amd64
+chmod +x "$SB/fix/singbox-broken/sing-box-1.14.4-linux-amd64/sing-box"
+tar -czf "$SB/fix/sing-box.broken.tar.gz" -C "$SB/fix/singbox-broken" sing-box-1.14.4-linux-amd64
 
 # dae fixture: same layout as the official archive (binary + routing assets).
 mkdir -p "$SB/fix/dae/usr/bin" "$SB/fix/dae/usr/share/dae"
@@ -367,7 +367,7 @@ grep -q 'daeuniverse/dae' "$EP_TEST_LOG/curl.urls" 2>/dev/null \
 	&& ok "dae 从官方 release 下载" || no "dae 从官方 release 下载" "$(cat "$EP_TEST_LOG/curl.urls" 2>/dev/null)"
 grep -q 'sing-box sha256 ok' "$SB/out" && ok "sing-box 下载过 sha256" || no "sing-box 下载过 sha256" "$(cat "$SB/out")"
 grep -q 'dae sha256 ok' "$SB/out" && ok "dae 下载过 sha256" || no "dae 下载过 sha256" "$(cat "$SB/out")"
-grep -q 'sing-box: 1.10.7 runs' "$SB/out" && ok "装好的 sing-box 能报版本" || no "sing-box 能报版本" "$(cat "$SB/out")"
+grep -q 'sing-box: 1.14.4 runs' "$SB/out" && ok "装好的 sing-box 能报版本" || no "sing-box 能报版本" "$(cat "$SB/out")"
 grep -q 'dae: 2.1.2 runs' "$SB/out" && ok "装好的 dae 能报版本" || no "dae 能报版本" "$(cat "$SB/out")"
 grep -q 'sing_box.binary' "$EP_TEST_LOG/uci.log" 2>/dev/null && ok "uci 指向 sing-box" || no "uci 指向 sing-box" "$(cat "$EP_TEST_LOG/uci.log" 2>/dev/null)"
 grep -q 'dae.binary' "$EP_TEST_LOG/uci.log" 2>/dev/null && ok "uci 指向 dae" || no "uci 指向 dae" "$(cat "$EP_TEST_LOG/uci.log" 2>/dev/null)"
@@ -399,7 +399,7 @@ fi
 # --- install: an already present kernel is reused ----------------------
 reset
 mkdir -p "$EP_ROOT/usr/bin"
-printf '#!/bin/sh\necho "sing-box version 1.10.7"\n' > "$EP_ROOT/usr/bin/sing-box"
+printf '#!/bin/sh\necho "sing-box version 1.14.4"\n' > "$EP_ROOT/usr/bin/sing-box"
 printf '#!/bin/sh\necho "dae version v2.1.2"\n' > "$EP_ROOT/usr/bin/dae"
 chmod +x "$EP_ROOT/usr/bin/sing-box" "$EP_ROOT/usr/bin/dae"
 sh "$INSTALL" > "$SB/out" 2>&1; rc=$?
@@ -437,7 +437,7 @@ grep -q 'dae: install failed' "$SB/out" && ok "报错指明 dae 这一步失败"
 reset
 EP_TEST_API_FIX="$SB/fix/api-kernels.json" sh "$INSTALL" > "$SB/out" 2>&1; rc=$?
 [ "$rc" -eq 0 ] && ok "release 带内核 ipk 时安装成功" || no "release 带内核 ipk 时安装" "rc=$rc $(cat "$SB/out")"
-grep -q 'sing-box_1.10.7_x86_64.ipk' "$EP_TEST_LOG/pm.log" 2>/dev/null \
+grep -q 'sing-box_1.14.4_x86_64.ipk' "$EP_TEST_LOG/pm.log" 2>/dev/null \
 	&& ok "sing-box 优先用 release 的内核 ipk" || no "sing-box 内核 ipk 未使用" "$(cat "$EP_TEST_LOG/pm.log" 2>/dev/null)"
 grep -q 'dae_2.1.2_x86_64.ipk' "$EP_TEST_LOG/pm.log" 2>/dev/null \
 	&& ok "dae 优先用 release 的内核 ipk" || no "dae 内核 ipk 未使用" "$(cat "$EP_TEST_LOG/pm.log" 2>/dev/null)"
@@ -446,7 +446,7 @@ grep -q 'dae_2.1.2_x86_64.ipk' "$EP_TEST_LOG/pm.log" 2>/dev/null \
 reset
 sh "$INSTALL" > "$SB/out" 2>&1 || true
 grep -q 'components:' "$SB/out" && ok "安装结果列出三个组件" || no "安装结果列组件" "$(cat "$SB/out")"
-grep -q 'sing-box   1.10.7' "$SB/out" && grep -q 'dae        2.1.2' "$SB/out" \
+grep -q 'sing-box   1.14.4' "$SB/out" && grep -q 'dae        2.1.2' "$SB/out" \
 	&& ok "摘要里两个内核都有版本号" || no "摘要缺内核版本" "$(cat "$SB/out")"
 
 # --- upgrade: version table, then per-component upgrade -----------------
@@ -458,16 +458,16 @@ chmod +x "$EP_ROOT/usr/bin/sing-box" "$EP_ROOT/usr/bin/dae"
 sh "$INSTALL" upgrade > "$SB/out" 2>&1; rc=$?
 [ "$rc" -eq 0 ] && ok "一键升级全部组件退出 0" || no "一键升级退出码" "rc=$rc $(cat "$SB/out")"
 grep -q 'component    current      newest' "$SB/out" && ok "升级前先打印版本对照表" || no "升级版本对照表" "$(cat "$SB/out")"
-grep -q 'sing-box: 1.9.0 -> 1.10.7' "$SB/out" && ok "sing-box 显示旧 -> 新版本" || no "sing-box 版本变化" "$(cat "$SB/out")"
+grep -q 'sing-box: 1.9.0 -> 1.14.4' "$SB/out" && ok "sing-box 显示旧 -> 新版本" || no "sing-box 版本变化" "$(cat "$SB/out")"
 grep -q 'dae: 2.1.0 -> 2.1.2' "$SB/out" && ok "dae 显示旧 -> 新版本" || no "dae 版本变化" "$(cat "$SB/out")"
-grep -q 'sing-box version 1.10.7' "$EP_ROOT/usr/bin/sing-box" && ok "sing-box 二进制已换新" || no "sing-box 未换新"
+grep -q 'sing-box version 1.14.4' "$EP_ROOT/usr/bin/sing-box" && ok "sing-box 二进制已换新" || no "sing-box 未换新"
 grep -q 'dae version v2.1.2' "$EP_ROOT/usr/bin/dae" && ok "dae 二进制已换新" || no "dae 未换新"
 grep -q 'upgrade done' "$SB/out" && ok "升级结束有明确结论" || no "升级结论" "$(cat "$SB/out")"
 
 # already up to date
 reset
 mkdir -p "$EP_ROOT/usr/bin"
-printf '#!/bin/sh\necho "sing-box version 1.10.7"\n' > "$EP_ROOT/usr/bin/sing-box"
+printf '#!/bin/sh\necho "sing-box version 1.14.4"\n' > "$EP_ROOT/usr/bin/sing-box"
 printf '#!/bin/sh\necho "dae version v2.1.2"\n' > "$EP_ROOT/usr/bin/dae"
 chmod +x "$EP_ROOT/usr/bin/sing-box" "$EP_ROOT/usr/bin/dae"
 sh "$INSTALL" upgrade > "$SB/out" 2>&1; rc=$?
@@ -508,13 +508,13 @@ grep -q 'upgrade incomplete' "$SB/out" && ok "升级失败写明哪个组件" ||
 # --- status -------------------------------------------------------------
 reset
 mkdir -p "$EP_ROOT/usr/bin"
-printf '#!/bin/sh\necho "sing-box version 1.10.7"\n' > "$EP_ROOT/usr/bin/sing-box"
+printf '#!/bin/sh\necho "sing-box version 1.14.4"\n' > "$EP_ROOT/usr/bin/sing-box"
 printf '#!/bin/sh\necho "dae version v2.1.2"\n' > "$EP_ROOT/usr/bin/dae"
 chmod +x "$EP_ROOT/usr/bin/sing-box" "$EP_ROOT/usr/bin/dae"
 sh "$INSTALL" status > "$SB/out" 2>&1; rc=$?
 [ "$rc" -eq 0 ] && ok "status 退出 0" || no "status 退出码" "rc=$rc $(cat "$SB/out")"
 grep -q 'easyproxy  0.5.0-1' "$SB/out" && ok "status 报面板版本" || no "status 面板版本" "$(cat "$SB/out")"
-grep -q 'sing-box   1.10.7' "$SB/out" && ok "status 报 sing-box 版本" || no "status sing-box" "$(cat "$SB/out")"
+grep -q 'sing-box   1.14.4' "$SB/out" && ok "status 报 sing-box 版本" || no "status sing-box" "$(cat "$SB/out")"
 grep -q 'dae        2.1.2' "$SB/out" && ok "status 报 dae 版本" || no "status dae" "$(cat "$SB/out")"
 
 # --- uninstall --------------------------------------------------------
@@ -551,7 +551,7 @@ bkp="$(ls "$EP_BACKUP_DIR"/easyproxy-backup-*.tar.gz 2>/dev/null | head -1)"
 # kernels this installer installed are removed; --keep-kernels keeps them
 reset
 mkdir -p "$EP_ROOT/usr/bin" "$EP_STATE_DIR/owned"
-printf '#!/bin/sh\necho "sing-box version 1.10.7"\n' > "$EP_ROOT/usr/bin/sing-box"
+printf '#!/bin/sh\necho "sing-box version 1.14.4"\n' > "$EP_ROOT/usr/bin/sing-box"
 printf '#!/bin/sh\necho "dae version v2.1.2"\n' > "$EP_ROOT/usr/bin/dae"
 chmod +x "$EP_ROOT/usr/bin/sing-box" "$EP_ROOT/usr/bin/dae"
 printf '%s\n' "$EP_ROOT/usr/bin/sing-box" > "$EP_STATE_DIR/owned/sing-box"

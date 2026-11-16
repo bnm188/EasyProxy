@@ -63,7 +63,7 @@ chmod +x "$SB/bin/nc" "$SB/bin/logger"
 cat > "$SB/bin/sing-box" <<'ENG'
 #!/bin/sh
 case "$1" in
-	version) echo "sing-box version ${EP_TEST_ENGINE_VERSION:-1.10.7} (test stub)" ;;
+	version) echo "sing-box version ${EP_TEST_ENGINE_VERSION:-1.14.4} (test stub)" ;;
 	check)
 		while [ $# -gt 0 ]; do [ "$1" = "-c" ] && cfg="$2"; shift; done
 		python3 -c "import json,sys; json.load(open('$cfg'))"
@@ -147,7 +147,7 @@ printf '%s' "$out" | grep -q '开发中' && ok "config generate 拒绝 dae 时�
 write_ucis 1 sing-box
 out="$("$EP" engine version 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && ok "engine version 调用内核自身回答" || no "engine version 调用内核" "rc=$rc $out"
-printf '%s' "$out" | grep -q '1.10.7' && ok "engine version 透传版本号" || no "engine version 透传版本号" "$out"
+printf '%s' "$out" | grep -q '1.14.4' && ok "engine version 透传版本号" || no "engine version 透传版本号" "$out"
 
 # --- 4. health: all good ---------------------------------------------------
 write_ucis 1 sing-box

@@ -39,7 +39,7 @@ LUCI_INDEX="${EP_LUCI_CACHE:-/tmp/luci-indexcache}"
 ROOT="${EP_ROOT:-/}"
 STATE="${EP_STATE_DIR:-/etc/easyproxy}"
 
-SING_BOX_VER="${EP_SING_BOX_VER:-1.10.7}"
+SING_BOX_VER="${EP_SING_BOX_VER:-1.14.4}"
 SING_BOX_BASE="${EP_SING_BOX_BASE:-https://github.com/SagerNet/sing-box/releases/download/v${SING_BOX_VER}}"
 DAE_VER="${EP_DAE_VER:-2.1.2}"
 DAE_BASE="${EP_DAE_BASE:-https://github.com/daeuniverse/dae/releases/download/v${DAE_VER}}"
@@ -396,7 +396,7 @@ kernel_bin() {
 kernel_geodata() { printf '%s' "${EP_DAE_DATA:-$ROOT/usr/share/dae}"; }
 
 # What the kernel reports about itself, parsed from its own `version` output:
-# sing-box prints `sing-box version 1.10.7`, dae prints `dae version v2.1.2`.
+# sing-box prints `sing-box version 1.14.4`, dae prints `dae version v2.1.2`.
 kernel_probe() {
 	local bin out
 	bin="$(kernel_bin "$1")"
@@ -468,9 +468,9 @@ kernel_sha() {
 		sing-box)
 			[ -n "${EP_SING_BOX_SHA:-}" ] && { printf '%s' "$EP_SING_BOX_SHA"; return 0; }
 			case "$arch" in
-				amd64) printf '%s' '1951a0785c8b4e1e21e0640227a49528ca772aec3d680061652e3d6b687e00fe' ;;
-				arm64) printf '%s' '15b43a0a50b4e6962aca819d4f3055aaac75ca7481350d4aaebe93ed06b7af49' ;;
-				armv7) printf '%s' '691882d609c877f97bc8d6f8645b97d12de81b6f7b89651df66489ef11b4c5d0' ;;
+				amd64) printf '%s' '699a1b510aa4396b2176d32d1181920399ebf1e267835da6f3b598d0f7c24968' ;;
+				arm64) printf '%s' '436441f76ee2f7fe21b5b2d426d3cb261a480455a704865789ad533e4273ec26' ;;
+				armv7) printf '%s' 'fd164ed45ebc784f657a3e1d0e0ad0f68afdcff864ee57122c2cfed3ddb80a00' ;;
 			esac ;;
 		dae)
 			[ -n "${EP_DAE_SHA:-}" ] && { printf '%s' "$EP_DAE_SHA"; return 0; }

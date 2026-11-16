@@ -21,7 +21,7 @@ KERNEL="${1:-}"
 ARCH="${2:-}"
 OUT_DIR="${3:-dist}"
 
-SING_BOX_VER="${EP_SING_BOX_VER:-1.10.7}"
+SING_BOX_VER="${EP_SING_BOX_VER:-1.14.4}"
 DAE_VER="${EP_DAE_VER:-2.1.2}"
 
 usage() {
@@ -59,9 +59,9 @@ upstream_arch() {
 
 pinned_sha() {
 	case "$KERNEL:$(upstream_arch)" in
-		sing-box:amd64) echo 1951a0785c8b4e1e21e0640227a49528ca772aec3d680061652e3d6b687e00fe ;;
-		sing-box:arm64) echo 15b43a0a50b4e6962aca819d4f3055aaac75ca7481350d4aaebe93ed06b7af49 ;;
-		sing-box:armv7) echo 691882d609c877f97bc8d6f8645b97d12de81b6f7b89651df66489ef11b4c5d0 ;;
+		sing-box:amd64) echo 699a1b510aa4396b2176d32d1181920399ebf1e267835da6f3b598d0f7c24968 ;;
+		sing-box:arm64) echo 436441f76ee2f7fe21b5b2d426d3cb261a480455a704865789ad533e4273ec26 ;;
+		sing-box:armv7) echo fd164ed45ebc784f657a3e1d0e0ad0f68afdcff864ee57122c2cfed3ddb80a00 ;;
 		dae:x86_64) echo 37e19ce6abe12fe713a339d8a9335e10a5777c6d62613c5af91d64ca5bb3a56c ;;
 		dae:arm64) echo 59979e524bb52a2634e11536def5db8efefba897ed6f565ea1d083221faf7709 ;;
 		dae:armv7) echo 6c72afba36d4656c430f502c4615d505c6f681577d79de4c307a4be5bd7e8736 ;;
