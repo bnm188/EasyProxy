@@ -5,8 +5,9 @@
 #   sh tests/test-maintenance.sh
 #
 # Every path the CLI touches is redirected into a temp sandbox and `uci`,
-# `curl`, `logger` and `nft` are stubs, so nothing outside the sandbox is read
-# or written.
+# `curl`, `logger`, `nft` and `ip` are stubs, so nothing outside the sandbox is
+# read or written. Both branches of `uninstall-clean` are exercised: a host
+# without nft, and a host with nft where only EasyProxy's own table may go.
 
 set -u
 
@@ -188,10 +189,50 @@ grep -q 'nothing to rotate' "$SB/out" && ok "未超阈值时不轮转" || no "�
 [ -f "$EP_LOG_FILE.1" ] && no "未超阈值时不应产生 .1" || ok "未超阈值时不产生 .1"
 
 # --- uninstall-clean ------------------------------------------------------
-run_cli uninstall-clean
-[ "$RC" -eq 0 ] && ok "uninstall-clean 退出码 0" || no "uninstall-clean 退出码 0" "$(cat "$SB/out")"
+# run the CLI on a PATH that deliberately has no nft, whatever the host ships
+run_cli_no_nft() { PATH="$SB/bin:/usr/bin:/bin" sh "$CLI" "$@" > "$SB/out" 2>&1; RC=$?; }
+
+reset
+run_cli_no_nft uninstall-clean
+[ "$RC" -eq 0 ] && ok "没有 nft 时 uninstall-clean 仍返回 0" || no "没有 nft 时 uninstall-clean 返回 0" "$(cat "$SB/out")"
 grep -q 'stock ImmortalWrt rules untouched' "$SB/out" && ok "明确声明不动系统防火墙" || no "声明不动系统防火墙" "$(cat "$SB/out")"
 grep -q 'nft: not installed' "$SB/out" && ok "没有 nft 时说明无需清理" || no "没有 nft 时说明无需清理" "$(cat "$SB/out")"
+
+# With nft present it may only touch its own tables, never fw4's.
+cat > "$SB/bin/nft" <<'STUB'
+#!/bin/sh
+printf '%s\n' "$*" >> "$EP_TEST_LOG/nft.calls"
+case "$1" in
+	list)
+		# only report EasyProxy's own table, and only while it still exists
+		[ -f "$EP_TEST_LOG/tbl.exists" ] && exit 0
+		exit 1 ;;
+	delete)
+		# a real nft would fail deleting a table that is already gone
+		[ -f "$EP_TEST_LOG/tbl.exists" ] || exit 1
+		rm -f "$EP_TEST_LOG/tbl.exists"
+		exit 0 ;;
+	*) exit 0 ;;
+esac
+STUB
+cat > "$SB/bin/ip" <<'STUB'
+#!/bin/sh
+printf 'ip %s\n' "$*" >> "$EP_TEST_LOG/ip.calls"
+exit 0
+STUB
+chmod +x "$SB/bin/nft" "$SB/bin/ip"
+: > "$EP_TEST_LOG/tbl.exists"
+run_cli uninstall-clean
+[ "$RC" -eq 0 ] && ok "有 nft 时 uninstall-clean 仍返回 0" || no "有 nft 时 uninstall-clean 返回 0" "$(cat "$SB/out")"
+grep -q 'own tables (ip/ip6 easyproxy) removed' "$SB/out" && ok "有 nft 时声明只删自己的表" || no "有 nft 时声明只删自己的表" "$(cat "$SB/out")"
+grep -q 'delete table ip easyproxy' "$EP_TEST_LOG/nft.calls" 2>/dev/null \
+	&& ok "有 nft 时删除了自己的 ip 表" || no "有 nft 时删除了自己的 ip 表" "$(cat "$EP_TEST_LOG/nft.calls" 2>/dev/null)"
+[ ! -f "$EP_TEST_LOG/tbl.exists" ] && ok "删除后不再要求重复删除" || no "删除后不再要求重复删除" "$(cat "$EP_TEST_LOG/nft.calls" 2>/dev/null)"
+if grep -Eq 'flush table .*(fw4|filter|nat|mangle)|delete table .*(fw4|filter|nat|mangle)' "$EP_TEST_LOG/nft.calls" 2>/dev/null; then
+	no "nft 调用不碰系统防火墙表" "$(cat "$EP_TEST_LOG/nft.calls")"
+else
+	ok "nft 调用不碰系统防火墙表"
+fi
 
 # --- help ----------------------------------------------------------------
 run_cli help
