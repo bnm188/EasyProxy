@@ -1,4 +1,3 @@
-
 name: EasyProxy x86_64 package build
 
 on:
@@ -163,6 +162,10 @@ jobs:
 
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$TAG" dist/easyproxy* dist/SHA256SUMS --clobber --repo "$GITHUB_REPOSITORY"
+            # The notes name the exact commit these assets were built from, so an
+            # existing release is rewritten too - otherwise the body would keep
+            # describing the first build forever.
+            gh release edit "$TAG" --notes-file "$NOTES_FILE" --repo "$GITHUB_REPOSITORY"
             echo "updated existing release $TAG"
           else
             gh release create "$TAG" \
