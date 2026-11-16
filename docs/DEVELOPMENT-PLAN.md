@@ -1,6 +1,6 @@
 # EasyProxy 开发路线（DEVELOPMENT-PLAN）
 
-- 最后更新：2026-11-16 23:10（UTC+8）
+- 最后更新：2026-11-17（UTC+8，随报告 005 更新第 3 节口径）
 - 依据：2026-11-16 全量审计（`docs/reports/001-2026-11-16-audit.md`）与 `docs/PROJECT-STATUS.md`
 - 纪律：一次只做一个阶段；阶段完成写报告、更新状态、**等待确认**后再进入下一阶段
 
@@ -35,29 +35,18 @@
 
 ---
 
-## 3. 当前阶段：Stage 8 · 文档与报告制度
+## 3. 当前阶段：Stage 9 · 发布体系合规（部分完成，待确认）
 
-- 目标：建立 `docs/reports/` 连续编号报告制度、`docs/DEVELOPMENT-PLAN.md`、`docs/PROJECT-STATUS.md` 三件套，并让历史报告（001 审计）符合编号规则。
-- 交付：`docs/reports/README.md`（制度 + 模板 + 索引）、`docs/reports/001-…`（审计归档）、`docs/reports/002-…`（本阶段报告）、状态与路线文档。
-- DoD：制度文档可执行（含 14 项必填与真实性约束）、历史报告已编号、状态文档只含实测结论。
-- 状态：**已交付，待确认**。
+- 目标（不变）：发布不可变、可复现，CI 真正校验配置。
+- 已完成（有代码、测试、CI 证据，见报告 004 与 005）：`main` 只出 Artifacts、发布只由 `v*` tag 触发；无 `--clobber`、不改写已发布说明；CI 用 pinned sing-box 做真实 `check`；SKIP 与"套件没有打印结果行"都算失败；D1/D2/D3/D5/D7/D9 修复；ACL 从 `/bin/sh` 收紧到固定 CLI 入口。
+- 未完成（本阶段据此判**部分完成**，不写“完成”）：R3 的“每套件用例数下限”未做（现在只做到套件级完整性：缺套件、无结果行、结果自相矛盾都会红）；还没有用一次正式 tag 走通端到端发布（Release 仍是历史 `v0.6.0`）；真机 0 台。
+- 历史：Stage 8（文档与报告制度）已于 2026-11-16 交付（报告 002），不再列为“当前阶段”。
 
 ---
 
-## 4. 后续阶段
+## 4. 后续阶段（Stage 10 起）
 
-### Stage 9 · 发布体系合规（P0）
-
-- 目标：发布不可变、可复现，CI 真正校验配置。
-- 内容：
-  1. `build.yml` 改为 `on: push: tags: v*` 触发发布；`main` 只出 Artifacts，不再发 Release
-  2. 移除 `gh release upload --clobber` 与对已存在 tag 的 `release edit`
-  3. CI 下载 pinned sing-box，导出 `EP_SING_BOX_BIN`，真实 check 不再 skip（D8）
-  4. skip 计为 skip、不计数；套件用例数下限断言（R3）
-  5. 上传测试报告文件作为构建产物
-  6. 新版本用新 tag；旧 tag/Release 不删除、不覆盖
-- 验收：推一个 `main` 后 Release 无变化；打 `v0.7.0` tag 后资产与 tag 提交一致、`SHA256SUMS` 覆盖全部资产；CI 日志出现“真实 sing-box check 通过”；Artifacts 里有测试报告。
-- 风险：修改发布流程后首个 tag 发布可能不顺，需预演一次 prerelease。
+> Stage 9 的现状与缺口见第 3 节，不再列在此处；它未收口前不进 Stage 10。
 
 ### Stage 10 · 唯一管理入口（P0）
 
@@ -87,7 +76,7 @@
 ### Stage 14 · P1/P2 缺陷修复（P0/P1）
 
 - 目标：清掉审计里会直接影响用户的缺陷。
-- 内容：D1（`traffic.sh` `${10}`）、D2（`errCard`）、D3（dae 拦截）、D4（TLS 强制）、D5（校验硬失败）、D7（升级备份/磁盘/兼容）、D9（ACL 收窄）、D10（配置 0600）；补 `traffic.sh` 输出断言与 JS 静态检查。
+- 内容：D1（`traffic.sh` `${10}`）、D2（`errCard`）、D3（dae 拦截）、D4（TLS 强制）、D5（校验硬失败）、D7（升级备份/磁盘/兼容）、D9（ACL 收窄）、D10（配置 0600）、补 `traffic.sh` 输出断言与 JS 静态检查。
 - 验收：每个缺陷有对应测试用例，修复前失败、修复后通过（报告里两段结果都留）。
 
 ### Stage 15 · 真机验收与稳定化（P0）
