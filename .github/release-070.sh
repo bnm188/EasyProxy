@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 一次性发布脚本（第二版）：0.7.0 的代码已在 main 上，本脚本只在需要时应用补丁，
+# 一次性发布脚本（第三版）：0.7.0 的代码已在 main 上，本脚本只在需要时应用补丁，
 # 然后跑测试与构建、创建 v0.7.0 Release。由 .github/workflows/release-0.7.0-once.yml 调用。
 set -euo pipefail
 
@@ -79,9 +79,20 @@ find sdk/bin/packages -type f \( -name 'easyproxy*.apk' -o -name 'easyproxy*.ipk
 compgen -G 'dist/easyproxy*' > /dev/null || { echo "::error::EasyProxy package not found"; exit 1; }
 
 echo "[6/9] KERNEL-VERSIONS and SHA256SUMS"
-SB_VER_PKG="$(sed -n 's/^SING_BOX_VER=.*:-\\([0-9][0-9.]*\\)}.*/\\1/p' scripts/make-kernel-ipk.sh)"
-DAE_VER_PKG="$(sed -n 's/^DAE_VER=.*:-\\([0-9][0-9.]*\\)}.*/\\1/p' scripts/make-kernel-ipk.sh)"
-[ -n "$SB_VER_PKG" ] && [ -n "$DAE_VER_PKG" ] || { echo "::error title=kernel versions::cannot read the kernel versions"; exit 1; }
+# 内核版本从构建出来的 ipk 文件名里读，不再用 sed 解析脚本源码。
+SB_VER_PKG=""
+for f in dist/sing-box_*_x86_64.ipk; do
+  [ -f "$f" ] || continue
+  SB_VER_PKG="${f#dist/sing-box_}"
+  SB_VER_PKG="${SB_VER_PKG%_x86_64.ipk}"
+done
+DAE_VER_PKG=""
+for f in dist/dae_*_x86_64.ipk; do
+  [ -f "$f" ] || continue
+  DAE_VER_PKG="${f#dist/dae_}"
+  DAE_VER_PKG="${DAE_VER_PKG%_x86_64.ipk}"
+done
+[ -n "$SB_VER_PKG" ] && [ -n "$DAE_VER_PKG" ] || { echo "::error title=kernel versions::cannot read the kernel versions from dist"; exit 1; }
 echo "sing-box $SB_VER_PKG / dae $DAE_VER_PKG"
 
 ( cd dist
