@@ -52,17 +52,35 @@ ep_transparent_state() {
 	fi
 }
 
-# IPv4 addresses that must never be captured: private space plus every node
-# server (capturing the proxy's own upstream would loop) plus operator excludes.
+# Every IPv4 address on the LAN interfaces themselves: the router's own
+# management address must never be captured, otherwise the panel and SSH on the
+# LAN side break as soon as the takeover is applied.
+ep_transparent_local_addrs() {
+	local one addrs a
+	for one in $(ep_transparent_ifaces); do
+		addrs="$("$EP_IP_BIN" -4 addr show dev "$one" 2>/dev/null | awk '{ for (i = 1; i <= NF; i++) if ($i == "inet") print $(i + 1) }')"
+		[ -n "$addrs" ] || continue
+		for a in $addrs; do
+			# pin the address itself, not the whole subnet behind it
+			printf ', %s/32' "${a%%/*}"
+		done
+	done
+}
+
+# IPv4 addresses that must never be captured: private space (with 10.10.10.10
+# spelled out because it is a common router/AP management address), the router's
+# own LAN addresses, every node server (capturing the proxy's own upstream would
+# loop) and the operator excludes.
 ep_transparent_bypass() {
 	local section server extra
-	printf '127.0.0.0/8, 169.254.0.0/16, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, 192.0.0.0/24, 198.18.0.0/15, 240.0.0.0/4'
+	printf '127.0.0.0/8, 169.254.0.0/16, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, 192.0.0.0/24, 198.18.0.0/15, 240.0.0.0/4, 10.10.10.10/32'
+	ep_transparent_local_addrs
 	for section in $(ep_node_sections); do
 		[ "$(ep_get "$section" enabled 1)" = "1" ] || continue
 		server="$(ep_get "$section" server '')"
 		case "$server" in
 			''|*[!0-9.]*) continue ;;
-		esac
+			esac
 		printf ', %s' "$server"
 	done
 	extra="$(ep_get transparent exclude '')"
@@ -148,6 +166,7 @@ ep_transparent_apply() {
 	EP_ERR=""
 	ep_transparent_enabled || { EP_ERR="transparent proxy is not enabled; set easyproxy.transparent.enabled=1"; return 1; }
 	[ "$(ep_node_count_enabled)" -gt 0 ] || { EP_ERR="no enabled nodes; nothing to route captured traffic to"; return 1; }
+
 	ep_nft_usable || { EP_ERR="nft is not available on this host; transparent capture requires nftables"; return 1; }
 	[ "$(ep_runtime_state)" = "running" ] || { EP_ERR="engine is not running; refusing to capture traffic (start EasyProxy first)"; return 1; }
 	port="$(ep_tproxy_port)"
@@ -157,10 +176,12 @@ ep_transparent_apply() {
 	mark="$(ep_transparent_fwmark)"
 	table="$(ep_transparent_route_table)"
 
+
 	ep_transparent_render || { EP_ERR="cannot write $EP_NFT_FILE"; return 1; }
 
 	# Policy routing first: packets are only marked after nft is loaded, so the
 	# rule has to exist before the mark can be produced.
+
 	ep_transparent_routing_up || { EP_ERR="cannot set up policy routing (fwmark ${mark}, table ${table})"; return 1; }
 
 	if [ "$(ep_transparent_state)" = "active" ]; then
