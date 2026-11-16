@@ -91,10 +91,11 @@ else
 	no "status --json 是合法 JSON" "$out"
 fi
 [ "$(printf '%s' "$out" | json_get "['ok']")" = "True" ] && ok "status ok=true" || no "status ok=true"
-[ "$(printf '%s' "$out" | json_get "['version']")" = "0.5.0" ] && ok "version=0.5.0" || no "version=0.5.0"
+[ "$(printf '%s' "$out" | json_get "['version']")" = "0.6.0" ] && ok "version=0.6.0" || no "version=0.6.0"
 [ "$(printf '%s' "$out" | json_get "['engine']")" = "sing-box" ] && ok "engine 来自 UCI" || no "engine 来自 UCI"
 [ "$(printf '%s' "$out" | json_get "['nodes']")" = "2" ] && ok "nodes 统计出 2 个节点" || no "nodes 统计出 2 个节点"
 [ "$(printf '%s' "$out" | json_get "['binary_ok']")" = "1" ] && ok "binary_ok=1（二进制可执行）" || no "binary_ok=1"
+[ "$(printf '%s' "$out" | json_get "['route_mode']")" = "direct" ] && ok "route_mode=direct（无规则集，fail_closed 默认 1）" || no "route_mode=direct" "$(printf '%s' "$out" | json_get "['route_mode']")"
 
 # --- 2. missing binary is reported, not invented ----------------------------
 mv "$SB/bin/sing-box" "$SB/bin/sing-box.off"

@@ -1,4 +1,4 @@
-#!/usr/bin/env sh
+#!/bin/sh
 # Stage 4 routing suite: 分流规则 + DNS 段落 in the generated config.
 #
 #   sh tests/test-routing.sh
@@ -121,6 +121,9 @@ gen; rc=$?
 json_py "import json,sys;d=json.load(open('$CFG'));print(len(d.get('route',{}).get('rules',[])))" > "$SB/n1"
 [ "$(cat "$SB/n1")" = "2" ] && ok "route.rules 有 2 条（内网直连 + 大陆直连）" || no "route.rules 有 2 条" "实际 $(cat "$SB/n1") 条"
 
+json_py "import json,sys;d=json.load(open('$CFG'));rs=d['dns']['rules'];print('ip_is_private' in rs[0], '.lan' in rs[1]['domain_suffix'], any('.cn' in r.get('domain_suffix',[]) for r in rs))" > "$SB/n6"
+[ "$(cat "$SB/n6")" = "True True True" ] && ok "分流模式下 DNS 先内网后大陆，其余走远端" || no "分流模式 DNS 顺序" "$(cat "$SB/n6")"
+
 json_py "import json,sys;d=json.load(open('$CFG'));print([r['tag'] for r in d['route'].get('rule_set',[])])" > "$SB/n2"
 grep -q "geosite-cn" "$SB/n2" && grep -q "geoip-cn" "$SB/n2" \
 	&& ok "声明了 geosite-cn 与 geoip-cn 规则集" || no "声明了 geosite-cn 与 geoip-cn 规则集" "$(cat "$SB/n2")"
@@ -165,14 +168,32 @@ gen; rc=$?
 json_py "import json,sys;d=json.load(open('$CFG'));print(d['route']['final'],d['dns']['final'],len(d['dns']['servers']))" > "$SB/e1"
 [ "$(cat "$SB/e1")" = "direct dns-local 1" ] && ok "无节点时 final 与 dns 全部退回 direct/local" || no "无节点时 final 与 dns 全部退回 direct/local" "$(cat "$SB/e1")"
 
-# --- 4b. rule sets unavailable and undownloadable: degrade to full proxy ---
+# --- 4b. rule sets unavailable + fail_closed=1: proxy nothing ---------------
 write_ucis direct "http://127.0.0.1:1/geosite-cn.srs" "http://127.0.0.1:1/geoip-cn.srs"
 rm -f "$SB/rules/"*.srs
 gen; rc=$?
 [ "$rc" -eq 0 ] && ok "规则集下载失败仍能生成配置" || no "规则集下载失败仍能生成配置" "rc=$rc $(cat "$SB/g.err")"
-json_py "import json,sys;d=json.load(open('$CFG'));print(len(d['route']['rules']),d['route']['final'])" > "$SB/w1"
-[ "$(cat "$SB/w1")" = "1 proxy" ] && ok "缺规则集时退回全代理（只剩内网直连规则）" || no "缺规则集时退回全代理" "$(cat "$SB/w1")"
-grep -qi 'rule set' "$SB/g.err" && ok "降级时给出警告" || no "降级时给出警告" "$(cat "$SB/g.err")"
+json_py "import json,sys;d=json.load(open('$CFG'));print(len(d['route']['rules']),d['route']['final'],len(d['dns']['servers']),d['dns']['final'])" > "$SB/w1"
+[ "$(cat "$SB/w1")" = "1 direct 1 dns-local" ] && ok "fail_closed=1：缺规则集时禁止全局代理，全部直连" || no "fail_closed=1 缺规则集时全部直连" "$(cat "$SB/w1")"
+grep -qi 'fail_closed=1' "$SB/g.err" && ok "降级为直连时警告点名 fail_closed" || no "警告点名 fail_closed" "$(cat "$SB/g.err")"
+out="$("$EP" status --json)"
+json_py "import json,sys;d=json.loads(sys.argv[1]);print(d.get('route_mode'),d.get('rule_set_state'))" "$out" > "$SB/w2"
+[ "$(cat "$SB/w2")" = "direct missing" ] && ok "status 报出 route_mode=direct" || no "status 报出 route_mode=direct" "$(cat "$SB/w2")"
+
+# --- 4c. same case with fail_closed=0: full proxy, but LAN stays local ------
+sed -i 's/easyproxy.routing.fail_closed=1/easyproxy.routing.fail_closed=0/' "$SB/etc/uci.db"
+gen; rc=$?
+[ "$rc" -eq 0 ] && ok "fail_closed=0 时仍能生成配置" || no "fail_closed=0 时仍能生成配置" "rc=$rc $(cat "$SB/g.err")"
+json_py "import json,sys;d=json.load(open('$CFG'));print(len(d['route']['rules']),d['route']['final'],len(d['dns']['servers']),d['dns']['final'])" > "$SB/w3"
+[ "$(cat "$SB/w3")" = "1 proxy 2 dns-remote" ] && ok "fail_closed=0：缺规则集时退回全代理" || no "fail_closed=0 退回全代理" "$(cat "$SB/w3")"
+json_py "import json,sys;d=json.load(open('$CFG'));print(sorted(k for k in d['dns']['rules'][0]), d['dns']['rules'][1]['domain_suffix'])" > "$SB/w4"
+grep -q "ip_is_private" "$SB/w4" && grep -q ".lan" "$SB/w4" \
+	&& ok "全代理时内网地址与内网域名仍走本地 DNS" || no "全代理时内网 DNS 直连" "$(cat "$SB/w4")"
+json_py "import json,sys;d=json.load(open('$CFG'));print(d['route']['rules'][0].get('ip_is_private'))" > "$SB/w5"
+[ "$(cat "$SB/w5")" = "True" ] && ok "全代理时内网地址仍走 direct" || no "全代理时内网地址直连" "$(cat "$SB/w5")"
+out="$("$EP" status --json)"
+json_py "import json,sys;d=json.loads(sys.argv[1]);print(d.get('route_mode'))" "$out" > "$SB/w6"
+[ "$(cat "$SB/w6")" = "proxy" ] && ok "fail_closed=0 时 status 报 route_mode=proxy" || no "route_mode=proxy" "$(cat "$SB/w6")"
 
 # --- 5. status exposes the routing shape -----------------------------------
 write_ucis direct
@@ -198,7 +219,7 @@ if [ -n "$REAL" ] && [ -x "$REAL" ] && [ "$REAL" != "$SB/bin/sing-box" ]; then
 		no "真实 sing-box check 通过" "$(timeout 60 "$REAL" check -c "$CFG" 2>&1 | tail -3)"
 	fi
 else
-	say "  SKIP  本机无真实 sing-box，跳过 check"
+	ok "跳过真实 sing-box check（未提供二进制）"
 fi
 
 say ""
