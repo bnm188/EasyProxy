@@ -174,7 +174,12 @@ say "== 工作流：新版本号、真 Release、IPK + SHA256、中文说明、�
 
 grep -q 'scripts/release-notes.sh' "$WF" && ok "工作流用 release-notes.sh 生成说明" || no "工作流用 release-notes.sh 生成说明"
 grep -q 'scripts/release-gc.sh' "$WF" && ok "工作流用 release-gc.sh 做保留清理" || no "工作流用 release-gc.sh 做保留清理"
-grep -q 'startsWith(github.ref, .refs/tags/v.)' "$WF" && ok "只有 v* tag 触发发布" || no "只有 v* tag 触发发布"
+# Report 009: a tag push was the only trigger, so everyday work on main never
+# published. The release intent is now resolved once (tag / dispatch version /
+# .release-request file) and every publish step uses that one tag.
+grep -q "steps.intent.outputs.tag != ''" "$WF" && ok "发布由统一的发布意图决定（tag、手动版本号或发布请求文件）" || no "发布由统一的发布意图决定（tag、手动版本号或发布请求文件）"
+grep -q '.release-request' "$WF" && ok "支持 .release-request 发布请求文件（GITHUB_TOKEN 无法派发工作流）" || no "支持 .release-request 发布请求文件（GITHUB_TOKEN 无法派发工作流）"
+grep -q 'GITHUB_REF_TYPE' "$WF" && ok "手工 push 的 v* tag 仍然触发发布" || no "手工 push 的 v* tag 仍然触发发布"
 grep -q 'must be greater\|必须递增\|版本号必须' "$WF" && ok "工作流要求版本号递增（同版本不允许再发）" || no "工作流要求版本号递增（同版本不允许再发）"
 if grep -q 'gh release create' "$WF"; then
 	ok "工作流真的创建 GitHub Release"
@@ -192,6 +197,20 @@ grep -q -- '\-\-clobber' "$WF" && no "工作流不再覆盖旧资产（无 --clo
 grep -q 'gh release edit' "$WF" && no "工作流不改写已发布的说明" || ok "工作流不改写已发布的说明"
 grep -q -- '\-\-keep 20' "$WF" && ok "保留最新 20 个版本" || no "保留最新 20 个版本"
 grep -q 'release-gc.sh.*--protect' "$WF" && ok "清理时保护正在使用的版本" || no "清理时保护正在使用的版本"
+
+# Report 009: a release must be creatable without a tag push. GITHUB_TOKEN
+# pushes never trigger another workflow run, so a tag made inside Actions
+# publishes nothing; a manual (workflow_dispatch) run has to be able to do the
+# whole job, with the version given explicitly.
+grep -q 'GITHUB_EVENT_NAME}" = "workflow_dispatch"' "$WF" && ok "发布步骤支持手动触发（不依赖 tag push 触发）" || no "发布步骤支持手动触发（不依赖 tag push 触发）"
+grep -q 'inputs.version' "$WF" && ok "手动发布必须显式给版本号" || no "手动发布必须显式给版本号"
+# Report 009: Actions success is not release success. The job re-reads the
+# release it just created and downloads it, so a silent failure cannot pass.
+grep -q 'gh release view' "$WF" && ok "发布后回查 Release 是否存在" || no "发布后回查 Release 是否存在"
+grep -q 'gh release download' "$WF" && ok "发布后把资产下载回来" || no "发布后把资产下载回来"
+grep -q 'sha256sum -c' "$WF" && ok "下载的资产用 SHA256SUMS 校验" || no "下载的资产用 SHA256SUMS 校验"
+grep -q 'curl -fIL' "$WF" && ok "逐个资产校验下载地址可用" || no "逐个资产校验下载地址可用"
+grep -q 'continue-on-error' "$WF" && no "自检不允许 continue-on-error" || ok "自检不允许 continue-on-error"
 
 say ""
 say "结果：$PASS 通过，$FAIL 失败"

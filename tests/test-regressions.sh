@@ -300,6 +300,12 @@ if ls "$SBI"/root/etc/easyproxy/backup/config-*.tar.gz >/dev/null 2>&1; then
 else
 	no "升级前把 UCI 配置打包备份" "$(ls -1 "$SBI/root/etc/easyproxy/backup" 2>/dev/null | tr '\n' ' ')"
 fi
+CFG_BAK="$(ls -1t "$SBI"/root/etc/easyproxy/backup/config-*.tar.gz 2>/dev/null | head -1)"
+if [ -n "$CFG_BAK" ] && tar -tzf "$CFG_BAK" 2>/dev/null | grep -q 'etc/config/easyproxy'; then
+	ok "备份归档可读，且里面真的有 UCI 配置"
+else
+	no "备份归档可读，且里面真的有 UCI 配置" "$(tar -tzf "${CFG_BAK:-/dev/null}" 2>&1 | head -2)"
+fi
 GOT_BIN="$(cat "$SBI/root/usr/sbin/easyproxy" 2>/dev/null)"
 [ "$GOT_BIN" = "BIN-OLD" ] && ok "失败后 CLI 二进制被回滚到旧文件" || no "失败后 CLI 二进制被回滚" "实际 '${GOT_BIN:-<缺失>}'"
 GOT_LIB="$(cat "$SBI/root/usr/lib/easyproxy/config.sh" 2>/dev/null)"
@@ -319,10 +325,10 @@ if grep -q 'gh release edit' "$WF"; then
 else
 	ok "工作流不再重写已发布 Release 的说明"
 fi
-if grep -q "startsWith(github.ref, 'refs/tags/v')" "$WF"; then
-	ok "只有 v* 标签才发布 Release"
+if grep -q "steps.intent.outputs.tag != ''" "$WF"; then
+	ok "发布只在明确要求时才发生（统一发布意图，不认空的构建）"
 else
-	no "只有 v* 标签才发布 Release" "发布步骤没有按 tag 限定"
+	no "发布只在明确要求时才发生（统一发布意图，不认空的构建）" "发布步骤没有统一 gate"
 fi
 if grep -q 'already released\|已发布' "$WF"; then
 	ok "同版本重复发布时工作流直接失败（提示版本号已发布）"

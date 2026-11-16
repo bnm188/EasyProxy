@@ -1023,9 +1023,20 @@ backup_config() {
 		info "backup: nothing to back up yet"
 		return 1
 	fi
-	if ! tar -czf "$archive" "$ROOT/etc/config/easyproxy" "$STATE" 2>/dev/null; then
-		rm -f "$archive"
+	# The archive is written outside $STATE first. Writing it straight into
+	# $STATE/backup means tar is archiving the directory it is still writing to,
+	# and GNU tar intermittently exits 1 with "file changed as we read it" -
+	# which silently skipped the pre-upgrade backup (seen once in a full run,
+	# report 009). The --exclude keeps older backups out of the new one.
+	tmp="$STATE/../.ep-backup-$stamp.tar.gz"
+	if ! tar -czf "$tmp" --exclude="$dir" "$ROOT/etc/config/easyproxy" "$STATE" 2>/dev/null; then
+		rm -f "$tmp"
 		info "backup: tar failed, the config is not backed up"
+		return 1
+	fi
+	if ! mv "$tmp" "$archive"; then
+		rm -f "$tmp"
+		info "backup: cannot move the archive into $dir, the config is not backed up"
 		return 1
 	fi
 	info "backup: config and state saved to $archive"
