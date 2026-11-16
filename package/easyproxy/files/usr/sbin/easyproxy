@@ -1,24 +1,37 @@
 #!/bin/sh
 
 . /usr/lib/easyproxy/common.sh
+. /usr/lib/easyproxy/config.sh
 
 PROG="easyproxy"
+SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
 
 usage() {
 	cat <<EOF
-EasyProxy ${EP_VERSION} — Stage ${EP_STAGE} (read-only data backend)
+EasyProxy ${EP_VERSION} — Stage ${EP_STAGE} (runtime + config generation)
 Usage:
-  easyproxy status [--json]    Show real configuration and runtime status
-  easyproxy validate [--json]  Validate configuration values
-  easyproxy engine             Show selected engine and binary availability
-  easyproxy start              Guarded start (runtime arrives in Stage 3)
-  easyproxy stop               Stop placeholder
-  easyproxy help               Show this help
+  easyproxy status [--json]        Show configuration and runtime status
+  easyproxy validate [--json]      Validate configuration values
+  easyproxy engine                 Show selected engine and binary availability
+  easyproxy config generate        Generate the engine config from UCI nodes
+  easyproxy start                  Start the managed runtime
+  easyproxy stop                   Stop the managed runtime
+  easyproxy restart                Restart the managed runtime
+  easyproxy run                    Run in the foreground (used by procd)
+  easyproxy log                    Show recent log lines
+  easyproxy help                   Show this help
 EOF
+}
+
+runtime_pid() {
+	local pid
+	pid="$(ep_pid)"
+	printf '%s' "${pid:-0}"
 }
 
 cmd_status_text() {
 	local enabled engine binary bstate china proxy fail_closed nodes
+	local runtime pid up config_state config_path
 	enabled="$(ep_bool "$(ep_get main enabled 0)")"
 	engine="$(ep_get main engine none)"
 	binary="$(ep_engine_binary "$engine")"
@@ -27,6 +40,11 @@ cmd_status_text() {
 	proxy="$(ep_get routing proxy_policy proxy)"
 	fail_closed="$(ep_bool "$(ep_get routing fail_closed 1)")"
 	nodes="$(ep_node_count)"
+	runtime="$(ep_runtime_state)"
+	pid="$(runtime_pid)"
+	up="$(ep_runtime_uptime)"
+	config_path="$(ep_engine_config_path "$engine")"
+	config_state="$(ep_config_state)"
 
 	printf 'EasyProxy %s (Stage %s)\n' "$EP_VERSION" "$EP_STAGE"
 	printf 'Enabled: %s\n' "$enabled"
@@ -40,12 +58,16 @@ cmd_status_text() {
 	printf 'Proxy policy: %s\n' "$proxy"
 	printf 'Fail closed: %s\n' "$fail_closed"
 	printf 'Nodes: %s\n' "$nodes"
-	printf 'Runtime: not implemented (no proxy process managed)\n'
-	printf 'Config: %s\n' "$EP_CONFIG_FILE"
+	printf 'Runtime: %s' "$runtime"
+	[ "$runtime" = "running" ] && printf ' (pid %s, up %ss)' "$pid" "$up"
+	printf '\n'
+	printf 'Config: %s (%s)\n' "$config_path" "$config_state"
+	printf 'Config file: %s\n' "$EP_CONFIG_FILE"
 }
 
 cmd_status_json() {
 	local enabled engine binary bstate china proxy fail_closed nodes
+	local runtime pid up config_state config_path nodes_enabled
 	enabled="$(ep_bool "$(ep_get main enabled 0)")"
 	engine="$(ep_get main engine none)"
 	binary="$(ep_engine_binary "$engine")"
@@ -54,9 +76,16 @@ cmd_status_json() {
 	proxy="$(ep_get routing proxy_policy proxy)"
 	fail_closed="$(ep_bool "$(ep_get routing fail_closed 1)")"
 	nodes="$(ep_node_count)"
+	nodes_enabled="$(ep_node_count_enabled)"
 	[ -n "$nodes" ] || nodes="0"
+	[ -n "$nodes_enabled" ] || nodes_enabled="0"
+	runtime="$(ep_runtime_state)"
+	pid="$(runtime_pid)"
+	up="$(ep_runtime_uptime)"
+	config_path="$(ep_engine_config_path "$engine")"
+	config_state="$(ep_config_state)"
 
-	printf '{"ok":true,"package":"%s","version":"%s","stage":%s,"enabled":%s,"engine":"%s","binary":"%s","binary_ok":%s,"china_policy":"%s","proxy_policy":"%s","fail_closed":%s,"nodes":%s,"runtime":"not_implemented","config_file":"%s","generated":"%s"}\n' \
+	printf '{"ok":true,"package":"%s","version":"%s","stage":%s,"enabled":%s,"engine":"%s","binary":"%s","binary_ok":%s,"china_policy":"%s","proxy_policy":"%s","fail_closed":%s,"nodes":%s,"nodes_enabled":%s,"runtime":"%s","runtime_pid":%s,"runtime_uptime":%s,"config_state":"%s","config_path":"%s","config_file":"%s","generated":"%s"}\n' \
 		"$(ep_json_escape "$PROG")" \
 		"$(ep_json_escape "$EP_VERSION")" \
 		"$EP_STAGE" \
@@ -68,12 +97,18 @@ cmd_status_json() {
 		"$(ep_json_escape "$proxy")" \
 		"$fail_closed" \
 		"$nodes" \
+		"$nodes_enabled" \
+		"$(ep_json_escape "$runtime")" \
+		"$pid" \
+		"$up" \
+		"$(ep_json_escape "$config_state")" \
+		"$(ep_json_escape "$config_path")" \
 		"$(ep_json_escape "$EP_CONFIG_FILE")" \
 		"$(ep_utc_now)"
 }
 
 cmd_validate_text() {
-	local enabled engine china fail_closed
+	local enabled engine china fail_closed config_state
 	enabled="$(ep_get main enabled 0)"
 	engine="$(ep_get main engine none)"
 	china="$(ep_get routing china_policy direct)"
@@ -90,11 +125,16 @@ cmd_validate_text() {
 	else
 		echo "Warning: China policy is PROXY; domestic traffic would leave the router."
 	fi
-	echo "Note: this validates UCI values only; no routing is active in Stage 2."
+	config_state="$(ep_config_state)"
+	case "$config_state" in
+		ok) echo "Generated engine config: present and valid." ;;
+		invalid) echo "Warning: generated engine config failed validation; run 'easyproxy config generate'." ;;
+		missing) echo "Note: no generated engine config yet; run 'easyproxy config generate'." ;;
+	esac
 }
 
 cmd_validate_json() {
-	local enabled engine china fail_closed messages code
+	local enabled engine china fail_closed messages code config_state
 	enabled="$(ep_get main enabled 0)"
 	engine="$(ep_get main engine none)"
 	china="$(ep_get routing china_policy direct)"
@@ -113,12 +153,19 @@ cmd_validate_json() {
 	esac
 	case "$fail_closed" in 0|1) ;; *) messages="${messages}\"Invalid routing.fail_closed: expected 0 or 1\","; code=1 ;; esac
 
+	config_state="$(ep_config_state)"
+	case "$config_state" in
+		invalid) messages="${messages}\"Generated config failed validation; regenerate it.\","; code=1 ;;
+		missing) messages="${messages}\"No generated config yet; run easyproxy config generate.\"," ;;
+	esac
+
 	[ "$code" = "0" ] && messages="${messages}\"Configuration values are valid.\",\"China policy: $(ep_json_escape "$china")\","
 	messages="$(printf '%s' "$messages" | sed -e 's/,$//')"
 
-	printf '{"ok":%s,"version":"%s","messages":[%s],"generated":"%s"}\n' \
+	printf '{"ok":%s,"version":"%s","config_state":"%s","messages":[%s],"generated":"%s"}\n' \
 		"$([ "$code" = "0" ] && printf 'true' || printf 'false')" \
 		"$(ep_json_escape "$EP_VERSION")" \
+		"$(ep_json_escape "$config_state")" \
 		"$messages" \
 		"$(ep_utc_now)"
 	return "$code"
@@ -140,31 +187,174 @@ cmd_engine() {
 	fi
 }
 
-cmd_start() {
-	local enabled engine binary
-	enabled="$(ep_bool "$(ep_get main enabled 0)")"
+cmd_config_generate() {
+	local engine binary path nodes final checked
 	engine="$(ep_get main engine none)"
-	[ "$enabled" = "1" ] || { echo "EasyProxy is disabled. Set easyproxy.main.enabled=1 to enable." >&2; return 1; }
-	[ "$engine" != "none" ] || { echo "No proxy engine selected." >&2; return 1; }
+	[ "$engine" != "none" ] || { EP_ERR="no proxy engine selected"; return 1; }
+	[ "$engine" = "sing-box" ] || { EP_ERR="config generation is only implemented for sing-box (Stage 3)"; return 1; }
+	path="$(ep_engine_config_path "$engine")"
 	binary="$(ep_engine_binary "$engine")"
-	[ "$(ep_binary_state "$binary")" = "available" ] || { echo "Engine binary is missing: $binary" >&2; return 1; }
-	echo "Start blocked: the runtime adapter is implemented in Stage 3."
-	echo "No firewall, DNS or route changes were made."
-	return 2
-}
+	if [ "$(ep_binary_state "$binary")" = "available" ]; then
+		checked=true
+	else
+		checked=false
+	fi
 
-cmd_stop() {
-	echo "No EasyProxy proxy process is managed in Stage 2."
+	if ! ep_config_build "$path"; then
+		if [ "$JSON" = "1" ]; then
+			printf '{"ok":false,"error":"%s"}\n' "$(ep_json_escape "$EP_ERR")"
+		fi
+		echo "Config generation failed: $EP_ERR" >&2
+		return 1
+	fi
+	nodes="${EP_NODES:-0}"
+	final="${EP_FINAL:-direct}"
+
+	if [ "$JSON" = "1" ]; then
+		printf '{"ok":true,"path":"%s","outbounds":%s,"nodes":%s,"final":"%s","checked":%s,"generated":"%s"}\n' \
+			"$(ep_json_escape "$path")" \
+			"$((nodes + 2))" \
+			"$nodes" \
+			"$(ep_json_escape "$final")" \
+			"$checked" \
+			"$(ep_utc_now)"
+	else
+		printf 'Config generated: %s\n' "$path"
+		printf 'Enabled nodes: %s\n' "$nodes"
+		printf 'Default route: %s\n' "$final"
+		if [ "$checked" = "true" ]; then
+			echo "Engine validation: passed"
+		else
+			echo "Engine validation: skipped (binary missing)"
+		fi
+	fi
+	[ "$nodes" -gt 0 ] || echo "Warning: no enabled nodes; generated config only provides direct routing." >&2
 	return 0
 }
 
-CMD="$1"
+cmd_start() {
+	local enabled engine binary log i
+	enabled="$(ep_bool "$(ep_get main enabled 0)")"
+	[ "$enabled" = "1" ] || { echo "EasyProxy is disabled. Set easyproxy.main.enabled=1 to enable." >&2; return 1; }
+	engine="$(ep_get main engine none)"
+	[ "$engine" != "none" ] || { echo "No proxy engine selected." >&2; return 1; }
+	[ "$engine" = "sing-box" ] || { echo "$engine runtime is not implemented yet (Stage 3 covers sing-box)." >&2; return 2; }
+	binary="$(ep_engine_binary "$engine")"
+	[ "$(ep_binary_state "$binary")" = "available" ] || { echo "Engine binary is missing: $binary" >&2; return 1; }
+
+	if [ "$(ep_runtime_state)" = "running" ]; then
+		echo "EasyProxy is already running (pid $(ep_pid))."
+		return 0
+	fi
+
+	if ! ep_config_build "$(ep_engine_config_path "$engine")"; then
+		echo "Config generation failed: $EP_ERR" >&2
+		return 1
+	fi
+
+	mkdir -p "$EP_RUNTIME_DIR" 2>/dev/null
+	log="$EP_LOG_FILE"
+	: >> "$log" 2>/dev/null || log="/dev/null"
+
+	if [ -x /etc/init.d/easyproxy ]; then
+		/etc/init.d/easyproxy start >/dev/null 2>&1
+	else
+		nohup "$SELF" run >> "$log" 2>&1 &
+	fi
+
+	# Wait for the wrapper to publish its pid file (engine startup is not instant)
+	i=0
+	while [ "$i" -lt 5 ]; do
+		if [ "$(ep_runtime_state)" = "running" ]; then
+			echo "EasyProxy started (pid $(ep_pid))."
+			return 0
+		fi
+		sleep 1
+		i=$((i + 1))
+	done
+	echo "EasyProxy failed to start; see $EP_LOG_FILE" >&2
+	return 1
+}
+
+cmd_stop() {
+	local pid i
+	if [ -x /etc/init.d/easyproxy ]; then
+		/etc/init.d/easyproxy stop >/dev/null 2>&1
+	fi
+	pid="$(ep_pid)"
+	if [ -z "$pid" ]; then
+		rm -f "$EP_PID_FILE"
+		echo "EasyProxy is not running."
+		return 0
+	fi
+	kill "$pid" 2>/dev/null
+	i=0
+	while [ -d "/proc/$pid" ] && [ "$i" -lt 5 ]; do
+		kill -TERM "$pid" 2>/dev/null
+		sleep 1
+		i=$((i + 1))
+	done
+	[ -d "/proc/$pid" ] && kill -9 "$pid" 2>/dev/null
+	rm -f "$EP_PID_FILE"
+	echo "EasyProxy stopped."
+	return 0
+}
+
+cmd_restart() {
+	cmd_stop >/dev/null
+	cmd_start
+}
+
+cmd_run() {
+	local engine binary cfg child rc
+	engine="$(ep_get main engine none)"
+	[ "$(ep_bool "$(ep_get main enabled 0)")" = "1" ] || { echo "EasyProxy is disabled." >&2; return 1; }
+	[ "$engine" != "none" ] || { echo "No proxy engine selected." >&2; return 1; }
+	[ "$engine" = "sing-box" ] || { echo "$engine runtime is not implemented yet (Stage 3 covers sing-box)." >&2; return 2; }
+	binary="$(ep_engine_binary "$engine")"
+	[ "$(ep_binary_state "$binary")" = "available" ] || { echo "Engine binary is missing: $binary" >&2; return 1; }
+	cfg="$(ep_engine_config_path "$engine")"
+	ep_config_build "$cfg" || { echo "Config generation failed: $EP_ERR" >&2; return 1; }
+
+	child=""
+	mkdir -p "$EP_RUNTIME_DIR" 2>/dev/null
+	printf '%s %s\n' "$$" "$(date +%s)" > "$EP_PID_FILE"
+
+	cleanup() {
+		[ -n "$child" ] && kill "$child" 2>/dev/null
+		rm -f "$EP_PID_FILE"
+	}
+	trap 'cleanup; exit 0' INT TERM
+
+	ep_log "starting $engine with $binary"
+	"$binary" run -c "$cfg" &
+	child=$!
+	wait "$child"
+	rc=$?
+	cleanup
+	ep_log "engine exited with code $rc"
+	return "$rc"
+}
+
+cmd_log() {
+	if [ -r "$EP_LOG_FILE" ]; then
+		tail -n 40 "$EP_LOG_FILE"
+	else
+		echo "No log at $EP_LOG_FILE yet."
+	fi
+}
+
+CMD="${1:-}"
 [ $# -gt 0 ] && shift
 
 JSON=0
-case "$1" in
-	--json) JSON=1 ;;
-esac
+SUB=""
+for arg in "$@"; do
+	case "$arg" in
+		--json) JSON=1 ;;
+		*) [ -z "$SUB" ] && SUB="$arg" ;;
+	esac
+done
 
 case "$CMD" in
 	status)
@@ -174,8 +364,17 @@ case "$CMD" in
 		if [ "$JSON" = "1" ]; then cmd_validate_json; else cmd_validate_text; fi
 		;;
 	engine) cmd_engine ;;
+	config)
+		case "$SUB" in
+			generate|"") cmd_config_generate ;;
+			*) echo "Unknown config action: $SUB" >&2; exit 2 ;;
+		esac
+		;;
 	start) cmd_start ;;
 	stop) cmd_stop ;;
+	restart) cmd_restart ;;
+	run) cmd_run ;;
+	log) cmd_log ;;
 	help|-h|--help|"") usage ;;
 	*) usage >&2; exit 2 ;;
 esac
