@@ -10,6 +10,8 @@
 # the same way (domestic resolvers for CN names, remote DoH for the rest).
 # Stage 5 adds the tproxy inbound used by the transparent-proxy takeover.
 # Stage 6 makes fail_closed real and keeps every LAN destination direct.
+# Stage 6 also locks the two safety knobs: china_policy is always direct and
+# fail_closed is always 1, so no UCI value can turn routing into a full proxy.
 
 EP_ERR=""
 EP_ERR_FILE=""
@@ -111,35 +113,44 @@ ep_node_outbound() {
 }
 
 # 1 when the domestic split (CN direct, rest proxied) is actually wired up:
-# it needs both the policy and at least one usable node.
+# it needs at least one usable node and the CN rule sets on disk.
 ep_china_split_active() {
-	local china nodes
-	china="$(ep_get routing china_policy direct)"
-	[ "$china" = "direct" ] || return 1
+	local nodes
 	nodes="${1:-0}"
 	[ "$nodes" -gt 0 ] || return 1
 	[ "$(ep_rule_set_state)" = "ready" ] || return 1
 	return 0
 }
 
-# split | direct | proxy — what the routing layer will really do.
+# split | direct — what the routing layer will really do.
 #   split  : CN direct, everything else through the node group
-#   direct : nothing is proxied (no enabled node, or fail_closed with rule sets missing)
-#   proxy  : everything through the node group (china_policy=proxy, or degraded with fail_closed=0)
+#   direct : nothing is proxied (no enabled node, or the CN rule sets are missing)
+# There is deliberately no "proxy" mode: china_policy and fail_closed are locked
+# (see ep_locked_warn) so no UCI value can turn routing into a full proxy.
 ep_route_mode() {
-	local china nodes fc
-	china="$(ep_get routing china_policy direct)"
+	local nodes
 	nodes="${1:-0}"
 	[ "$nodes" -gt 0 ] 2>/dev/null || nodes=0
 	[ "$nodes" -gt 0 ] || { printf '%s' 'direct'; return 0; }
-	[ "$china" = "direct" ] || { printf '%s' 'proxy'; return 0; }
 	[ "$(ep_rule_set_state)" = "ready" ] && { printf '%s' 'split'; return 0; }
-	fc="$(ep_bool "$(ep_get routing fail_closed 1)")"
-	if [ "$fc" = "1" ]; then
-		printf '%s' 'direct'
-	else
-		printf '%s' 'proxy'
+	printf '%s' 'direct'
+}
+
+# The two safety knobs are locked ON. Both are still readable as UCI keys so old
+# configs load, but their values are not honoured; a wrong value only produces a
+# warning explaining that the lock kept the safe behaviour.
+ep_locked_warn() {
+	local msg raw
+	msg=""
+	raw="$(ep_get routing china_policy direct)"
+	if [ "$raw" != "direct" ]; then
+		msg="routing.china_policy=${raw} is locked out: domestic traffic must stay direct, so the CN direct rule is always installed"
 	fi
+	if [ "$(ep_bool "$(ep_get routing fail_closed 1)")" != "1" ]; then
+		[ -n "$msg" ] && msg="$msg; "
+		msg="${msg}routing.fail_closed=0 is locked out: without the CN rule sets nothing is proxied, routing never degrades to a full proxy"
+	fi
+	printf '%s' "$msg"
 }
 
 # Download one rule set into the local directory when it is absent or stale.
@@ -168,7 +179,6 @@ ep_rule_set_fetch() {
 # Make sure both CN rule sets are available locally (no network at engine start)
 ep_rule_set_ensure() {
 	local dir days geoip geosite
-	[ "$(ep_get routing china_policy direct)" = "direct" ] || return 0
 	dir="$(ep_rule_set_dir)"
 	days="$(ep_get routing rule_set_update_days 7)"
 	geosite="$(ep_get routing geosite_cn_url 'https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-cn.srs')"
@@ -193,7 +203,7 @@ ep_route_rule_sets() {
 ep_config_build() {
 	local outfile="$1" engine binary listen listen_port final
 	local tmp out sections tags nodes section line first
-	local china proxy dns_local dns_remote split mode
+	local proxy dns_local dns_remote split mode locked_msg
 	local transparent tproxy_port
 	EP_ERR=""
 
@@ -227,7 +237,8 @@ ep_config_build() {
 		nodes=$((nodes + 1))
 	done
 
-	china="$(ep_get routing china_policy direct)"
+	# china_policy / fail_closed are locked: the domestic split and the
+	# "never degrade to a full proxy" rule are not operator options any more.
 	proxy="$(ep_get routing proxy_policy proxy)"
 	dns_local="$(ep_get routing dns_local_server '223.5.5.5')"
 	dns_remote="$(ep_get routing dns_remote_server 'https://1.1.1.1/dns-query')"
@@ -237,27 +248,25 @@ ep_config_build() {
 		''|*[!0-9]*) tproxy_port=7891 ;;
 	esac
 
-	if [ "$nodes" -gt 0 ] && [ "$china" = "direct" ]; then
+	if [ "$nodes" -gt 0 ]; then
 		ep_rule_set_ensure
 	fi
 	mode="$(ep_route_mode "$nodes")"
 	split=0
 	[ "$mode" = "split" ] && split=1
 
-	# fail_closed decides what happens when the CN rule sets are missing: with
-	# fail_closed=1 nothing is proxied (traffic stays direct, foreign sites are
-	# simply unreachable), with fail_closed=0 routing degrades to full proxy.
-	EP_WARN=""
-	if [ "$nodes" -gt 0 ] && [ "$china" = "direct" ] && [ "$mode" != "split" ]; then
-		if [ "$mode" = "direct" ]; then
-			EP_WARN="china_policy=direct but the CN rule sets are unavailable and fail_closed=1; routing pinned to direct, nothing is proxied until the rule sets exist. Run 'easyproxy config generate' with network access, or place geosite-cn.srs and geoip-cn.srs under $(ep_rule_set_dir)."
+	locked_msg="$(ep_locked_warn)"
+	EP_WARN="$locked_msg"
+	if [ "$nodes" -gt 0 ] && [ "$mode" != "split" ]; then
+		if [ -n "$EP_WARN" ]; then
+			EP_WARN="$EP_WARN; china rule sets are unavailable, so routing is pinned to direct: nothing is proxied and foreign sites are unreachable until geosite-cn.srs and geoip-cn.srs exist under $(ep_rule_set_dir). Run 'easyproxy config generate' with network access, or place both files there."
 		else
-			EP_WARN="china_policy=direct but the CN rule sets are unavailable and fail_closed=0; routing degraded to full proxy, domestic traffic leaves the router. Run 'easyproxy config generate' with network access, or place geosite-cn.srs and geoip-cn.srs under $(ep_rule_set_dir)."
+			EP_WARN="china rule sets are unavailable, so routing is pinned to direct: nothing is proxied and foreign sites are unreachable until geosite-cn.srs and geoip-cn.srs exist under $(ep_rule_set_dir). Run 'easyproxy config generate' with network access, or place both files there."
 		fi
 	fi
 
 	case "$mode" in
-		split|proxy) final="$proxy" ;;
+		split) final="$proxy" ;;
 		*) final="direct" ;;
 	esac
 
