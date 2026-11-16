@@ -1,0 +1,32 @@
+name: kwrt-fix-once-2
+on:
+  push:
+    paths:
+      - .github/workflows/kwrt-fix-once-2.yml
+permissions:
+  contents: write
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: fix the payload, apply the patch, drop both workflows
+        run: |
+          set -e
+          if grep -q 'Kwrt|kwrt|KWRT' scripts/install.sh; then
+            echo 'patch already applied, nothing to do'
+            exit 0
+          fi
+          git log --oneline -3
+          python3 - <<'PY'
+          import base64, gzip, re
+          src = open('.github/workflows/kwrt-fix-once.yml').read().replace('SL7BX/', 'SL7BW/')
+          m = re.search(r"<<'B64'\n(.*?)\nB64\n", src, re.S)
+          data = base64.b64decode(''.join(m.group(1).split()))
+          open('/tmp/kwrt.patch', 'wb').write(gzip.decompress(data))
+          PY
+          wc -c /tmp/kwrt.patch
+          git apply --verbose /tmp/kwrt.patch
+          git rm -f .github/workflows/kwrt-fix-once.yml .github/workflows/kwrt-fix-once-2.yml
+          git -c user.name='EasyProxy Bot' -c user.email='bot@users.noreply.github.com' commit -am 'fix(installer): recognise Kwrt firmware, its opkg baseline and arch limits'
+          git push
