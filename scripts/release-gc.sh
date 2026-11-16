@@ -79,7 +79,7 @@ for r in data:
         except (TypeError, ValueError):
             pass
     print("%s\t%s\t%s\t%d" % (created, tag, draft, downloads))
-') || exit 2
+')" || exit 2
 
 if [ -z "$ROWS" ]; then
 	echo "release-gc: no release in the input, nothing to do"
