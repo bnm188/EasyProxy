@@ -50,6 +50,8 @@ Usage:
   easyproxy transparent audit      Check the live rules, marks and IPv6 policy against UCI
   easyproxy log                    Show recent log lines
   easyproxy log rotate             Rotate the log when it exceeds main.log_max_bytes
+  easyproxy traffic [iface]        Sample /proc/net/dev as JSON (panel chart)
+  easyproxy subscribe <url> [prefix]  Import a subscription over http(s)
   easyproxy uninstall-clean        Remove only EasyProxy's own nft/policy rules
   easyproxy help                   Show this help
 EOF
@@ -606,7 +608,7 @@ cmd_config_generate() {
 				echo "Routing mode: split (China direct, others proxied)" ;;
 			*)
 				echo "Routing mode: direct only (nothing is proxied; LAN stays direct)" ;;
-			esac
+		esac
 		if [ "$checked" = "true" ]; then
 			echo "Engine validation: passed"
 		else
@@ -945,6 +947,46 @@ cmd_log() {
 }
 
 
+# --- panel entry points -------------------------------------------------------
+# The panel's rpcd ACL grants exec on this CLI and nothing else, so the two
+# helpers the panel needs are exposed as fixed verbs instead of `sh <script>`.
+# Each verb validates its own arguments: a verb must never become an
+# interpreter for arbitrary commands or an arbitrary URL fetcher.
+cmd_traffic() {
+	local iface="${1:-}"
+	local lib="${EP_TRAFFIC_LIB:-/usr/lib/easyproxy/traffic.sh}"
+	case "$iface" in
+		"") ;;
+		*[!A-Za-z0-9_.:-]*)
+			echo "invalid interface name: refusing '${iface}'" >&2
+			return 2
+			;;
+	esac
+	[ -r "$lib" ] || { echo "traffic sampler is missing: $lib" >&2; return 3; }
+	sh "$lib" "$iface"
+}
+
+cmd_subscribe() {
+	local url="${1:-}"
+	local prefix="${2:-}"
+	local lib="${EP_SUBSCRIBE_LIB:-/usr/lib/easyproxy/subscribe.sh}"
+	case "$url" in
+		http://*|https://*) ;;
+		*)
+			echo "refusing subscription URL: only http:// and https:// are accepted" >&2
+			return 2
+			;;
+	esac
+	case "$prefix" in
+		*[!A-Za-z0-9_.-]*)
+			echo "invalid name prefix: refusing '${prefix}'" >&2
+			return 2
+			;;
+	esac
+	[ -r "$lib" ] || { echo "subscription helper is missing: $lib" >&2; return 3; }
+	sh "$lib" "$url" "$prefix"
+}
+
 CMD="${1:-}"
 [ $# -gt 0 ] && shift
 
@@ -1026,6 +1068,9 @@ case "$CMD" in
 	restart) cmd_restart ;;
 	run) cmd_run ;;
 	log) cmd_log "$SUB" ;;
+	traffic) cmd_traffic "$SUB" ;;
+	subscribe) cmd_subscribe "$SUB" "$SUB2" ;;
 	help|-h|--help|"") usage ;;
 	*) usage >&2; exit 2 ;;
 esac
+
