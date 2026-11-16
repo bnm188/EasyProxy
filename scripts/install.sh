@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/sh
 # One-line installer, upgrader and status report for EasyProxy.
 #
 #   wget -qO- https://raw.githubusercontent.com/bnm188/EasyProxy/main/scripts/install.sh | sh
@@ -301,17 +301,14 @@ verify_download() {
 	file="$1"
 	url="$2"
 	if ! command -v sha256sum >/dev/null 2>&1; then
-		info "sha256: skipped, this firmware has no sha256sum"
-		return 0
+		die "this firmware has no sha256sum; refusing to install $(basename "$url") unverified"
 	fi
 	sums="$(asset_sums_url || true)"
 	if [ -z "$sums" ]; then
-		info "sha256: this release publishes no SHA256SUMS, cannot verify $(basename "$url")"
-		return 0
+		die "this release publishes no SHA256SUMS; refusing to install $(basename "$url") unverified"
 	fi
 	if ! fetch_file "$sums" "$work/SHA256SUMS" 2>/dev/null; then
-		info "sha256: cannot download SHA256SUMS, cannot verify $(basename "$url")"
-		return 0
+		die "cannot download SHA256SUMS; refusing to install $(basename "$url") unverified"
 	fi
 	want="$(awk -v n="$(basename "$url")" '$2 == n || $2 == "./" n { print $1 }' "$work/SHA256SUMS" | head -1)"
 	[ -n "$want" ] || die "the release has no checksum for $(basename "$url"); refusing to install an unverified package"
@@ -344,7 +341,7 @@ fetch_verified() {
 	return 1
 }
 
-# Same idea for an object pinned by a sha256 inside this file rather than by the
+# Same idea for an object pinned by a sha256 inside this file rather than the
 # release's SHA256SUMS (the official upstream kernel archives).
 fetch_pinned() {
 	local url file want got attempt
@@ -687,6 +684,68 @@ package_version() {
 	opkg list-installed easyproxy 2>/dev/null | awk '{ print $3 }' | head -1
 }
 
+# --- host checks ----------------------------------------------------------
+# Both kernels plus the package plus the archives and their unpacked copies
+# need room in /tmp and at /: a download that fills the filesystem fails
+# halfway, which is worse than refusing up front. EP_MIN_FREE_KB overrides the
+# requirement (the tests set it to 0).
+MIN_FREE_KB="${EP_MIN_FREE_KB:-65536}"
+
+check_disk_space() {
+	local need path avail
+	need="${MIN_FREE_KB:-65536}"
+	case "$need" in
+		''|*[!0-9]*) need=65536 ;;
+	esac
+	for path in "$TMP" "$ROOT"; do
+		[ -d "$path" ] || continue
+		avail="$(df -Pk "$path" 2>/dev/null | awk 'NR == 2 { print $4 }')"
+		[ -n "${avail:-}" ] || continue
+		if [ "$avail" -lt "$need" ]; then
+			die "not enough disk space on $path: ${avail} KB free, ${need} KB needed; free space and run again (EP_MIN_FREE_KB overrides this)"
+		fi
+		info "disk: $path has ${avail} KB free (need ${need} KB)"
+	done
+}
+
+# The firmware family is read from the firmware itself, never assumed. A
+# missing /etc/openwrt_release (a stripped image, a test sandbox) is reported
+# instead of guessed at; EP_SKIP_COMPAT=1 forces an install on an unknown one.
+check_firmware() {
+	local rel id ver release_mm
+	rel="$ROOT/etc/openwrt_release"
+	if [ ! -r "$rel" ]; then
+		info "firmware: $rel is missing, the firmware family cannot be checked"
+		return 0
+	fi
+	id="$(sed -n "s/^DISTRIB_ID=['\"]*//p" "$rel" | sed "s/['\"][^'\"]*.*//" | head -1)"
+	ver="$(sed -n "s/^VERSION_ID=['\"]*//p" "$rel" | sed "s/['\"][^'\"]*.*//" | head -1)"
+	case "$id" in
+		ImmortalWrt|OpenWrt|LEDE|immortalwrt|openwrt) : ;;
+		*)
+			if [ "${EP_SKIP_COMPAT:-}" = 1 ]; then
+				info "firmware: ${id:-unknown} is not verified, EP_SKIP_COMPAT=1 forces the install"
+				return 0
+			fi
+			die "firmware: ${id:-unknown} is not OpenWrt/ImmortalWrt; this build targets 21.02 or newer (EP_SKIP_COMPAT=1 forces the install)" ;;
+	esac
+	if [ -z "${ver:-}" ]; then
+		info "firmware: $id has no VERSION_ID, the release cannot be checked"
+		return 0
+	fi
+	release_mm="$(printf '%s' "$ver" | awk -F. '{ printf "%s.%s", $1, $2 }')"
+	case "$release_mm" in
+		2[1-9].*|3[0-9].*|[4-9][0-9].*) : ;;
+		*)
+			if [ "${EP_SKIP_COMPAT:-}" = 1 ]; then
+				info "firmware: $id $ver is not verified, EP_SKIP_COMPAT=1 forces the install"
+				return 0
+			fi
+			die "firmware: $id $ver is older than 21.02; this build needs 21.02 or newer (EP_SKIP_COMPAT=1 forces the install)" ;;
+	esac
+	info "firmware: $id $ver"
+}
+
 # --- actions -------------------------------------------------------------
 work=""
 mkwork() {
@@ -750,8 +809,10 @@ Use: sh install.sh --rootfs  (extracts the archive at / without a package manage
 			fi
 			check_package_file "$url" "$file"
 			info "installing with $(detect_pm || printf '%s' 'package manager')"
-			install_pkg "$(detect_pm || printf '%s' opkg)" "$file" \
-				|| die "the package manager refused $(basename "$url"); nothing was installed"
+			if ! install_pkg "$(detect_pm || printf '%s' opkg)" "$file"; then
+				info "the package manager refused $(basename "$url"); nothing was installed"
+				return 1
+			fi
 			;;
 		rootfs)
 			url="$(asset_url '\.tar\.gz$')" \
@@ -798,8 +859,10 @@ print_summary() {
 }
 
 do_install() {
+	check_firmware
+	check_disk_space
 	mkwork
-	install_package
+	install_package || die "the package could not be installed; nothing was installed"
 	post_install
 
 	KERNEL_FAILED=""
@@ -878,8 +941,73 @@ upgrade_kernel() {
 	return 0
 }
 
+# The UCI config and the installer's own state are the two things an upgrade
+# must never lose: the package ships defaults for /etc/config/easyproxy, and
+# /etc/easyproxy/owned is what lets uninstall remove only what this installer
+# put there. Both are tarred before anything is replaced.
+backup_config() {
+	local dir stamp archive
+	dir="$STATE/backup"
+	mkdir -p "$dir" 2>/dev/null || { info "backup: cannot create $dir, the config is not backed up"; return 1; }
+	stamp="$(date -u '+%Y%m%dT%H%M%SZ' 2>/dev/null || printf '%s' manual)"
+	archive="$dir/config-$stamp.tar.gz"
+	if [ ! -f "$ROOT/etc/config/easyproxy" ] && [ ! -d "$STATE" ]; then
+		info "backup: nothing to back up yet"
+		return 1
+	fi
+	if ! tar -czf "$archive" "$ROOT/etc/config/easyproxy" "$STATE" 2>/dev/null; then
+		rm -f "$archive"
+		info "backup: tar failed, the config is not backed up"
+		return 1
+	fi
+	info "backup: config and state saved to $archive"
+	return 0
+}
+
+# The installed file list is what makes a package rollback possible: without an
+# old copy of those files, a failed upgrade leaves a half-written tree.
+package_files() {
+	local list
+	list="$ROOT/usr/lib/opkg/info/easyproxy.list"
+	if [ -r "$list" ]; then
+		cat "$list"
+		return 0
+	fi
+	if command -v apk >/dev/null 2>&1; then
+		apk info -L easyproxy 2>/dev/null | sed -n '/^\//p'
+	fi
+}
+
+snapshot_package() {
+	local dir stamp files
+	dir="$STATE/backup"
+	mkdir -p "$dir" 2>/dev/null || return 1
+	files="$(package_files | awk -v r="$ROOT" '{ if (r != "/" && $0 ~ "^/") print r $0; else print $0 }')"
+	[ -n "$files" ] || { info "backup: no installed file list, the old package is not snapshotted"; return 1; }
+	stamp="$(date -u '+%Y%m%dT%H%M%SZ' 2>/dev/null || printf '%s' manual)"
+	# shellcheck disable=SC2086
+	if ! tar -czf "$dir/package-$stamp.tar.gz" $files 2>/dev/null; then
+		info "backup: tar failed, the old package is not snapshotted"
+		return 1
+	fi
+	info "backup: installed package files saved to $dir/package-$stamp.tar.gz"
+	return 0
+}
+
+restore_package() {
+	local archive
+	archive="$(ls -1t "$STATE"/backup/package-*.tar.gz 2>/dev/null | head -1)"
+	[ -n "$archive" ] || { info "rollback: no package snapshot to restore"; return 1; }
+	if ! tar -xzf "$archive" -C / 2>/dev/null; then
+		info "rollback: cannot extract $archive"
+		return 1
+	fi
+	info "rollback: package files restored from $archive"
+	return 0
+}
+
 upgrade_package() {
-	local before target url file
+	local before target
 	before="$(package_version 2>/dev/null || true)"
 	target="$(release_component_version easyproxy)"
 	if [ -n "$before" ] && [ "$before" = "$target" ]; then
@@ -887,9 +1015,14 @@ upgrade_package() {
 		return 0
 	fi
 	info "easyproxy: ${before:-unknown} -> ${target:-unknown}"
-	install_package || { info "easyproxy: upgrade failed; the old package stays installed"; return 1; }
-	post_install
-	return 0
+	snapshot_package || true
+	if install_package; then
+		post_install
+		return 0
+	fi
+	info "easyproxy: upgrade failed, restoring the package files that were there before"
+	restore_package || info "easyproxy: no snapshot was taken, the old package stays installed"
+	return 1
 }
 
 do_upgrade() {
@@ -916,6 +1049,10 @@ do_upgrade() {
 		info "already up to date: easyproxy ${pkg_cur}, sing-box ${sb_cur}, dae ${dae_cur}"
 		return 0
 	fi
+
+	check_firmware
+	check_disk_space
+	backup_config || true
 
 	service_was_up=0
 	if [ -x "$INIT" ]; then
