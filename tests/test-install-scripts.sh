@@ -126,7 +126,7 @@ UNINSTALL="$SRC/scripts/uninstall.sh"
 
 # --- install: opkg host -----------------------------------------------
 reset
-"$INSTALL" > "$SB/out" 2>&1; rc=$?
+sh "$INSTALL" > "$SB/out" 2>&1; rc=$?
 [ "$rc" -eq 0 ] && ok "opkg 主机：安装退出码 0" || no "opkg 主机：安装退出码 0" "rc=$rc $(cat "$SB/out")"
 grep -q 'install .*easyproxy.*\.ipk' "$EP_TEST_LOG/pm.log" 2>/dev/null \
 	&& ok "opkg 主机：调用 opkg install 且装的是 ipk" || no "opkg 主机：调用 opkg install 且装的是 ipk" "$(cat "$EP_TEST_LOG/pm.log" 2>/dev/null)"
@@ -141,7 +141,7 @@ grep -q 'easyproxy status' "$EP_TEST_LOG/ep.log" 2>/dev/null && ok "安装后打
 reset
 cp "$SB/bin/opkg" "$SB/opkg.apktest.saved"
 rm -f "$SB/bin/opkg"
-"$INSTALL" > "$SB/out" 2>&1; rc=$?
+sh "$INSTALL" > "$SB/out" 2>&1; rc=$?
 [ "$rc" -eq 0 ] && ok "apk 主机：安装退出码 0" || no "apk 主机：安装退出码 0" "rc=$rc $(cat "$SB/out")"
 grep -q 'apk add --allow-untrusted .*\.apk' "$EP_TEST_LOG/pm.log" 2>/dev/null \
 	&& ok "apk 主机：apk add --allow-untrusted 且装的是 apk" || no "apk 主机：apk add 命令" "$(cat "$EP_TEST_LOG/pm.log" 2>/dev/null)"
@@ -151,7 +151,7 @@ cp "$SB/opkg.apktest.saved" "$SB/bin/opkg"
 # --- install: API unavailable, falls back to raw Makefile version ------
 reset
 touch "$EP_TEST_LOG/api.fail"
-"$INSTALL" > "$SB/out" 2>&1; rc=$?
+sh "$INSTALL" > "$SB/out" 2>&1; rc=$?
 [ "$rc" -eq 0 ] && ok "API 不可用时仍能安装（走版本号兜底）" || no "API 不可用时仍能安装" "rc=$rc $(cat "$SB/out")"
 grep -q 'releases/download/v0\.9\.9/' "$EP_TEST_LOG/curl.urls" 2>/dev/null \
 	&& ok "兜底 URL 由 Makefile 版本拼出（0.9.9）" || no "兜底 URL 由 Makefile 版本拼出" "$(cat "$EP_TEST_LOG/curl.urls" 2>/dev/null)"
@@ -160,7 +160,7 @@ grep -q 'releases/download/v0\.9\.9/' "$EP_TEST_LOG/curl.urls" 2>/dev/null \
 reset
 mv "$SB/bin/opkg" "$SB/opkg.off"
 mv "$SB/bin/apk" "$SB/apk.off"
-"$INSTALL" > "$SB/out" 2>&1; rc=$?
+sh "$INSTALL" > "$SB/out" 2>&1; rc=$?
 [ "$rc" -ne 0 ] && ok "没有包管理器时拒绝安装（非 0）" || no "没有包管理器时拒绝安装" "rc=$rc $(cat "$SB/out")"
 grep -qi 'opkg\|apk' "$SB/out" && ok "拒绝时说明缺少哪种包管理器" || no "拒绝时说明缺少哪种包管理器" "$(cat "$SB/out")"
 mv "$SB/opkg.off" "$SB/bin/opkg"
@@ -168,13 +168,13 @@ mv "$SB/apk.off" "$SB/bin/apk"
 
 # --- install: rootfs archive route -----------------------------------
 reset
-"$INSTALL" --rootfs > "$SB/out" 2>&1; rc=$?
+sh "$INSTALL" --rootfs > "$SB/out" 2>&1; rc=$?
 [ "$rc" -eq 0 ] && ok "--rootfs 走 tar 解包而不是包管理器" || no "--rootfs 走 tar 解包" "rc=$rc $(cat "$SB/out")"
 [ -s "$EP_TEST_LOG/pm.log" ] && no "--rootfs 不应调用包管理器" "$(cat "$EP_TEST_LOG/pm.log")" || ok "--rootfs 不调用包管理器"
 
 # --- install: --help does nothing ------------------------------------
 reset
-"$INSTALL" --help > "$SB/out" 2>&1; rc=$?
+sh "$INSTALL" --help > "$SB/out" 2>&1; rc=$?
 [ "$rc" -eq 0 ] && grep -q 'install.sh' "$SB/out" && ok "--help 打印用法并退出 0" || no "--help 打印用法并退出 0" "rc=$rc"
 [ -f "$EP_TEST_LOG/curl.urls" ] && no "--help 不应联网" || ok "--help 不联网"
 
@@ -182,7 +182,7 @@ reset
 reset
 printf 'nft\n' > "$EP_STATE_DIR/nftables.conf"
 printf 'config\n' > "$EP_CFG"
-"$UNINSTALL" > "$SB/out" 2>&1; rc=$?
+sh "$UNINSTALL" > "$SB/out" 2>&1; rc=$?
 [ "$rc" -eq 0 ] && ok "卸载退出码 0" || no "卸载退出码 0" "rc=$rc $(cat "$SB/out")"
 grep -q 'easyproxy transparent remove' "$EP_TEST_LOG/ep.log" 2>/dev/null \
 	&& ok "卸载前先撤销透明代理抓包" || no "卸载前先撤销透明代理抓包" "$(cat "$EP_TEST_LOG/ep.log" 2>/dev/null)"
@@ -200,7 +200,7 @@ grep -q 'remove easyproxy' "$EP_TEST_LOG/pm.log" 2>/dev/null && ok "调用 opkg 
 reset
 printf 'nft\n' > "$EP_STATE_DIR/nftables.conf"
 printf 'config\n' > "$EP_CFG"
-"$UNINSTALL" --purge > "$SB/out" 2>&1; rc=$?
+sh "$UNINSTALL" --purge > "$SB/out" 2>&1; rc=$?
 [ "$rc" -eq 0 ] && ok "--purge 退出码 0" || no "--purge 退出码 0" "rc=$rc $(cat "$SB/out")"
 [ -f "$EP_CFG" ] && no "--purge 应删除配置文件" || ok "--purge 删除配置文件"
 [ -d "$EP_STATE_DIR" ] && no "--purge 应删除状态目录" || ok "--purge 删除状态目录"
@@ -209,7 +209,7 @@ grep -q 'rpcd restart' "$EP_TEST_LOG/rpcd.log" 2>/dev/null && ok "卸载后重�
 # --- uninstall on a host with no easyproxy at all ---------------------
 reset
 mv "$EP_BIN" "$SB/ep.off"
-"$UNINSTALL" > "$SB/out" 2>&1; rc=$?
+sh "$UNINSTALL" > "$SB/out" 2>&1; rc=$?
 [ "$rc" -eq 0 ] && ok "没装过时卸载仍返回 0（幂等）" || no "没装过时卸载仍返回 0" "rc=$rc $(cat "$SB/out")"
 mv "$SB/ep.off" "$EP_BIN"
 
