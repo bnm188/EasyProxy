@@ -39,19 +39,25 @@ start_service() {
 
 	# Capture is only switched on once the engine is actually up: a tproxy rule
 	# with no listener black-holes LAN traffic, so a failed start must leave
-	# the firewall alone.
+	# the firewall alone. Ten seconds covers a slow cold boot on small boxes.
 	if ep_transparent_enabled; then
 		i=0
-		while [ "$i" -lt 5 ] && [ "$(ep_runtime_state)" != "running" ]; do
+		while [ "$i" -lt 10 ] && [ "$(ep_runtime_state)" != "running" ]; do
 			sleep 1
 			i=$((i + 1))
 		done
 		if ep_transparent_apply; then
-			ep_log "transparent capture applied on $(ep_transparent_ifaces) (tproxy 0.0.0.0:$(ep_tproxy_port))"
+			ep_log "transparent capture applied on $(ep_transparent_ifaces) (tproxy 0.0.0.0:$(ep_tproxy_port), ipv6 $(ep_ipv6_policy))"
 		else
 			ep_log "transparent capture not applied: $EP_ERR"
 		fi
 	fi
+}
+
+# Boot and a firewall reload both go through here: the engine is (re)started and
+# the capture is rebuilt from UCI, so a restart never depends on leftover state.
+boot() {
+	start
 }
 
 stop_service() {

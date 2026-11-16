@@ -1,0 +1,19 @@
+#!/bin/sh
+# EasyProxy: restore the transparent capture when an interface comes up.
+#
+# A reboot, a PPPoE flap, a cable pull or a firewall reload can leave the nft
+# table and the policy rule behind; applying is idempotent, so this simply puts
+# them back. It refuses to act while the engine is down: a tproxy rule without a
+# listener would black-hole the whole LAN.
+
+[ "$ACTION" = "ifup" ] || exit 0
+
+. /usr/lib/easyproxy/common.sh
+. /usr/lib/easyproxy/config.sh
+. /usr/lib/easyproxy/transparent.sh
+
+ep_transparent_enabled || exit 0
+[ "$(ep_runtime_state)" = "running" ] || exit 0
+
+ep_transparent_apply || ep_log "hotplug ifup: capture re-apply failed: $EP_ERR"
+exit 0

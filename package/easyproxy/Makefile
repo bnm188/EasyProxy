@@ -24,6 +24,7 @@ define Package/easyproxy/description
  supervises the runtime through procd and shows live state in the panel.
  Stage 6 keeps LAN traffic direct and makes fail_closed real: when the CN rule
  sets are missing nothing is proxied instead of silently going full-tunnel.
+ IPv6 is never captured silently: it is explicit `direct` or `block`.
 endef
 
 define Package/easyproxy/conffiles
@@ -38,6 +39,8 @@ define Package/easyproxy/install
 	$(INSTALL_CONF) ./files/etc/config/easyproxy $(1)/etc/config/easyproxy
 	$(INSTALL_DIR) $(1)/etc/init.d
 	$(INSTALL_BIN) ./files/etc/init.d/easyproxy $(1)/etc/init.d/easyproxy
+	$(INSTALL_DIR) $(1)/etc/hotplug.d/iface
+	$(INSTALL_BIN) ./files/etc/hotplug.d/iface/95-easyproxy $(1)/etc/hotplug.d/iface/95-easyproxy
 	$(INSTALL_DIR) $(1)/usr/sbin
 	$(INSTALL_BIN) ./files/usr/sbin/easyproxy $(1)/usr/sbin/easyproxy
 	$(INSTALL_DIR) $(1)/usr/lib/easyproxy/adapters

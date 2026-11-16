@@ -31,6 +31,12 @@ config transparent 'transparent'
 	option route_table '100'
 	option lan_interfaces 'br-lan'
 	option exclude ''
+	# IPv6 is not captured yet (no tproxy6 path). Keeping the decision explicit
+	# is the point: direct leaves IPv6 traffic unproxied, block drops LAN IPv6
+	# outside the bypass set (fc00::/7, fe80::/10, ::1/128, ff00::/8 and the
+	# LAN on-link prefixes) so nothing sneaks around the proxy over IPv6.
+	option ipv6_policy 'direct'
+	option ipv6_exclude ''
 
 config engine 'dae'
 	option config_file '/etc/easyproxy/dae.conf'
