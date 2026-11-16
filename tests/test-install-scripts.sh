@@ -184,10 +184,10 @@ printf 'nft\n' > "$EP_STATE_DIR/nftables.conf"
 printf 'config\n' > "$EP_CFG"
 sh "$UNINSTALL" > "$SB/out" 2>&1; rc=$?
 [ "$rc" -eq 0 ] && ok "卸载退出码 0" || no "卸载退出码 0" "rc=$rc $(cat "$SB/out")"
-grep -q 'easyproxy transparent remove' "$EP_TEST_LOG/ep.log" 2>/dev/null \
+grep -Eq 'easyproxy (uninstall-clean|transparent remove)' "$EP_TEST_LOG/ep.log" 2>/dev/null \
 	&& ok "卸载前先撤销透明代理抓包" || no "卸载前先撤销透明代理抓包" "$(cat "$EP_TEST_LOG/ep.log" 2>/dev/null)"
 # order: capture removal must come before the package manager runs
-tl_rm="$(grep -n 'ep transparent remove' "$EP_TEST_LOG/timeline" 2>/dev/null | cut -d: -f1)"
+tl_rm="$(grep -En 'ep (uninstall-clean|transparent remove)' "$EP_TEST_LOG/timeline" 2>/dev/null | head -1 | cut -d: -f1)"
 tl_pm="$(grep -n 'pm remove easyproxy' "$EP_TEST_LOG/timeline" 2>/dev/null | cut -d: -f1)"
 [ -n "$tl_rm" ] && [ -n "$tl_pm" ] && [ "$tl_rm" -lt "$tl_pm" ] \
 	&& ok "撤销抓包发生在包管理器卸载之前" || no "撤销抓包顺序" "rm=$tl_rm pm=$tl_pm"
