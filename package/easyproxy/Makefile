@@ -1,7 +1,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=easyproxy
-PKG_VERSION:=0.3.0
+PKG_VERSION:=0.4.0
 PKG_RELEASE:=1
 
 PKG_LICENSE:=MIT
@@ -19,8 +19,9 @@ endef
 
 define Package/easyproxy/description
  Modular proxy management framework for ImmortalWrt.
- Stage 3 generates the sing-box config from UCI nodes and
- supervises the runtime through procd; the panel shows live state.
+ Stage 4 generates a split-routing sing-box config (China direct, others
+ proxied) with local rule sets, supervises the runtime through procd and
+ shows live state in the panel.
 endef
 
 define Package/easyproxy/conffiles
@@ -48,6 +49,7 @@ define Package/easyproxy/install
 	$(INSTALL_DATA) ./files/usr/share/luci/menu.d/luci-app-easyproxy.json $(1)/usr/share/luci/menu.d/luci-app-easyproxy.json
 	$(INSTALL_DIR) $(1)/usr/share/rpcd/acl.d
 	$(INSTALL_DATA) ./files/usr/share/rpcd/acl.d/luci-app-easyproxy.json $(1)/usr/share/rpcd/acl.d/luci-app-easyproxy.json
+	$(INSTALL_DIR) $(1)/etc/easyproxy/ruleset
 endef
 
 $(eval $(call BuildPackage,easyproxy))

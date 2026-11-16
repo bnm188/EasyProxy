@@ -20,6 +20,7 @@ start_service() {
 	binary="$(ep_engine_binary "$engine")"
 	[ "$(ep_binary_state "$binary")" = "available" ] || { ep_log "engine binary missing: $binary"; return 1; }
 
+	export EP_RULE_SET_NO_FETCH=1
 	if ! ep_config_build "$(ep_engine_config_path "$engine")"; then
 		ep_log "config generation failed: $EP_ERR"
 		return 1

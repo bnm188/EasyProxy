@@ -9,6 +9,16 @@ config routing 'routing'
 	option china_policy 'direct'
 	option proxy_policy 'proxy'
 	option fail_closed '1'
+	# Domestic rule sets are downloaded once by `config generate` and then
+	# referenced as local files, so the engine never needs the network to start.
+	option rule_set_dir '/etc/easyproxy/ruleset'
+	option geosite_cn_url 'https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-cn.srs'
+	option geoip_cn_url 'https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-cn.srs'
+	option rule_set_update_days '7'
+	# DNS: domestic resolver for CN names, remote DoH through the node group
+	# for everything else.
+	option dns_local_server '223.5.5.5'
+	option dns_remote_server 'https://1.1.1.1/dns-query'
 
 config engine 'dae'
 	option config_file '/etc/easyproxy/dae.conf'
