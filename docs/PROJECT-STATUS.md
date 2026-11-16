@@ -1,8 +1,8 @@
 # EasyProxy 项目状态（PROJECT-STATUS）
 
 - 最后更新：2026-11-17（UTC+8，随报告 008 更新）
-- 更新依据：`docs/reports/008-2026-11-17-kwrt-firmware-compat.md`（Kwrt 固件识别修复，提交 `5b84c2b`）；前序 `007`（0.7.0 发布后复核）、`006`（0.7.0 正式发布，构建提交 `4863cd7`）、`005`（验收遗留清理）、`004`（Stage 9 P1 修复与发布门禁）；缺陷清单原始来源 `001`
-- 盘点基准：`main@4863cd7bdadfef2cc9e55465eeece838283546c0`（2026-11-17 02:09 +0800，即 Release `v0.7.0` 的构建提交）
+- 更新依据：`docs/reports/009-2026-11-17-release-pipeline-fix.md`（发布流程修复 + 0.8.0 真实发布，提交 `83493fe` `8bcec5d` `e7840ab`）；前序 `008`（Kwrt 固件识别）、`007`（0.7.0 发布后复核）、`006`（0.7.0 正式发布，构建提交 `4863cd7`）、`005`（验收遗留清理）、`004`（Stage 9 P1 修复与发布门禁）；缺陷清单原始来源 `001`
+- 盘点基准：`main@e7840ab6b234a9639c76c2a9ba9a693a38374889`（2026-11-17 05:31 +0800，即 Release `v0.8.0` 的构建提交）
 - 配套文件：`docs/DEVELOPMENT-PLAN.md`（路线与阶段）、`docs/reports/README.md`（报告制度）
 - 约定：每完成一个阶段必须更新本文件；**本文件只写有证据的状态**，推断单独标注
 
@@ -32,15 +32,19 @@ Stage 9 之后（2026-11-17）：首个发布链缺口已收口——P1 缺陷 D
 |---|---|
 | 代码规模 | 报告 005 时点 63 文件、shell 7 853 行、JS 1 020 行；`0.7.0` 改动为 11 文件 +140/−50 行，**行数未重新统计**（不沿用旧数当现值） |
 | 最大单文件 | `scripts/install.sh` **1 136 行** |
-| HEAD | `4863cd7bdadfef2cc9e55465eeece838283546c0`（2026-11-17 02:09 +0800，构建提交；其后仅删除一次性发布文件与文档提交） |
-| 版本号 | `PKG_VERSION:=0.7.0` / `PKG_RELEASE 1`；`EP_VERSION=0.7.0` |
-| tag `v0.7.0` | 由 `gh release create --target 4863cd7…` 创建，**指向构建提交**（R2 对本版本成立） |
+| HEAD | `e7840ab6b234a9639c76c2a9ba9a693a38374889`（2026-11-17 05:31 +0800，`v0.8.0` 构建提交；其后仅文档提交与临时工作流清理） |
+| 版本号 | `PKG_VERSION:=0.8.0` / `PKG_RELEASE 1`；`EP_VERSION=0.8.0` |
+| tag `v0.7.0` | 由 `gh release create --target 4863cd7…` 创建，**指向构建提交**（R2 对 0.7.0 成立） |
+| tag `v0.8.0` | → `e7840ab6b234a9639c76c2a9ba9a693a38374889`，与构建提交一致（R2 对 0.8.0 成立） |
 | 历史 tag `v0.6.0` | `68f9ddd`，与资产构建提交不一致（历史遗留，未重做） |
-| Release `v0.7.0` | id 447407341，`draft=false`、`prerelease=false`、作者 `github-actions[bot]`，发布 `2026-11-16T18:09:55Z`（=11-17 02:09:55 +0800）；12 项资产 |
+| Release `v0.7.0` | id 447407341，`draft=false`、`prerelease=false`，发布 `2026-11-16T18:09:55Z`（=11-17 02:09:55 +0800）；12 项资产 |
+| Release `v0.8.0` | 由 run #165（id `43960800316`，提交 `e7840ab`）创建并**自检通过**；12 项资产；发布后自检做了回查 Release、实下全部资产、`sha256sum -c`、逐资产 `curl -fIL` 断言 200 |
 | 历史 Release `v0.6.0` | id 446714911，07:19:13Z 发布；`immutable=false`；**本轮未动**（未删、未改、未覆盖） |
 | 资产（`v0.7.0`） | 12 项：3×sing-box 1.14.4、3×dae 2.1.2、2×ipk、1×apk、1×rootfs、`SHA256SUMS`、`KERNEL-VERSIONS` |
+| 资产（`v0.8.0`） | 同样 12 项，EasyProxy 侧换为 0.8.0（`easyproxy_0.8.0-1_all.ipk` 51 094 B 等），内核仍 sing-box 1.14.4 / dae 2.1.2 |
 | 资产性质 | **历史事实**：审计时点（22:2x）之前每次 push `main` 由 CI 用 `--clobber` 重建覆盖；`f4f8c93` 起 workflow 改为 tag-only、同版本重复发布直接失败，`main` 不再重建 Release 资产 |
 | 资产校验（`v0.7.0`，11-17 02:13–02:14 +0800 实下） | `sha256sum -c SHA256SUMS` **11/11 OK**；`sing-box_1.14.4_x86_64.ipk` 解包后二进制自报 `sing-box version 1.14.4`（`go1.26.10 linux/amd64`） |
+| 资产校验（`v0.8.0`，11-17 05:33–05:34 +0800 实下） | 12 个文件全部从 `releases/download/v0.8.0/` 下载后 `sha256sum -c SHA256SUMS` **11/11 OK**；`KERNEL-VERSIONS` 内 `built from commit: e7840ab…`；直链 302→200 |
 | 资产可变实证（审计时点） | 同一 `v0.6.0` 资产：作者 21:50 记录 x86_64 ipk 48.8 KB / rootfs 48.1 KB；22:2x 实测 51 064 B / 50 335 B —— 同一 URL 不同时点字节不同 |
 | 是否有未提交改动 | 无（代码、报告与文档均直接落在 `main`） |
 
@@ -91,10 +95,10 @@ Stage 9 之后（2026-11-17）：首个发布链缺口已收口——P1 缺陷 D
 
 | 证据 | 结果 |
 |---|---|
-| 12 套测试（Linux + dash + python3，`main@e7827ee` 的克隆 + 报告 008 改动；唯一计数来源 `tests/run-all.sh`） | **591 通过 / 0 失败 / 0 SKIP**（cli 21 / engine 45 / install-scripts 126 / ipk-layout 40 / maintenance 44 / nodes 61 / regressions 46 / routing 32 / runtime 20 / release 36 / security 33 / transparent 87） |
+| 12 套测试（Linux + dash + python3，`main@e7840ab` 的等价工作树；唯一计数来源 `tests/run-all.sh`） | **602 通过 / 0 失败 / 0 SKIP**（cli 21 / engine 45 / install-scripts 126 / ipk-layout 40 / maintenance 44 / nodes 61 / regressions 47 / routing 32 / runtime 20 / release 46 / security 33 / transparent 87） |
 | 真实 `sing-box 1.14.4` 校验 + 起服 | routing 真实内核 check 通过（含 dns 与 rule_set）；沙箱起服后 `curl -x http://127.0.0.1:7890 http://www.gstatic.com/generate_204` 返回 **204**（沙箱需把 `cache_file` 覆写到 `/tmp`，D11 未修） |
 | 权限边界（静态 + 注入） | security 33 项、regressions 的 D9 断言：ACL 只授予 `/usr/sbin/easyproxy` 的 exec，`/bin/sh`、通配符、`/etc/config` 直接写、`list` 均被拒；CLI 对网卡名/URL/前缀做校验；**真实 rpcd 渲染未验证**（环境无 rpcd） |
-| CI（GitHub Actions） | run #123（`1ed6f6e`）success；发布通道前 4 次失败各有留证（日志丢失 / 补丁应用 / `GITHUB_TOKEN` 无 workflows 权限 / sed 转义），第 5 次由 `4863cd7` 触发**成功并产出 Release `v0.7.0`**（18:09:55Z）；该次 run 的 ID 与日志正文未取到（`api.github.com` 直连 403 rate limit、Actions 日志需登录），不假称读过日志 |
+| CI（GitHub Actions） | 0.8.0：run **#165**（id `43960800316`，`e7840ab`）**success**，含发布与发布后自检；run #163（`8bcec5d`）failure（`release-notes: range v0.7.0..HEAD has no commit`，checkout 浅历史）、run #164（`cd0ee71`）failure（同因），两次失败未删改；失败日志本轮通过一次性 `logs9` 工作流取回并写入 issue #9。0.7.0：#123（`1ed6f6e`）success |
 | 端到端起服 | `Engine validation: passed` → `sing-box started (0.11s)` → socks5/http 代理均 HTTP 200 |
 | 资产校验 | 4 包 + `KERNEL-VERSIONS` OK（审计时点） |
 | 真机 | **0 台**，tproxy 转发/nft/LuCI 渲染/opkg 安装/升级回滚均未验 |

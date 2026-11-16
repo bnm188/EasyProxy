@@ -2,11 +2,11 @@
 
 EasyProxy 是给 ImmortalWrt 用的模块化代理管理包：一条 SSH 命令装好「面板 + sing-box + dae」三件套，装完在 LuCI 的「服务 → EasyProxy」里用中文面板管理节点、分流、透明代理和维护。
 
-- 当前版本：**0.7.0**（Release `v0.7.0`）
+- 当前版本：**0.8.0**（Release `v0.8.0`）
 - 适用固件：ImmortalWrt、OpenWrt（`opkg` 与 `apk` 两种都支持，也支持 rootfs 直接展开），以及 Kwrt（`dl.openwrt.ai` 构建，需 OpenWrt 21.02 及以上基线）
 - 内核架构：`x86_64`、`aarch64_cortex-a53`、`arm_cortex-a7_neon-vfpv4`
 - 面板：10 个中文页面
-- 测试：12 套 **591** 项（`tests/run-all.sh` 是唯一计数来源），CI 会下载并校验 pinned **sing-box 1.14.4** 后跑真实内核 `check`
+- 测试：12 套 **602** 项（`tests/run-all.sh` 是唯一计数来源），CI 会下载并校验 pinned **sing-box 1.14.4** 后跑真实内核 `check`
 
 ---
 
@@ -411,10 +411,10 @@ CI 用 `.github/workflows/build.yml`：下载官方 ImmortalWrt SDK（25.12.2，
 
 | 资产 | 用途 |
 |---|---|
-| `easyproxy_0.7.0-1_all.ipk` | 任意 opkg 固件，架构无关 |
-| `easyproxy_0.7.0-1_x86_64.ipk` | 拒绝 `Architecture: all` 的 opkg 固件（x86_64） |
-| `easyproxy-0.7.0-r1.apk` | 用 `apk` 的 ImmortalWrt 25.x 镜像 |
-| `easyproxy-0.7.0-rootfs.tar.gz` | 没有匹配包管理器时直接解到 `/` |
+| `easyproxy_0.8.0-1_all.ipk` | 任意 opkg 固件，架构无关 |
+| `easyproxy_0.8.0-1_x86_64.ipk` | 拒绝 `Architecture: all` 的 opkg 固件（x86_64） |
+| `easyproxy-0.8.0-r1.apk` | 用 `apk` 的 ImmortalWrt 25.x 镜像 |
+| `easyproxy-0.8.0-rootfs.tar.gz` | 没有匹配包管理器时直接解到 `/` |
 | `sing-box_1.14.4_<arch>.ipk` | sing-box 内核（1.14.4），按架构分包 |
 | `dae_2.1.2_<arch>.ipk` | dae 内核（二进制 + `/usr/share/dae` 路由数据） |
 | `SHA256SUMS` | 上面的 sha256，安装器逐项校验 |
@@ -422,7 +422,11 @@ CI 用 `.github/workflows/build.yml`：下载官方 ImmortalWrt SDK（25.12.2，
 
 内核不能塞进 `_all.ipk`：那个包架构无关，塞了 amd64 二进制就会装到 ARM 路由器上。三个包也意味着三者可以分别升级、分别卸载，安装器就是按这个设计的。
 
-**发布方式（已修）**：`main` 上的提交只产出 artifact，不再写 Release；正式发布只由 `v*` tag（`build.yml` 的发布步骤）或一次性受控发布完成，同一版本重复发布直接失败、不 `--clobber`。`v0.7.0` 就是这个制度下第一次真实发布：12 项资产，本地把 11 个文件按 `SHA256SUMS` 逐个复核全部通过。
+**发布方式（0.8.0 起，报告 009）**：`build.yml` 先在 `Resolve the release intent` 里把"这次要不要发布、发布哪个 tag"定下来，来源只有三处——手工 push 的 `v*` tag、手动 `workflow_dispatch` 给的 `inputs.version`、提交进仓库的 `.release-request` 文件。普通 `main` push 只构建、不发布；同版本重复发布直接失败、不 `--clobber`。发布步骤跑完还会**回查 Release 并自检**：`gh release view` 校验 tag/非 draft/资产数/必需资产，`gh release download` 把资产实下后 `sha256sum -c SHA256SUMS`，再对每个资产 `curl -fIL` 断言下载地址 200；任一条不过，这次构建就是红的，不算发布成功。
+
+为什么要有 `.release-request`：`GITHUB_TOKEN` 既不能派发带输入的工作流（`HTTP 422 Unexpected inputs provided: ["version"]`），也不能推送修改 `.github/workflows/*` 的提交（`refusing to allow a GitHub App to create or update workflow … without workflows permission`）。所以自动化发布走"以维护者身份 push 一个标记文件"这条真实 push 路径。
+
+`v0.8.0` 是这个制度下第一次端到端发布：run #165 绿，12 项资产，本地把 11 个文件按 `SHA256SUMS` 逐个复核全部通过。
 
 本地构建：
 

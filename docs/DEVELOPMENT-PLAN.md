@@ -1,6 +1,6 @@
 # EasyProxy 开发路线（DEVELOPMENT-PLAN）
 
-- 最后更新：2026-11-17（UTC+8，随报告 006 更新第 3 节：Stage 9 收口）
+- 最后更新：2026-11-17（UTC+8，随报告 009 更新第 3 节：发布路径改为「三路统一意图 + 发布后自检」，0.8.0 真实发布）
 - 依据：2026-11-16 全量审计（`docs/reports/001-2026-11-16-audit.md`）与 `docs/PROJECT-STATUS.md`
 - 纪律：一次只做一个阶段；阶段完成写报告、更新状态、**等待确认**后再进入下一阶段
 
@@ -36,6 +36,9 @@
 ---
 
 ## 3. 当前阶段：Stage 9 · 发布体系合规（完成，待独立验收）
+
+- 2026-11-17（报告 009）补充：发布不再只认 `v*` tag。`build.yml` 先把发布意图统一解析（tag / 手动 `inputs.version` / `.release-request` 文件），发布后新增自检（回查 Release、实下资产、`sha256sum -c`、逐资产 `curl -fIL` 断言 200）。`0.8.0` 已真实发布并自检通过：12 项资产、11/11 SHA256 OK、run #165 绿。
+- 未完成：发布成功后 `.release-request` 不自动清理；`build.yml` 无 `concurrency` 组；`release-notes.sh` 不滤过程提交（`chore(...)` 会进说明）。三条都记在报告 009 第 9 节。
 
 - 目标（不变）：发布不可变、可复现，CI 真正校验配置。
 - 已完成（有代码、测试、CI 证据，见报告 004 与 005）：`main` 只出 Artifacts、发布只由 `v*` tag 触发；无 `--clobber`、不改写已发布说明；CI 用 pinned sing-box 做真实 `check`；SKIP 与"套件没有打印结果行"都算失败；D1/D2/D3/D5/D7/D9 修复；ACL 从 `/bin/sh` 收紧到固定 CLI 入口。
