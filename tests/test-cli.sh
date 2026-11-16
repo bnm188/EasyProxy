@@ -23,8 +23,10 @@ trap 'rm -rf "$SB"' EXIT
 
 mkdir -p "$SB/usr/lib/easyproxy/adapters" "$SB/usr/sbin" "$SB/etc" "$SB/bin"
 cp "$SRC/package/easyproxy/files/usr/lib/easyproxy/common.sh" "$SB/usr/lib/easyproxy/common.sh"
+cp "$SRC/package/easyproxy/files/usr/lib/easyproxy/config.sh" "$SB/usr/lib/easyproxy/config.sh"
 cp "$SRC/package/easyproxy/files/usr/lib/easyproxy/adapters/"*.sh "$SB/usr/lib/easyproxy/adapters/"
-sed "s#/usr/lib/easyproxy/common.sh#$SB/usr/lib/easyproxy/common.sh#" \
+sed -e "s#/usr/lib/easyproxy/common.sh#$SB/usr/lib/easyproxy/common.sh#" \
+    -e "s#/usr/lib/easyproxy/config.sh#$SB/usr/lib/easyproxy/config.sh#" \
 	"$SRC/package/easyproxy/files/usr/sbin/easyproxy" > "$SB/usr/sbin/easyproxy"
 chmod +x "$SB/usr/sbin/easyproxy"
 
@@ -87,7 +89,7 @@ else
 	no "status --json 是合法 JSON" "$out"
 fi
 [ "$(printf '%s' "$out" | json_get "['ok']")" = "True" ] && ok "status ok=true" || no "status ok=true"
-[ "$(printf '%s' "$out" | json_get "['version']")" = "0.2.0" ] && ok "version=0.2.0" || no "version=0.2.0"
+[ "$(printf '%s' "$out" | json_get "['version']")" = "0.3.0" ] && ok "version=0.3.0" || no "version=0.3.0"
 [ "$(printf '%s' "$out" | json_get "['engine']")" = "sing-box" ] && ok "engine 来自 UCI" || no "engine 来自 UCI"
 [ "$(printf '%s' "$out" | json_get "['nodes']")" = "2" ] && ok "nodes 统计出 2 个节点" || no "nodes 统计出 2 个节点"
 [ "$(printf '%s' "$out" | json_get "['binary_ok']")" = "1" ] && ok "binary_ok=1（二进制可执行）" || no "binary_ok=1"
@@ -120,11 +122,12 @@ sed -i 's/^easyproxy.routing.china_policy=.*/easyproxy.routing.china_policy=prox
 grep -q 'PROXY' "$SB/v3.json" && ok "china_policy=proxy 输出警告文案" || no "china_policy=proxy 输出警告文案"
 cp "$SB/uci.bak" "$SB/etc/uci.db"
 
-# --- 6. start stays guarded (no routing change in Stage 2) -----------------
+# --- 6. start refuses while disabled --------------------------------------
+sed -i 's/^easyproxy.main.enabled=.*/easyproxy.main.enabled=0/' "$SB/etc/uci.db"
 out="$("$EP" start 2>&1)"; rc=$?
-[ "$rc" -eq 2 ] && ok "start 被拦截且退出码 2" || no "start 被拦截且退出码 2" "rc=$rc"
-printf '%s' "$out" | grep -q 'No firewall, DNS or route changes were made' \
-	&& ok "start 明确声明未改动路由" || no "start 明确声明未改动路由"
+[ "$rc" -ne 0 ] && ok "未启用时 start 被拒绝" || no "未启用时 start 被拒绝" "rc=$rc"
+printf '%s' "$out" | grep -qi 'disabled' && ok "拒绝原因明确（disabled）" || no "拒绝原因明确（disabled）"
+sed -i 's/^easyproxy.main.enabled=.*/easyproxy.main.enabled=1/' "$SB/etc/uci.db"
 
 # --- 7. engine subcommand --------------------------------------------------
 out="$("$EP" engine 2>&1)"
