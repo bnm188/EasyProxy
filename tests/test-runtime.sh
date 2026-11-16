@@ -24,9 +24,11 @@ mkdir -p "$SB/usr/lib/easyproxy/adapters" "$SB/usr/sbin" "$SB/etc" "$SB/bin" "$S
 cp "$SRC/package/easyproxy/files/usr/lib/easyproxy/common.sh" "$SB/usr/lib/easyproxy/common.sh"
 [ -f "$SRC/package/easyproxy/files/usr/lib/easyproxy/config.sh" ] && \
 	cp "$SRC/package/easyproxy/files/usr/lib/easyproxy/config.sh" "$SB/usr/lib/easyproxy/config.sh"
+cp "$SRC/package/easyproxy/files/usr/lib/easyproxy/transparent.sh" "$SB/usr/lib/easyproxy/transparent.sh"
 cp "$SRC/package/easyproxy/files/usr/lib/easyproxy/adapters/"*.sh "$SB/usr/lib/easyproxy/adapters/"
 sed -e "s#/usr/lib/easyproxy/common.sh#$SB/usr/lib/easyproxy/common.sh#" \
     -e "s#/usr/lib/easyproxy/config.sh#$SB/usr/lib/easyproxy/config.sh#" \
+    -e "s#/usr/lib/easyproxy/transparent.sh#$SB/usr/lib/easyproxy/transparent.sh#" \
 	"$SRC/package/easyproxy/files/usr/sbin/easyproxy" > "$SB/usr/sbin/easyproxy"
 chmod +x "$SB/usr/sbin/easyproxy"
 
@@ -178,7 +180,7 @@ pgrep -f 'sleep 30' >/dev/null 2>&1 && no "停止后无残留进程" || ok "停�
 sed -i 's/^easyproxy.main.enabled=.*/easyproxy.main.enabled=0/' "$SB/etc/uci.db"
 "$EP" start > "$SB/s2.log" 2>&1; rc=$?
 [ "$rc" -ne 0 ] && ok "未启用时拒绝启动" || no "未启用时拒绝启动" "rc=$rc"
-grep -qi 'disabled\|未启用' "$SB/s2.log" && ok "拒绝原因清晰" || no "拒绝原因清晰" "$(cat "$SB/s2.log")"
+grep -qi 'disabled|未启用' "$SB/s2.log" && ok "拒绝原因清晰" || no "拒绝原因清晰" "$(cat "$SB/s2.log")"
 sed -i 's/^easyproxy.main.enabled=.*/easyproxy.main.enabled=1/' "$SB/etc/uci.db"
 
 say ""
