@@ -67,13 +67,22 @@ cmd_status_text() {
 	else
 		printf 'Rule sets: missing (%s)\n' "$(ep_rule_set_dir)"
 	fi
-	if [ "$china" = "direct" ] && [ "$(ep_rule_set_state)" = "ready" ]; then
-		printf 'Routing: split (China direct, others proxied)\n'
-	elif [ "$china" = "direct" ]; then
-		printf 'Routing: all traffic proxied (rule sets missing)\n'
-	else
-		printf 'Routing: all traffic proxied (china_policy=proxy)\n'
-	fi
+	case "$(ep_route_mode "$nodes")" in
+		split)
+			printf 'Routing: split (China direct, others proxied)\n' ;;
+		direct)
+			if [ "$nodes" -gt 0 ]; then
+				printf 'Routing: direct only (rule sets missing, fail_closed=1: nothing is proxied)\n'
+			else
+				printf 'Routing: direct only (no enabled nodes)\n'
+			fi ;;
+		*)
+			if [ "$china" = "direct" ]; then
+				printf 'Routing: all traffic proxied (rule sets missing, fail_closed=0)\n'
+			else
+				printf 'Routing: all traffic proxied (china_policy=proxy)\n'
+			fi ;;
+	esac
 	case "$(ep_transparent_state)" in
 		active)
 			printf 'Transparent: active (%s, tproxy 0.0.0.0:%s)\n' \
@@ -97,7 +106,7 @@ cmd_status_text() {
 
 cmd_status_json() {
 	local enabled engine binary bstate china proxy fail_closed nodes
-	local runtime pid up config_state config_path nodes_enabled china_rule route_rules dns_mode rule_set_state
+	local runtime pid up config_state config_path nodes_enabled china_rule route_rules dns_mode rule_set_state route_mode
 	local transparent tproxy_port tproxy_state
 	enabled="$(ep_bool "$(ep_get main enabled 0)")"
 	engine="$(ep_get main engine none)"
@@ -115,7 +124,8 @@ cmd_status_json() {
 	tproxy_port="$(ep_tproxy_port)"
 	tproxy_state="$(ep_transparent_state)"
 
-	if [ "$china" = "direct" ] && [ "$nodes_enabled" -gt 0 ] && [ "$rule_set_state" = "ready" ]; then
+	route_mode="$(ep_route_mode "$nodes_enabled")"
+	if [ "$route_mode" = "split" ]; then
 		china_rule=1
 		route_rules=2
 		dns_mode="split"
@@ -131,7 +141,7 @@ cmd_status_json() {
 	config_path="$(ep_engine_config_path "$engine")"
 	config_state="$(ep_config_state)"
 
-	printf '{"ok":true,"package":"%s","version":"%s","stage":%s,"enabled":%s,"engine":"%s","binary":"%s","binary_ok":%s,"china_policy":"%s","proxy_policy":"%s","fail_closed":%s,"nodes":%s,"nodes_enabled":%s,"runtime":"%s","runtime_pid":%s,"runtime_uptime":%s,"china_rule":%s,"route_rules":%s,"dns_mode":"%s","rule_set_state":"%s","transparent":%s,"tproxy_port":%s,"tproxy_state":"%s","config_state":"%s","config_path":"%s","config_file":"%s","generated":"%s"}\n' \
+	printf '{"ok":true,"package":"%s","version":"%s","stage":%s,"enabled":%s,"engine":"%s","binary":"%s","binary_ok":%s,"china_policy":"%s","proxy_policy":"%s","fail_closed":%s,"nodes":%s,"nodes_enabled":%s,"runtime":"%s","runtime_pid":%s,"runtime_uptime":%s,"china_rule":%s,"route_rules":%s,"dns_mode":"%s","rule_set_state":"%s","route_mode":"%s","transparent":%s,"tproxy_port":%s,"tproxy_state":"%s","config_state":"%s","config_path":"%s","config_file":"%s","generated":"%s"}\n' \
 		"$(ep_json_escape "$PROG")" \
 		"$(ep_json_escape "$EP_VERSION")" \
 		"$EP_STAGE" \
@@ -151,6 +161,7 @@ cmd_status_json() {
 		"$route_rules" \
 		"$dns_mode" \
 		"$(ep_json_escape "$rule_set_state")" \
+		"$(ep_json_escape "$route_mode")" \
 		"$transparent" \
 		"$tproxy_port" \
 		"$(ep_json_escape "$tproxy_state")" \
@@ -264,11 +275,12 @@ cmd_config_generate() {
 	final="${EP_FINAL:-direct}"
 
 	if [ "$JSON" = "1" ]; then
-		printf '{"ok":true,"path":"%s","outbounds":%s,"nodes":%s,"final":"%s","rule_sets":%s,"checked":%s,"generated":"%s"}\n' \
+		printf '{"ok":true,"path":"%s","outbounds":%s,"nodes":%s,"final":"%s","route_mode":"%s","rule_sets":%s,"checked":%s,"generated":"%s"}\n' \
 			"$(ep_json_escape "$path")" \
 			"$((nodes + 2))" \
 			"$nodes" \
 			"$(ep_json_escape "$final")" \
+			"$(ep_json_escape "${EP_ROUTE_MODE:-direct}")" \
 			"${EP_SPLIT:-0}" \
 			"$checked" \
 			"$(ep_utc_now)"
@@ -276,11 +288,18 @@ cmd_config_generate() {
 		printf 'Config generated: %s\n' "$path"
 		printf 'Enabled nodes: %s\n' "$nodes"
 		printf 'Default route: %s\n' "$final"
-		if [ "${EP_SPLIT:-0}" = "1" ]; then
-			echo "Split routing: China direct, others proxied"
-		else
-			echo "Split routing: inactive (all traffic proxied)"
-		fi
+		case "${EP_ROUTE_MODE:-direct}" in
+			split)
+				echo "Routing mode: split (China direct, others proxied)" ;;
+			proxy)
+				if [ "$(ep_get routing china_policy direct)" = "direct" ]; then
+					echo "Routing mode: all proxied (rule sets missing, fail_closed=0)"
+				else
+					echo "Routing mode: all proxied (china_policy=proxy)"
+				fi ;;
+			*)
+				echo "Routing mode: direct only (nothing is proxied; LAN stays direct)" ;;
+			esac
 		if [ "$checked" = "true" ]; then
 			echo "Engine validation: passed"
 		else
