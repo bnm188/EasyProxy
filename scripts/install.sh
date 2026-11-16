@@ -2,11 +2,12 @@
 # One-line installer for EasyProxy.
 #
 #   wget -qO- https://raw.githubusercontent.com/bnm188/EasyProxy/main/scripts/install.sh | sh
-#   sh install.sh [--apk|--ipk|--rootfs]
+#   sh install.sh [--apk|--ipk|--rootfs|--no-engine]
 #
 # Picks the right artifact from the latest GitHub release, installs it with the
-# package manager this firmware actually has, enables the service and refreshes
-# the LuCI menu. Safe to re-run: it always installs the newest release.
+# package manager this firmware actually has, installs the proxy kernel, enables
+# the service and refreshes the LuCI menu. Safe to re-run: it always installs
+# the newest release.
 
 set -eu
 
@@ -23,19 +24,31 @@ LUCI_INDEX="${EP_LUCI_CACHE:-/tmp/luci-indexcache}"
 ROOT="${EP_ROOT:-/}"
 
 MODE="${EP_MODE:-}"
+NO_ENGINE=0
+ENGINE_FAILED=0
+ENGINE_VER="${EP_ENGINE_VER:-1.10.7}"
+ENGINE_BASE="${EP_ENGINE_BASE:-https://github.com/SagerNet/sing-box/releases/download/v${ENGINE_VER}}"
 
 usage() {
 	cat <<'EOF'
 EasyProxy installer
 
-  install.sh              detect opkg/apk and install the matching release asset
+  install.sh              detect opkg/apk, install the matching release asset
+                          and install the sing-box kernel for this host
   install.sh --apk        force the .apk asset (apk-based firmware)
   install.sh --ipk        force the .ipk asset (opkg-based firmware)
   install.sh --rootfs     skip the package manager, extract the rootfs archive at /
+  install.sh --no-engine  install EasyProxy only, skip the sing-box kernel
   install.sh --help       this text
 
+The kernel is not inside the package: one ipk serves every architecture, so an
+amd64 binary in `_all.ipk` would be installed on ARM routers too. It is fetched
+from the official sing-box release for this host's architecture, checked against
+a pinned sha256 and only then moved into <root>/usr/bin/sing-box.
+
 Environment overrides (mostly for testing): EP_REPO, EP_BRANCH, EP_API_URL,
-EP_RAW_BASE, EP_TMP, EP_INIT, EP_BIN, EP_RPCD, EP_LUCI_CACHE, EP_ROOT.
+EP_RAW_BASE, EP_TMP, EP_INIT, EP_BIN, EP_RPCD, EP_LUCI_CACHE, EP_ROOT,
+EP_ENGINE_VER, EP_ENGINE_BASE, EP_ENGINE_SHA, EP_ENGINE_BIN.
 EOF
 }
 
@@ -47,6 +60,7 @@ while [ $# -gt 0 ]; do
 		--apk) MODE=apk ;;
 		--ipk) MODE=ipk ;;
 		--rootfs) MODE=rootfs ;;
+		--no-engine) NO_ENGINE=1 ;;
 		-h|--help) usage; exit 0 ;;
 		*) usage >&2; exit 2 ;;
 	esac
@@ -229,6 +243,119 @@ install_pkg() {
 	esac
 }
 
+# --- proxy kernel ---------------------------------------------------------
+# One ipk serves every architecture, so the kernel cannot live inside it: an
+# amd64 binary in `_all.ipk` would be installed on ARM routers too. It is
+# fetched per host, matched to this host's own architecture, pinned by sha256,
+# and only the binary is kept - no rootfs is unpacked over the firmware.
+engine_arch() {
+	local a
+	a="$(host_ipk_arch)"
+	case "$a" in
+		x86_64|amd64) printf '%s' amd64; return 0 ;;
+		aarch64*) printf '%s' arm64; return 0 ;;
+		armv7*|armv6*) printf '%s' armv7; return 0 ;;
+	esac
+	case "$(uname -m 2>/dev/null)" in
+		x86_64|amd64) printf '%s' amd64 ;;
+		aarch64|arm64) printf '%s' arm64 ;;
+		armv7l|armv7) printf '%s' armv7 ;;
+		*) printf '%s' '' ;;
+	esac
+}
+
+engine_sha() {
+	case "$1" in
+		amd64) printf '%s' '1951a0785c8b4e1e21e0640227a49528ca772aec3d680061652e3d6b687e00fe' ;;
+		arm64) printf '%s' '15b43a0a50b4e6962aca819d4f3055aaac75ca7481350d4aaebe93ed06b7af49' ;;
+		armv7) printf '%s' '691882d609c877f97bc8d6f8645b97d12de81b6f7b89651df66489ef11b4c5d0' ;;
+		*) printf '%s' '' ;;
+	esac
+}
+
+engine_bin() { printf '%s' "${EP_ENGINE_BIN:-$ROOT/usr/bin/sing-box}"; }
+
+engine_configure() {
+	local bin
+	bin="$(engine_bin)"
+	command -v uci >/dev/null 2>&1 || return 0
+	uci -q set easyproxy.main.engine='sing-box' 2>/dev/null || true
+	uci -q set easyproxy.sing_box.binary="$bin" 2>/dev/null || true
+	uci -q commit easyproxy 2>/dev/null || true
+	info "engine: uci points at $bin"
+}
+
+ensure_engine() {
+	local bin arch tarurl want got src
+	bin="$(engine_bin)"
+	if [ "$NO_ENGINE" = 1 ]; then
+		info "engine: skipped (--no-engine)"
+		return 0
+	fi
+	if [ -x "$bin" ]; then
+		info "engine: already present ($bin)"
+		engine_configure
+		return 0
+	fi
+	if command -v uci >/dev/null 2>&1; then
+		src="$(uci -q get easyproxy.sing_box.binary 2>/dev/null || true)"
+		if [ -n "$src" ] && [ -x "$src" ]; then
+			info "engine: already present ($src)"
+			return 0
+		fi
+	fi
+	arch="$(engine_arch)"
+	if [ -z "$arch" ]; then
+		info "engine: install failed: $(uname -m 2>/dev/null) has no official sing-box build"
+		ENGINE_FAILED=1
+		return 1
+	fi
+	tarurl="${ENGINE_BASE}/sing-box-${ENGINE_VER}-linux-${arch}.tar.gz"
+	info "engine: downloading $(basename "$tarurl")"
+	if ! fetch_file "$tarurl" "$work/engine.tar.gz"; then
+		info "engine: install failed: cannot download $(basename "$tarurl")"
+		ENGINE_FAILED=1
+		return 1
+	fi
+	want="${EP_ENGINE_SHA:-$(engine_sha "$arch")}"
+	if [ -n "$want" ] && command -v sha256sum >/dev/null 2>&1; then
+		got="$(sha256sum "$work/engine.tar.gz" | awk '{ print $1 }')"
+		if [ "$want" != "$got" ]; then
+			rm -f "$work/engine.tar.gz"
+			info "engine: install failed: checksum mismatch for $(basename "$tarurl"): expected $want, got $got (nothing installed)"
+			ENGINE_FAILED=1
+			return 1
+		fi
+		info "engine sha256 ok: $(basename "$tarurl")"
+	else
+		info "engine: no pinned sha256 for linux-$arch, relying on archive and ELF checks"
+	fi
+	mkdir -p "$work/engine"
+	if ! tar -xzf "$work/engine.tar.gz" -C "$work/engine"; then
+		info "engine: install failed: cannot extract $(basename "$tarurl")"
+		ENGINE_FAILED=1
+		return 1
+	fi
+	src="$(find "$work/engine" -type f -name sing-box 2>/dev/null | head -1)"
+	if [ -z "$src" ]; then
+		info "engine: install failed: the archive carries no sing-box binary"
+		ENGINE_FAILED=1
+		return 1
+	fi
+	if ! dd if="$src" bs=1 count=4 2>/dev/null | grep -q 'ELF'; then
+		info "engine: install failed: the extracted file is not an ELF binary (nothing installed)"
+		ENGINE_FAILED=1
+		return 1
+	fi
+	mkdir -p "$(dirname "$bin")"
+	cp "$src" "$bin" || { info "engine: install failed: cannot write $bin"; ENGINE_FAILED=1; return 1; }
+	chmod 755 "$bin"
+	info "engine: installed $bin"
+	"$bin" version 2>/dev/null | head -1 || true
+	engine_configure
+	return 0
+}
+
 # --- run ------------------------------------------------------------------
 if [ -z "$MODE" ]; then
 	pm="$(detect_pm)" || die "found neither opkg nor apk; this firmware has no supported package manager.
@@ -322,19 +449,25 @@ else
 	info "installed, but $BIN is not executable; check the package layout"
 fi
 
+ensure_engine
+
+if [ "$ENGINE_FAILED" != 0 ]; then
+	die "EasyProxy is installed but the sing-box kernel is not ($(engine_bin)).
+The package alone cannot start traffic: re-run this installer, or place a
+static binary yourself and set easyproxy.sing_box.binary to its path."
+fi
+
 cat <<'EOF'
 
 Next steps:
-  1. install a proxy engine (sing-box) and point EasyProxy at it:
-       uci set easyproxy.main.engine='sing-box'
-  2. add at least one node:
+  1. add at least one node:
        uci add easyproxy node && uci set easyproxy.@node[-1].name='hk-01' ...
-  3. generate the config (needs network on first run):
+  2. generate the config (needs network on first run):
        easyproxy config generate
-  4. switch it on:
+  3. switch it on:
        uci set easyproxy.main.enabled='1' && uci commit easyproxy
        /etc/init.d/easyproxy start
-  5. open LuCI - Services - EasyProxy
+  4. open LuCI - Services - EasyProxy
 
 Uninstall: wget -qO- https://raw.githubusercontent.com/bnm188/EasyProxy/main/scripts/uninstall.sh | sh
 EOF
