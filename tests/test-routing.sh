@@ -151,14 +151,21 @@ grep -q "dns-local" "$SB/d3" && ok "dns 规则把大陆域名交给 local" || no
 json_py "import json,sys;d=json.load(open('$CFG'));print(d['dns']['servers'][1]['detour'])" > "$SB/d4"
 [ "$(cat "$SB/d4")" = "proxy" ] && ok "remote dns 走 proxy 出站" || no "remote dns 走 proxy 出站" "$(cat "$SB/d4")"
 
-# --- 3. china_policy=proxy removes the CN rule ------------------------------
+# --- 3. china_policy=proxy is locked out, CN direct cannot be bypassed -----
 write_ucis proxy
 gen; rc=$?
 [ "$rc" -eq 0 ] && ok "生成成功（china=proxy）" || no "生成成功（china=proxy）" "rc=$rc $(cat "$SB/g.err")"
-json_py "import json,sys;d=json.load(open('$CFG'));print('geosite-cn' in json.dumps(d))" > "$SB/p1"
-[ "$(cat "$SB/p1")" = "False" ] && ok "china=proxy 时不生成大陆直连规则" || no "china=proxy 时不生成大陆直连规则"
-json_py "import json,sys;d=json.load(open('$CFG'));print(len(d['route']['rules']))" > "$SB/p2"
-[ "$(cat "$SB/p2")" = "1" ] && ok "china=proxy 时只剩内网直连规则" || no "china=proxy 时只剩内网直连规则" "实际 $(cat "$SB/p2")"
+json_py "import json,sys;d=json.load(open('$CFG'));print(sum(1 for r in d['route']['rules'] if 'rule_set' in r), d['route']['final'])" > "$SB/p1"
+[ "$(cat "$SB/p1")" = "1 proxy" ] && ok "china_policy=proxy 时仍下发大陆直连规则（国内不漏）" || no "china_policy=proxy 仍保留大陆直连" "$(cat "$SB/p1")"
+json_py "import json,sys;d=json.load(open('$CFG'));print('geosite-cn' in json.dumps(d))" > "$SB/p3"
+[ "$(cat "$SB/p3")" = "True" ] && ok "china_policy=proxy 时仍然引用 geosite-cn" || no "china_policy=proxy 时仍然引用 geosite-cn"
+grep -qi 'china_policy=proxy' "$SB/g.err" && ok "忽略 china_policy=proxy 时给出警告" || no "忽略 china_policy=proxy 时给出警告" "$(cat "$SB/g.err")"
+out="$("$EP" validate --json)"; rc=$?
+[ "$rc" -eq 1 ] && ok "validate 拒绝 china_policy=proxy" || no "validate 拒绝 china_policy=proxy" "rc=$rc"
+printf '%s' "$out" | grep -q 'china_policy' && ok "validate 报出 china_policy 错误字段" || no "validate 报出 china_policy 错误字段" "$out"
+out="$("$EP" status --json)"
+json_py "import json,sys;d=json.loads(sys.argv[1]);print(d.get('china_policy'),d.get('route_mode'))" "$out" > "$SB/p2"
+[ "$(cat "$SB/p2")" = "direct split" ] && ok "status 把 china_policy 报为 direct（已锁死）" || no "status 报 china_policy=direct" "$(cat "$SB/p2")"
 
 # --- 4. no nodes: everything must fall back to direct -----------------------
 write_ucis direct
@@ -168,32 +175,32 @@ gen; rc=$?
 json_py "import json,sys;d=json.load(open('$CFG'));print(d['route']['final'],d['dns']['final'],len(d['dns']['servers']))" > "$SB/e1"
 [ "$(cat "$SB/e1")" = "direct dns-local 1" ] && ok "无节点时 final 与 dns 全部退回 direct/local" || no "无节点时 final 与 dns 全部退回 direct/local" "$(cat "$SB/e1")"
 
-# --- 4b. rule sets unavailable + fail_closed=1: proxy nothing ---------------
+# --- 4b. rule sets unavailable: proxy nothing, stay direct ------------------
 write_ucis direct "http://127.0.0.1:1/geosite-cn.srs" "http://127.0.0.1:1/geoip-cn.srs"
 rm -f "$SB/rules/"*.srs
 gen; rc=$?
 [ "$rc" -eq 0 ] && ok "规则集下载失败仍能生成配置" || no "规则集下载失败仍能生成配置" "rc=$rc $(cat "$SB/g.err")"
 json_py "import json,sys;d=json.load(open('$CFG'));print(len(d['route']['rules']),d['route']['final'],len(d['dns']['servers']),d['dns']['final'])" > "$SB/w1"
 [ "$(cat "$SB/w1")" = "1 direct 1 dns-local" ] && ok "fail_closed=1：缺规则集时禁止全局代理，全部直连" || no "fail_closed=1 缺规则集时全部直连" "$(cat "$SB/w1")"
-grep -qi 'fail_closed=1' "$SB/g.err" && ok "降级为直连时警告点名 fail_closed" || no "警告点名 fail_closed" "$(cat "$SB/g.err")"
+grep -qi 'pinned to direct' "$SB/g.err" && grep -qi 'nothing is proxied' "$SB/g.err" \
+	&& ok "缺规则集时警告说明已钉死直连、境外暂时不通" || no "警告说明钉死直连" "$(cat "$SB/g.err")"
 out="$("$EP" status --json)"
 json_py "import json,sys;d=json.loads(sys.argv[1]);print(d.get('route_mode'),d.get('rule_set_state'))" "$out" > "$SB/w2"
 [ "$(cat "$SB/w2")" = "direct missing" ] && ok "status 报出 route_mode=direct" || no "status 报出 route_mode=direct" "$(cat "$SB/w2")"
 
-# --- 4c. same case with fail_closed=0: full proxy, but LAN stays local ------
+# --- 4c. fail_closed=0 is locked out too: still DIRECT, never full proxy ---
 sed -i 's/easyproxy.routing.fail_closed=1/easyproxy.routing.fail_closed=0/' "$SB/etc/uci.db"
 gen; rc=$?
 [ "$rc" -eq 0 ] && ok "fail_closed=0 时仍能生成配置" || no "fail_closed=0 时仍能生成配置" "rc=$rc $(cat "$SB/g.err")"
 json_py "import json,sys;d=json.load(open('$CFG'));print(len(d['route']['rules']),d['route']['final'],len(d['dns']['servers']),d['dns']['final'])" > "$SB/w3"
-[ "$(cat "$SB/w3")" = "1 proxy 2 dns-remote" ] && ok "fail_closed=0：缺规则集时退回全代理" || no "fail_closed=0 退回全代理" "$(cat "$SB/w3")"
-json_py "import json,sys;d=json.load(open('$CFG'));print(sorted(k for k in d['dns']['rules'][0]), d['dns']['rules'][1]['domain_suffix'])" > "$SB/w4"
-grep -q "ip_is_private" "$SB/w4" && grep -q ".lan" "$SB/w4" \
-	&& ok "全代理时内网地址与内网域名仍走本地 DNS" || no "全代理时内网 DNS 直连" "$(cat "$SB/w4")"
-json_py "import json,sys;d=json.load(open('$CFG'));print(d['route']['rules'][0].get('ip_is_private'))" > "$SB/w5"
-[ "$(cat "$SB/w5")" = "True" ] && ok "全代理时内网地址仍走 direct" || no "全代理时内网地址直连" "$(cat "$SB/w5")"
+[ "$(cat "$SB/w3")" = "1 direct 1 dns-local" ] && ok "fail_closed=0 被忽略：缺规则集时仍然全部直连（不降级全代理）" || no "fail_closed=0 仍然全部直连" "$(cat "$SB/w3")"
+grep -qi 'fail_closed' "$SB/g.err" && ok "忽略 fail_closed=0 时给出警告" || no "忽略 fail_closed=0 时给出警告" "$(cat "$SB/g.err")"
+out="$("$EP" validate --json)"; rc=$?
+[ "$rc" -eq 1 ] && ok "validate 拒绝 fail_closed=0" || no "validate 拒绝 fail_closed=0" "rc=$rc"
 out="$("$EP" status --json)"
-json_py "import json,sys;d=json.loads(sys.argv[1]);print(d.get('route_mode'))" "$out" > "$SB/w6"
-[ "$(cat "$SB/w6")" = "proxy" ] && ok "fail_closed=0 时 status 报 route_mode=proxy" || no "route_mode=proxy" "$(cat "$SB/w6")"
+json_py "import json,sys;d=json.loads(sys.argv[1]);print(d.get('fail_closed'),d.get('route_mode'))" "$out" > "$SB/w6"
+[ "$(cat "$SB/w6")" = "1 direct" ] && ok "status 把 fail_closed 报为 1（已锁死）" || no "status 报 fail_closed=1" "$(cat "$SB/w6")"
+sed -i 's/easyproxy.routing.fail_closed=0/easyproxy.routing.fail_closed=1/' "$SB/etc/uci.db"
 
 # --- 5. status exposes the routing shape -----------------------------------
 write_ucis direct
