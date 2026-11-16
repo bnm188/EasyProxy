@@ -55,56 +55,17 @@ jobs:
           # config suites only, in the test step below.
 
       # Every behaviour this release ships is guarded by the repo suites, so a
-      # build that would publish a broken package fails here instead. A suite
-      # that prints SKIP did not run the check it reports, so SKIP fails the
-      # build too: "skipped" is not "passed".
+      # build that would publish a broken package fails here instead. The
+      # counting now happens in tests/run-all.sh, which only adds up the
+      # `结果：N 通过，M 失败` line each suite prints itself: a suite that dies
+      # before its result line or skips a check contributes nothing and fails
+      # the run ("skipped" is not "passed", and "not run" is not "passed").
       - name: Run package test suites with the real kernel
         run: |
           set -uo pipefail
-          mkdir -p test-logs
-          SB=/opt/easyproxy-ci/sing-box
-          failed=""
-          skipped=""
-          # Only the suites that validate a generated config get the real kernel:
-          # the installer suite asserts that the kernel is downloaded, so a host
-          # EP_SING_BOX_BIN would make those assertions pass without a download.
-          # Everything else runs with the variable removed, not merely unset for
-          # one command, so a stray export can never reach the installer suite.
-          for t in tests/test-*.sh; do
-            log="test-logs/${t##*/}.log"
-            echo "=== $t"
-            rc=0
-            case "${t##*/}" in
-              test-routing.sh|test-runtime.sh|test-transparent.sh|test-engine.sh)
-                EP_SING_BOX_BIN="$SB" sh "$t" > "$log" 2>&1 || rc=$? ;;
-              *)
-                env -u EP_SING_BOX_BIN sh "$t" > "$log" 2>&1 || rc=$? ;;
-            esac
-            if [ "$rc" -eq 0 ]; then
-              tail -n 1 "$log"
-            else
-              name="${t##*/}"
-              failed="$failed $name"
-              bad="$(grep -E 'FAIL|结果' "$log" | head -n 12 | tr '\n' ';' | cut -c1-900)"
-              echo "::error title=$name failed::$bad"
-              echo "::group::Full log of $t"
-              cat "$log"
-              echo "::endgroup::"
-            fi
-            if grep -q '  SKIP  ' "$log"; then
-              skipped="$skipped ${t##*/}"
-              echo "::error title=${t##*/} skipped::a check was skipped instead of executed; the real sing-box did not reach it"
-            fi
-          done
-          if [ -n "$failed" ]; then
-            echo "::error::failing suites:$failed"
-            exit 1
-          fi
-          if [ -n "$skipped" ]; then
-            echo "::error::suites that skipped checks:$skipped"
-            exit 1
-          fi
-          echo "all suites passed with the real sing-box, nothing skipped"
+          EP_SING_BOX_BIN=/opt/easyproxy-ci/sing-box \
+          EP_TEST_LOG_DIR=test-logs \
+          sh tests/run-all.sh
 
       - name: Upload test logs
         if: always()
@@ -223,68 +184,114 @@ jobs:
           retention-days: 30
 
       # A release is published only from a `v*` tag, never from a push to main,
-      # a pull request or a manual run. A published version is immutable: if the
-      # tag already exists this build fails instead of overwriting the assets
-      # and rewriting the notes, because "same version, different bytes" breaks
-      # every installer that checks SHA256SUMS at a random later moment. The
-      # build stays downloadable from the job artifacts.
+      # a pull request or a manual run. The policy this release follows:
+      #   * a formal version gets a new version number and a new tag: the tag
+      #     must equal PKG_VERSION and must be higher than the newest release,
+      #   * a GitHub Release is really created (not just a job artifact),
+      #   * it carries the ipk packages and SHA256SUMS, and publishing stops
+      #     when either is missing,
+      #   * the notes are generated from the commits in Chinese with the three
+      #     required sections, and an empty note stops the release,
+      #   * existing assets are never overwritten: a second build of the same
+      #     version fails instead.
       - name: Publish GitHub release
         if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          REPO="$GITHUB_REPOSITORY"
           VER="$(sed -n 's/^PKG_VERSION:=//p' package/easyproxy/Makefile | head -1)"
+          [ -n "$VER" ] || { echo "::error::cannot read PKG_VERSION"; exit 1; }
           TAG="v${VER}"
           if [ "$GITHUB_REF_NAME" != "$TAG" ]; then
             echo "::error title=tag mismatch::tag $GITHUB_REF_NAME does not match PKG_VERSION $VER; bump PKG_VERSION and tag again"
             exit 1
           fi
-          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "::error title=version already released::release $TAG is already released; a published version is immutable - bump PKG_VERSION and tag a new version (this build is kept as a job artifact only)"
+          if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+            echo "::error title=version already released::release $TAG is already released; a published version is immutable - bump PKG_VERSION and tag a new version (this build stays a job artifact only)"
             exit 1
           fi
-          if ! compgen -G 'dist/SHA256SUMS' > /dev/null; then
-            echo "::error::SHA256SUMS is missing, refusing to publish unverifiable assets"
+
+          # A formal version number must be a new, higher one. Comparing with the
+          # newest published release catches the "reuse a version because it is
+          # convenient" case that the existence check above cannot.
+          PREV="$(gh release list --repo "$REPO" --limit 1 --json tagName --jq '.[0].tagName // empty' 2>/dev/null || true)"
+          PREV="${PREV#v}"
+          if [ -n "$PREV" ]; then
+            HIGHEST="$(printf '%s\n%s\n' "$PREV" "$VER" | sort -V | tail -n 1)"
+            if [ "$VER" = "$PREV" ] || [ "$HIGHEST" != "$VER" ]; then
+              echo "::error title=version not newer::PKG_VERSION $VER must be greater than the newest release $PREV; a formal version always gets a new version number and a new tag"
+              exit 1
+            fi
+            echo "version $PREV -> $VER"
+          fi
+
+          # Assets: an installable ipk package and the checksum file are
+          # mandatory. A release without them cannot be installed and cannot be
+          # verified, so publishing stops here.
+          if ! compgen -G "dist/*.ipk" > /dev/null; then
+            echo "::error title=no ipk::no ipk package in dist/, refusing to publish a release without an installable package"
             exit 1
           fi
+          if [ ! -f dist/SHA256SUMS ]; then
+            echo "::error title=no checksums::SHA256SUMS is missing, refusing to publish unverifiable assets"
+            exit 1
+          fi
+          for ipk in dist/*.ipk; do
+            base="$(basename "$ipk")"
+            grep -q "$base" dist/SHA256SUMS \
+              || { echo "::error title=checksum gap::SHA256SUMS does not cover $base"; exit 1; }
+          done
+
+          # Notes: generated from the commits since the previous release, in
+          # Chinese, with 修复了什么问题 / 修改了什么功能 / 优化了什么内容. The
+          # generator refuses an empty range; the checks below refuse a blank or
+          # truncated note.
           NOTES_FILE="$(mktemp)"
-          {
-            echo "EasyProxy ${VER} - ImmortalWrt 25.12.2 build from ${GITHUB_SHA} (tag ${GITHUB_REF_NAME})."
-            echo
-            echo "Assets (three independent components - the panel and each kernel):"
-            echo
-            echo "- \`easyproxy_${VER}-1_all.ipk\` / \`easyproxy_${VER}-1_x86_64.ipk\`: the panel and CLI, install with \`opkg install\` (use the x86_64 one if opkg refuses \`Architecture: all\`)."
-            echo "- \`easyproxy-${VER}-r1.apk\`: same panel for apk firmware, \`apk add --allow-untrusted\`."
-            echo "- \`easyproxy-${VER}-rootfs.tar.gz\`: extract at / when no package manager matches."
-            echo "- \`sing-box_<version>_<arch>.ipk\`: sing-box kernel, one package per architecture."
-            echo "- \`dae_<version>_<arch>.ipk\`: dae kernel (binary + /usr/share/dae routing assets), one package per architecture."
-            echo "- \`SHA256SUMS\`: sha256 of every asset above; the installer refuses anything that does not match."
-            echo "- \`KERNEL-VERSIONS\`: the kernel versions this release pins."
-            echo
-            echo "Kernel architectures built here: x86_64, aarch64_cortex-a53, arm_cortex-a7_neon-vfpv4."
-            echo
-            echo "This release is immutable: assets are uploaded once by the tag build. A repeated build of the same version fails instead of overwriting them."
-            echo
-            echo "One-line install, upgrade, status and uninstall (opkg and apk firmware):"
-            echo "\`\`\`"
-            echo "wget -qO- https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/scripts/install.sh | sh"
-            echo "wget -qO- https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/scripts/install.sh | sh -s upgrade"
-            echo "wget -qO- https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/scripts/install.sh | sh -s status"
-            echo "wget -qO- https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/scripts/uninstall.sh | sh"
-            echo "\`\`\`"
-            echo
-            echo "The install runs the panel, sing-box and dae in one go, checks every download against \`SHA256SUMS\` and refuses to install anything it cannot verify, checks free space and the firmware family before writing, backs the UCI config up before an upgrade, and rolls a kernel or the panel back when the new files do not work. The kernels are separate packages, so each one upgrades and uninstalls on its own."
-            echo
-            echo "Safety locks compiled into this release: mainland China traffic is always direct (\`china_policy=proxy\` is rejected), \`fail_closed=1\` (a missing CN rule set yields an all-direct config instead of a full tunnel), and the whole intranet (10.10.10.10, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, router and LAN addresses) stays direct."
-            echo
-            echo "The panel carries the CLI, the ten-page LuCI panel, UCI defaults and the nftables capture logic. The kernels are installed by \`install.sh\` from the \`sing-box_*\` / \`dae_*\` assets above (or the official archive pinned by sha256) and are recorded in \`/etc/easyproxy/owned/\`, which is what lets the uninstaller remove only what it installed. The dae adapter is still 开发中: the panel does not let you select dae as the engine."
-          } > "$NOTES_FILE"
+          if [ -n "$PREV" ]; then
+            sh scripts/release-notes.sh "$VER" "v$PREV" > "$NOTES_FILE"
+          else
+            sh scripts/release-notes.sh "$VER" > "$NOTES_FILE"
+          fi
+          [ -s "$NOTES_FILE" ] || { echo "::error title=empty notes::release notes are empty"; exit 1; }
+          for h in "修复了什么问题" "修改了什么功能" "优化了什么内容"; do
+            grep -q "$h" "$NOTES_FILE" \
+              || { echo "::error title=notes section missing::the note has no \"$h\" section"; exit 1; }
+            grep -A2 "$h" "$NOTES_FILE" | grep -q '^\- ' \
+              || { echo "::error title=notes section empty::the \"$h\" section has no entry"; exit 1; }
+          done
 
           gh release create "$TAG" \
-            --repo "$GITHUB_REPOSITORY" \
+            --repo "$REPO" \
             --target "$GITHUB_SHA" \
             --title "EasyProxy ${VER}" \
             --notes-file "$NOTES_FILE" \
             dist/easyproxy* dist/sing-box_* dist/dae_* dist/SHA256SUMS dist/KERNEL-VERSIONS
           echo "created release $TAG from $GITHUB_SHA"
+          cat "$NOTES_FILE"
+
+      # At most 20 formal releases. scripts/release-gc.sh decides, this step
+      # only executes its plan, so the decision is visible in the log before
+      # anything is deleted. The script never deletes the newest release, a
+      # release whose assets have been downloaded (someone is installing it),
+      # or the tag that was just published.
+      - name: Prune old releases (keep the newest 20)
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" > releases.json
+          PLAN="$(sh scripts/release-gc.sh --keep 20 --protect "$GITHUB_REF_NAME" < releases.json)"
+          printf '%s\n' "$PLAN"
+          printf '%s\n' "$PLAN" | awk -F'\t' '$1 == "DELETE" { print $2 }' > to-delete.txt
+          while IFS= read -r tag; do
+            [ -n "$tag" ] || continue
+            echo "deleting release $tag (outside the newest 20, not in use)"
+            gh release delete "$tag" --repo "$GITHUB_REPOSITORY" --yes \
+              || { echo "::error title=release delete failed::cannot delete $tag"; exit 1; }
+            git push origin --delete "$tag" \
+              || echo "::warning title=tag delete::tag $tag was already gone"
+          done < to-delete.txt
+          echo "pruned $(grep -c . to-delete.txt 2>/dev/null || echo 0) release(s)"
