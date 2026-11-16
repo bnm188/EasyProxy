@@ -30,6 +30,19 @@ jobs:
             libssl-dev python3 python3-setuptools \
             rsync unzip zlib1g-dev file wget curl zstd
 
+      # Every behaviour this release ships is guarded by the repo suites, so a
+      # build that would publish a broken package fails here instead.
+      - name: Run package test suites
+        run: |
+          set -euo pipefail
+          total=0
+          for t in tests/test-*.sh; do
+            echo "=== $t"
+            sh "$t"
+            total=$((total + 1))
+          done
+          echo "all $total suites passed"
+
       - name: Download official ImmortalWrt SDK
         run: |
           set -euo pipefail
@@ -62,12 +75,14 @@ jobs:
           ls -l dist
 
       # The SDK build above produces whatever package format the target uses
-      # (apk on ImmortalWrt 25.x). This adds the opkg-readable twin of the same
-      # files so opkg-based firmware can install the identical release.
+      # (apk on ImmortalWrt 25.x). These add the opkg-readable twins of the same
+      # files: `all` for firmware that accepts it, `x86_64` for firmware whose
+      # opkg refuses an architecture-less package.
       - name: Package ipk for opkg-based firmware
         run: |
           set -euo pipefail
-          sh scripts/make-ipk.sh package/easyproxy dist
+          sh scripts/make-ipk.sh package/easyproxy dist all
+          sh scripts/make-ipk.sh package/easyproxy dist x86_64
           ls -l dist
 
       - name: Collect packages
@@ -113,11 +128,20 @@ jobs:
             echo "EasyProxy ${VER} - ImmortalWrt 25.12.2 x86_64 build from ${GITHUB_SHA}."
             echo
             echo "Assets:"
-            echo "- \`easyproxy_${VER}*.ipk\` / \`*.apk\`: install with \`opkg install\` or \`apk add --allow-untrusted\`."
+            echo "- \`easyproxy_${VER}-1_all.ipk\` / \`easyproxy_${VER}-1_x86_64.ipk\`: install with \`opkg install\` (use the x86_64 one if opkg refuses \`Architecture: all\`)."
+            echo "- \`easyproxy-${VER}-1.apk\`: install with \`apk add --allow-untrusted\`."
             echo "- \`easyproxy-${VER}-rootfs.tar.gz\`: extract at / on any OpenWrt-derived firmware when no package manager matches."
             echo "- \`SHA256SUMS\`: verify the downloads."
             echo
-            echo "The package carries the CLI, the LuCI panel, UCI defaults and the nftables capture logic. No sing-box binary is bundled: set \`easyproxy.main.engine=sing-box\` and point \`easyproxy.sing_box.binary\` at it."
+            echo "One-line install and uninstall (opkg and apk firmware):"
+            echo "\`\`\`"
+            echo "wget -qO- https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/scripts/install.sh | sh"
+            echo "wget -qO- https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/scripts/uninstall.sh | sh"
+            echo "\`\`\`"
+            echo
+            echo "Safety locks compiled into this release: mainland China traffic is always direct (\`china_policy=proxy\` is rejected), \`fail_closed=1\` (a missing CN rule set yields an all-direct config instead of a full tunnel), and the whole intranet (10.10.10.10, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, router and LAN addresses) stays direct."
+            echo
+            echo "The package carries the CLI, the ten-page LuCI panel, UCI defaults and the nftables capture logic. No sing-box binary is bundled: set \`easyproxy.main.engine=sing-box\` and point \`easyproxy.sing_box.binary\` at it."
           } > "$NOTES_FILE"
 
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then

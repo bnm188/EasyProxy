@@ -1,25 +1,35 @@
 #!/bin/sh
-# Build an architecture-independent .ipk from package/easyproxy/files.
+# Build an .ipk from package/easyproxy/files.
 #
-#   sh scripts/make-ipk.sh [PACKAGE_DIR] [OUT_DIR]
+#   sh scripts/make-ipk.sh [PACKAGE_DIR] [OUT_DIR] [ARCH]
+#   ARCH=x86_64 sh scripts/make-ipk.sh package/easyproxy dist
 #
 # OpenWrt's opkg is an `ar` archive holding debian-binary + control.tar.gz +
 # data.tar.gz. The SDK build on CI already produces the native package for the
 # target it was built against (apk on ImmortalWrt 25.x); this script produces
 # the opkg-readable twin from the same files, so older opkg firmware can install
 # the same release. Every file comes straight from package/easyproxy/files --
-# nothing is compiled, which is why PKGARCH:=all is honest here.
+# nothing is compiled, which is why an `all` package is honest here.
+#
+# ARCH defaults to `all`. Some opkg builds refuse `Architecture: all` and demand
+# an exact target name; passing `x86_64` (3rd argument or env) stamps that into
+# the control member while the payload stays identical.
 
 set -eu
 
 SRC_DIR="${1:-package/easyproxy}"
 OUT_DIR="${2:-dist}"
+ARCH="${3:-${ARCH:-all}}"
+case "$ARCH" in
+	all|x86_64|aarch64|armv7|armv7hf|mipsel|mips|riscv64) : ;;
+	*) echo "unsupported ARCH: $ARCH" >&2; exit 1 ;;
+esac
 
 VER="$(sed -n 's/^PKG_VERSION:=//p' "$SRC_DIR/Makefile" | head -1)"
 REL="$(sed -n 's/^PKG_RELEASE:=//p' "$SRC_DIR/Makefile" | head -1)"
 [ -n "$VER" ] || { echo "cannot read PKG_VERSION from $SRC_DIR/Makefile" >&2; exit 1; }
 REL="${REL:-1}"
-IPK="${OUT_DIR}/easyproxy_${VER}-${REL}_all.ipk"
+IPK="${OUT_DIR}/easyproxy_${VER}-${REL}_${ARCH}.ipk"
 
 STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
@@ -29,6 +39,7 @@ mkdir -p "$STAGE/control"
 mkdir -p "$D/etc/config" "$D/etc/init.d" "$D/etc/hotplug.d/iface" "$D/usr/sbin" \
 	"$D/usr/lib/easyproxy/adapters" \
 	"$D/usr/share/easyproxy" \
+	"$D/www/luci-static/resources/easyproxy" \
 	"$D/www/luci-static/resources/view/easyproxy" \
 	"$D/usr/share/luci/menu.d" "$D/usr/share/rpcd/acl.d" \
 	"$D/etc/easyproxy/ruleset"
@@ -47,6 +58,10 @@ done
 for adapter in "$F"/usr/lib/easyproxy/adapters/*.sh; do
 	install -m 0644 "$adapter" "$D/usr/lib/easyproxy/adapters/$(basename "$adapter")"
 done
+# The panel now has a shared module plus ten thin views; copy both.
+for js in "$F"/www/luci-static/resources/easyproxy/*.js; do
+	install -m 0644 "$js" "$D/www/luci-static/resources/easyproxy/$(basename "$js")"
+done
 for view in "$F"/www/luci-static/resources/view/easyproxy/*; do
 	install -m 0644 "$view" "$D/www/luci-static/resources/view/easyproxy/$(basename "$view")"
 done
@@ -60,7 +75,7 @@ cat > "$STAGE/control/control" <<EOF
 Package: easyproxy
 Version: ${VER}-${REL}
 Depends: uci, luci-base
-Architecture: all
+Architecture: ${ARCH}
 Maintainer: EasyProxy Contributors
 Section: utils
 Priority: optional
@@ -102,4 +117,4 @@ with open(out, "wb") as f:
             f.write(b"\n")
 PY
 
-echo "built $IPK"
+echo "built $IPK (architecture ${ARCH})"
