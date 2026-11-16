@@ -29,18 +29,51 @@ jobs:
             libssl-dev python3 python3-setuptools \
             rsync unzip zlib1g-dev file wget curl zstd
 
+      # The suites must check the generated config with the kernel the release
+      # actually installs, not with a stub. The archive is verified against the
+      # same sha256 the installer pins (scripts/install.sh, kernel_sha amd64),
+      # because a test that validates against a different build proves nothing
+      # about what a router will run.
+      - name: Install the pinned sing-box used by the tests
+        run: |
+          set -euo pipefail
+          SB_VER=1.10.7
+          SB_URL="https://github.com/SagerNet/sing-box/releases/download/v${SB_VER}/sing-box-${SB_VER}-linux-amd64.tar.gz"
+          SB_SHA=1951a0785c8b4e1e21e0640227a49528ca772aec3d680061652e3d6b687e00fe
+
+          curl -fSL "$SB_URL" -o sb.tar.gz || { echo "::error title=sing-box download::cannot download $SB_URL"; exit 1; }
+          echo "$SB_SHA  sb.tar.gz" | sha256sum -c - || { echo "::error title=sing-box checksum::the pinned sing-box archive changed"; exit 1; }
+          tar -xzf sb.tar.gz
+          mkdir -p /opt/easyproxy-ci
+          cp "sing-box-${SB_VER}-linux-amd64/sing-box" /opt/easyproxy-ci/sing-box
+          chmod +x /opt/easyproxy-ci/sing-box
+          /opt/easyproxy-ci/sing-box version
+          echo "EP_SING_BOX_BIN=/opt/easyproxy-ci/sing-box" >> "$GITHUB_ENV"
+
       # Every behaviour this release ships is guarded by the repo suites, so a
-      # build that would publish a broken package fails here instead. The
-      # failing assertions are pasted into the ::error annotation, which is
-      # readable without signing in.
-      - name: Run package test suites
+      # build that would publish a broken package fails here instead. A suite
+      # that prints SKIP did not run the check it reports, so SKIP fails the
+      # build too: "skipped" is not "passed".
+      - name: Run package test suites with the real kernel
         run: |
           set -uo pipefail
+          mkdir -p test-logs
           failed=""
+          skipped=""
+          # Only the suites that validate a generated config get the real kernel:
+          # the installer suite asserts that the kernel is downloaded, so a host
+          # EP_SING_BOX_BIN would make those assertions pass without a download.
           for t in tests/test-*.sh; do
-            log="$(mktemp)"
+            log="test-logs/${t##*/}.log"
             echo "=== $t"
-            if sh "$t" > "$log" 2>&1; then
+            rc=0
+            case "${t##*/}" in
+              test-routing.sh|test-runtime.sh|test-transparent.sh|test-engine.sh)
+                EP_SING_BOX_BIN="$EP_SING_BOX_BIN" sh "$t" > "$log" 2>&1 || rc=$? ;;
+              *)
+                sh "$t" > "$log" 2>&1 || rc=$? ;;
+            esac
+            if [ "$rc" -eq 0 ]; then
               tail -n 1 "$log"
             else
               name="${t##*/}"
@@ -51,13 +84,29 @@ jobs:
               cat "$log"
               echo "::endgroup::"
             fi
-            rm -f "$log"
+            if grep -q '  SKIP  ' "$log"; then
+              skipped="$skipped ${t##*/}"
+              echo "::error title=${t##*/} skipped::a check was skipped instead of executed; the real sing-box did not reach it"
+            fi
           done
           if [ -n "$failed" ]; then
             echo "::error::failing suites:$failed"
             exit 1
           fi
-          echo "all suites passed"
+          if [ -n "$skipped" ]; then
+            echo "::error::suites that skipped checks:$skipped"
+            exit 1
+          fi
+          echo "all suites passed with the real sing-box, nothing skipped"
+
+      - name: Upload test logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: easyproxy-test-logs
+          path: test-logs/*
+          if-no-files-found: warn
+          retention-days: 30
 
       - name: Download official ImmortalWrt SDK
         run: |
@@ -134,8 +183,8 @@ jobs:
         run: |
           set -euo pipefail
           cd dist
-          SB_VER="$(sed -n 's/^SING_BOX_VER=.*:-\([0-9][0-9.]*\)}.*/\1/p' ../scripts/make-kernel-ipk.sh)"
-          DAE_VER="$(sed -n 's/^DAE_VER=.*:-\([0-9][0-9.]*\)}.*/\1/p' ../scripts/make-kernel-ipk.sh)"
+          SB_VER="$(sed -n 's/^SING_BOX_VER=.*:-\\([0-9][0-9.]*\\)}.*/\\1/p' ../scripts/make-kernel-ipk.sh)"
+          DAE_VER="$(sed -n 's/^DAE_VER=.*:-\\([0-9][0-9.]*\\)}.*/\\1/p' ../scripts/make-kernel-ipk.sh)"
           [ -n "$SB_VER" ] && [ -n "$DAE_VER" ] || { echo "::error::cannot read the kernel versions"; exit 1; }
           VER="$(sed -n 's/^PKG_VERSION:=//p' ../package/easyproxy/Makefile | head -1)"
           {
@@ -147,6 +196,7 @@ jobs:
             echo "architectures: x86_64, aarch64_cortex-a53, arm_cortex-a7_neon-vfpv4"
             echo "kernel adapter: dae 适配器开发中，运行时分流仍由 sing-box 承担"
             echo "built from commit: ${GITHUB_SHA}"
+            echo "built from ref: ${GITHUB_REF_NAME}"
           } > KERNEL-VERSIONS
           cat KERNEL-VERSIONS
 
@@ -165,25 +215,40 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      # A release is only created from a push (main or a v* tag) or a manual
-      # run, never from a pull request. The tag is derived from PKG_VERSION, so
-      # bumping the version is enough to publish the next build.
+      # A release is published only from a `v*` tag, never from a push to main,
+      # a pull request or a manual run. A published version is immutable: if the
+      # tag already exists this build fails instead of overwriting the assets
+      # and rewriting the notes, because "same version, different bytes" breaks
+      # every installer that checks SHA256SUMS at a random later moment. The
+      # build stays downloadable from the job artifacts.
       - name: Publish GitHub release
-        if: github.event_name != 'pull_request'
+        if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           VER="$(sed -n 's/^PKG_VERSION:=//p' package/easyproxy/Makefile | head -1)"
           TAG="v${VER}"
+          if [ "$GITHUB_REF_NAME" != "$TAG" ]; then
+            echo "::error title=tag mismatch::tag $GITHUB_REF_NAME does not match PKG_VERSION $VER; bump PKG_VERSION and tag again"
+            exit 1
+          fi
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error title=version already released::release $TAG is already released; a published version is immutable - bump PKG_VERSION and tag a new version (this build is kept as a job artifact only)"
+            exit 1
+          fi
+          if ! compgen -G 'dist/SHA256SUMS' > /dev/null; then
+            echo "::error::SHA256SUMS is missing, refusing to publish unverifiable assets"
+            exit 1
+          fi
           NOTES_FILE="$(mktemp)"
           {
-            echo "EasyProxy ${VER} - ImmortalWrt 25.12.2 build from ${GITHUB_SHA}."
+            echo "EasyProxy ${VER} - ImmortalWrt 25.12.2 build from ${GITHUB_SHA} (tag ${GITHUB_REF_NAME})."
             echo
             echo "Assets (three independent components - the panel and each kernel):"
             echo
             echo "- \`easyproxy_${VER}-1_all.ipk\` / \`easyproxy_${VER}-1_x86_64.ipk\`: the panel and CLI, install with \`opkg install\` (use the x86_64 one if opkg refuses \`Architecture: all\`)."
-            echo "- \`easyproxy-${VER}-1.apk\`: same panel for apk firmware, \`apk add --allow-untrusted\`."
+            echo "- \`easyproxy-${VER}-r1.apk\`: same panel for apk firmware, \`apk add --allow-untrusted\`."
             echo "- \`easyproxy-${VER}-rootfs.tar.gz\`: extract at / when no package manager matches."
             echo "- \`sing-box_<version>_<arch>.ipk\`: sing-box kernel, one package per architecture."
             echo "- \`dae_<version>_<arch>.ipk\`: dae kernel (binary + /usr/share/dae routing assets), one package per architecture."
@@ -191,6 +256,8 @@ jobs:
             echo "- \`KERNEL-VERSIONS\`: the kernel versions this release pins."
             echo
             echo "Kernel architectures built here: x86_64, aarch64_cortex-a53, arm_cortex-a7_neon-vfpv4."
+            echo
+            echo "This release is immutable: assets are uploaded once by the tag build. A repeated build of the same version fails instead of overwriting them."
             echo
             echo "One-line install, upgrade, status and uninstall (opkg and apk firmware):"
             echo "\`\`\`"
@@ -200,26 +267,17 @@ jobs:
             echo "wget -qO- https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/scripts/uninstall.sh | sh"
             echo "\`\`\`"
             echo
-            echo "The install runs the panel, sing-box and dae in one go, verifies every download against \`SHA256SUMS\`, refuses a package built for another architecture, and reports a failure as a failure instead of printing success. The kernels are separate packages, so each one upgrades and uninstalls on its own; \`upgrade\` shows the old and new versions and rolls a kernel back if the new binary does not run."
+            echo "The install runs the panel, sing-box and dae in one go, checks every download against \`SHA256SUMS\` and refuses to install anything it cannot verify, checks free space and the firmware family before writing, backs the UCI config up before an upgrade, and rolls a kernel or the panel back when the new files do not work. The kernels are separate packages, so each one upgrades and uninstalls on its own."
             echo
             echo "Safety locks compiled into this release: mainland China traffic is always direct (\`china_policy=proxy\` is rejected), \`fail_closed=1\` (a missing CN rule set yields an all-direct config instead of a full tunnel), and the whole intranet (10.10.10.10, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, router and LAN addresses) stays direct."
             echo
-            echo "The panel carries the CLI, the ten-page LuCI panel, UCI defaults and the nftables capture logic. The kernels are installed by \`install.sh\` from the \`sing-box_*\` / \`dae_*\` assets above (or the pinned official archive) and are recorded in \`/etc/easyproxy/owned/\`, which is what lets the uninstaller remove only what it installed. The dae adapter is still 开发中, so the installer leaves \`main.engine\` alone and never rewrites an existing dae or sing-box configuration."
+            echo "The panel carries the CLI, the ten-page LuCI panel, UCI defaults and the nftables capture logic. The kernels are installed by \`install.sh\` from the \`sing-box_*\` / \`dae_*\` assets above (or the official archive pinned by sha256) and are recorded in \`/etc/easyproxy/owned/\`, which is what lets the uninstaller remove only what it installed. The dae adapter is still 开发中: the panel does not let you select dae as the engine."
           } > "$NOTES_FILE"
 
-          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$TAG" dist/easyproxy* dist/sing-box_* dist/dae_* dist/SHA256SUMS dist/KERNEL-VERSIONS --clobber --repo "$GITHUB_REPOSITORY"
-            # The notes name the exact commit these assets were built from, so an
-            # existing release is rewritten too - otherwise the body would keep
-            # describing the first build forever.
-            gh release edit "$TAG" --notes-file "$NOTES_FILE" --repo "$GITHUB_REPOSITORY"
-            echo "updated existing release $TAG"
-          else
-            gh release create "$TAG" \
-              --repo "$GITHUB_REPOSITORY" \
-              --target "$GITHUB_SHA" \
-              --title "EasyProxy ${VER}" \
-              --notes-file "$NOTES_FILE" \
-              dist/easyproxy* dist/sing-box_* dist/dae_* dist/SHA256SUMS dist/KERNEL-VERSIONS
-            echo "created release $TAG"
-          fi
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "EasyProxy ${VER}" \
+            --notes-file "$NOTES_FILE" \
+            dist/easyproxy* dist/sing-box_* dist/dae_* dist/SHA256SUMS dist/KERNEL-VERSIONS
+          echo "created release $TAG from $GITHUB_SHA"
