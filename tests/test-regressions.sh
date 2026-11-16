@@ -91,9 +91,10 @@ pe=set()
 for s in ("read","write"):
     for p,m in (d.get(s,{}).get("file") or {}).items():
         if "exec" in m: pe.add(p)
-allowed={"/bin/sh","/usr/lib/easyproxy/traffic.sh","/usr/lib/easyproxy/subscribe.sh"}
+allowed={"/usr/sbin/easyproxy"}
 ex=pe-allowed
 if ex: bad.append("exec:"+",".join(sorted(ex)))
+if "/bin/sh" in pe: bad.append("/bin/sh")
 if any("*" in x for x in pe): bad.append("wildcard")
 if "/etc/config/easyproxy" in ((d.get("write",{}).get("file") or {})): bad.append("config-file-write")
 print("OK" if not bad else "BAD "+" ".join(bad))
@@ -296,15 +297,24 @@ if grep -n 'GITHUB_ENV' "$WF" | grep -q 'EP_SING_BOX_BIN'; then
 else
 	ok "工作流没有把内核路径泄漏成全局环境变量"
 fi
-if grep -q 'env -u EP_SING_BOX_BIN sh' "$WF"; then
-	ok "安装类套件在清空内核路径的环境里运行"
+# The per-suite kernel injection and the SKIP gate now live in the aggregate
+# runner (tests/run-all.sh), which is itself exercised every time CI runs it.
+# The workflow must call that runner instead of looping over the suites itself.
+RUNALL="$SRC/tests/run-all.sh"
+if grep -q 'env -u EP_SING_BOX_BIN sh "$t"' "$RUNALL" 2>/dev/null; then
+	ok "安装类套件在清空内核路径的环境里运行（run-all.sh）"
 else
-	no "安装类套件在清空内核路径的环境里运行" "没有 env -u EP_SING_BOX_BIN"
+	no "安装类套件在清空内核路径的环境里运行（run-all.sh）" "run-all.sh 里没有 env -u EP_SING_BOX_BIN"
 fi
-if grep -q "grep -q '  SKIP  '" "$WF"; then
-	ok "CI 把 SKIP 视为失败（跳过的测试不算通过）"
+if grep -q "grep -c '  SKIP  '" "$RUNALL" 2>/dev/null || grep -q 'SKIPPED' "$RUNALL" 2>/dev/null; then
+	ok "跳过即失败：run-all.sh 统计 SKIP 并据此失败"
 else
-	no "CI 把 SKIP 视为失败" "没有 SKIP 门禁"
+	no "跳过即失败：run-all.sh 统计 SKIP 并据此失败" "run-all.sh 没有 SKIP 门禁"
+fi
+if grep -q 'tests/run-all.sh' "$WF"; then
+	ok "工作流通过 run-all.sh 统计测试结果"
+else
+	no "工作流通过 run-all.sh 统计测试结果" "工作流仍在自己循环跑套件"
 fi
 
 rm -rf "$SBI"
