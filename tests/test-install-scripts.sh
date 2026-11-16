@@ -54,6 +54,14 @@ for n in easyproxy-0.5.0-rootfs.tar.gz easyproxy-0.9.9-rootfs.tar.gz; do
 done
 sed 's/^[0-9a-f]/0/' "$SB/fix/SHA256SUMS" > "$SB/fix/SHA256SUMS.bad"
 
+# engine fixture: same layout as the official archive (sing-box-<ver>-linux-<arch>/sing-box)
+mkdir -p "$SB/fix/engine/sing-box-1.10.7-linux-amd64"
+{ printf '\177ELF'; printf 'ENGINE-BYTES\n'; } > "$SB/fix/engine/sing-box-1.10.7-linux-amd64/sing-box"
+chmod +x "$SB/fix/engine/sing-box-1.10.7-linux-amd64/sing-box"
+tar -czf "$SB/fix/engine.tar.gz" -C "$SB/fix/engine" sing-box-1.10.7-linux-amd64
+h_engine="$(sha256sum "$SB/fix/engine.tar.gz" | awk '{ print $1 }')"
+printf '%s\n' "$h_engine" > "$SB/fix/engine.sha"
+
 # --- stubs ----------------------------------------------------------------
 cat > "$SB/bin/curl" <<'STUB'
 #!/bin/sh
@@ -68,6 +76,7 @@ done
 printf '%s\n' "$url" >> "$EP_TEST_LOG/curl.urls"
 case "$url" in
 	*releases/latest) [ -f "$EP_TEST_LOG/api.fail" ] && exit 22; f="${EP_TEST_API_FIX:-$EP_TEST_FIX/api.json}" ;;
+	*SagerNet/sing-box*) [ -f "$EP_TEST_LOG/engine.fail" ] && exit 22; f="$EP_TEST_FIX/engine.tar.gz" ;;
 	*Makefile) f="$EP_TEST_FIX/Makefile" ;;
 	*.apk) f="$EP_TEST_FIX/asset.apk" ;;
 	*_x86_64.ipk) [ -f "$EP_TEST_LOG/x86.fail" ] && exit 22; f="$EP_TEST_FIX/asset.ipk" ;;
@@ -109,6 +118,13 @@ printf 'easyproxy %s\n' "$*" >> "$EP_TEST_LOG/ep.log"
 printf 'ep %s\n' "$*" >> "$EP_TEST_LOG/timeline"
 exit 0
 STUB
+cat > "$SB/bin/uci" <<'STUB'
+#!/bin/sh
+printf 'uci ' >> "$EP_TEST_LOG/uci.log"
+printf '%s ' "$@" >> "$EP_TEST_LOG/uci.log"
+printf '\n' >> "$EP_TEST_LOG/uci.log"
+exit 0
+STUB
 cat > "$SB/root/etc/init.d-easyproxy" <<'STUB'
 #!/bin/sh
 printf 'init %s\n' "$*" >> "$EP_TEST_LOG/init.log"
@@ -132,6 +148,7 @@ export EP_ROOT="$SB/rootfs"
 export EP_CFG="$SB/opt/config.easyproxy"
 export EP_STATE_DIR="$SB/opt/easyproxy"
 export EP_LUCI_CACHE="$SB/opt/luci-indexcache"
+export EP_ENGINE_SHA="$h_engine"
 mkdir -p "$EP_TMP" "$EP_STATE_DIR" "$EP_ROOT/usr/sbin" "$EP_ROOT/etc/init.d"
 touch "$EP_CFG"
 touch "$EP_LUCI_CACHE"
@@ -271,6 +288,49 @@ reset
 sh "$INSTALL" > "$SB/out" 2>&1; rc=$?
 [ "$rc" -eq 0 ] && ok "校验和对得上时正常安装" || no "校验和对得上时正常安装" "rc=$rc $(cat "$SB/out")"
 grep -q 'sha256' "$SB/out" && ok "安装前打印了校验结果" || no "安装前打印了校验结果" "$(cat "$SB/out")"
+
+# --- install: the proxy engine is installed together with the package ---
+reset
+rm -rf "$EP_ROOT/usr/bin"
+sh "$INSTALL" > "$SB/out" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && ok "默认安装同时装上代理内核（退出码 0）" || no "默认安装同时装上代理内核" "rc=$rc $(cat "$SB/out")"
+[ -x "$EP_ROOT/usr/bin/sing-box" ] && ok "内核落在 usr/bin/sing-box 且可执行" || no "内核落在 usr/bin/sing-box" "$(cat "$SB/out")"
+grep -q 'SagerNet/sing-box' "$EP_TEST_LOG/curl.urls" 2>/dev/null \
+	&& ok "内核从官方 sing-box release 下载" || no "内核从官方 release 下载" "$(cat "$EP_TEST_LOG/curl.urls" 2>/dev/null)"
+grep -q 'engine sha256 ok' "$SB/out" && ok "内核下载同样过 sha256" || no "内核下载同样过 sha256" "$(cat "$SB/out")"
+grep -q 'sing_box.binary' "$EP_TEST_LOG/uci.log" 2>/dev/null \
+	&& ok "把内核路径写进 uci" || no "把内核路径写进 uci" "$(cat "$EP_TEST_LOG/uci.log" 2>/dev/null)"
+
+reset
+sh "$INSTALL" --no-engine > "$SB/out" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && ok "--no-engine 仍能装包" || no "--no-engine 仍能装包" "rc=$rc $(cat "$SB/out")"
+grep -q 'SagerNet/sing-box' "$EP_TEST_LOG/curl.urls" 2>/dev/null \
+	&& no "--no-engine 不应下载内核" || ok "--no-engine 跳过内核"
+
+reset
+mkdir -p "$EP_ROOT/usr/bin"
+printf 'already-here\n' > "$EP_ROOT/usr/bin/sing-box"
+chmod +x "$EP_ROOT/usr/bin/sing-box"
+sh "$INSTALL" > "$SB/out" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && grep -q 'engine: already present' "$SB/out" \
+	&& ok "已有内核时复用、不重复下载" || no "已有内核时复用" "rc=$rc $(cat "$SB/out")"
+[ -s "$EP_ROOT/usr/bin/sing-box" ] && grep -q 'already-here' "$EP_ROOT/usr/bin/sing-box" \
+	&& ok "已有内核没有被覆盖" || no "已有内核没有被覆盖"
+
+reset
+rm -rf "$EP_ROOT/usr/bin"
+EP_ENGINE_SHA=0000000000000000000000000000000000000000000000000000000000000000 \
+	sh "$INSTALL" > "$SB/out" 2>&1; rc=$?
+[ "$rc" -ne 0 ] && ok "内核校验和不符时安装报非 0" || no "内核校验和不符时报非 0" "rc=$rc $(cat "$SB/out")"
+[ -e "$EP_ROOT/usr/bin/sing-box" ] && no "校验失败的内核不应落地" || ok "校验失败的内核不落地"
+
+reset
+rm -rf "$EP_ROOT/usr/bin"
+touch "$EP_TEST_LOG/engine.fail"
+sh "$INSTALL" > "$SB/out" 2>&1; rc=$?
+[ "$rc" -ne 0 ] && ok "内核下载失败时安装报非 0" || no "内核下载失败时报非 0" "rc=$rc $(cat "$SB/out")"
+grep -q 'engine: install failed' "$SB/out" && ok "报错指明是内核这一步失败" || no "报错指明内核失败" "$(cat "$SB/out")"
+[ -f "$EP_TEST_LOG/installed" ] && ok "内核失败不影响 EasyProxy 本体已安装" || no "内核失败时本体仍应安装"
 
 # --- uninstall --------------------------------------------------------
 reset
