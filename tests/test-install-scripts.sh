@@ -91,3 +91,533 @@ exit 1
 STUB
 chmod +x "$SB/fix/singbox-broken/sing-box-1.10.7-linux-amd64/sing-box"
 tar -czf "$SB/fix/sing-box.broken.tar.gz" -C "$SB/fix/singbox-broken" sing-box-1.10.7-linux-amd64
+
+# dae fixture: same layout as the official archive (binary + routing assets).
+mkdir -p "$SB/fix/dae/usr/bin" "$SB/fix/dae/usr/share/dae"
+cat > "$SB/fix/dae/usr/bin/dae" <<'STUB'
+#!/bin/sh
+echo "dae version v2.1.2"
+STUB
+chmod +x "$SB/fix/dae/usr/bin/dae"
+printf 'GEOIP-BYTES\n' > "$SB/fix/dae/usr/share/dae/geoip.dat"
+printf 'GEOSITE-BYTES\n' > "$SB/fix/dae/usr/share/dae/geosite.dat"
+tar -cJf "$SB/fix/dae.tar.xz" -C "$SB/fix/dae" ./usr
+h_dae="$(sha256sum "$SB/fix/dae.tar.xz" | awk '{ print $1 }')"
+
+# --- stubs ----------------------------------------------------------------
+cat > "$SB/bin/curl" <<'STUB'
+#!/bin/sh
+out=""; url=""
+while [ $# -gt 0 ]; do
+	case "$1" in
+		-o) out="$2"; shift 2 ;;
+		-*) shift ;;
+		*) url="$1"; shift ;;
+	esac
+done
+printf '%s\n' "$url" >> "$EP_TEST_LOG/curl.urls"
+case "$url" in
+	*releases/latest) [ -f "$EP_TEST_LOG/api.fail" ] && exit 22; f="${EP_TEST_API_FIX:-$EP_TEST_FIX/api.json}" ;;
+	*SagerNet/sing-box*) [ -f "$EP_TEST_LOG/engine.fail" ] && exit 22; f="$EP_TEST_FIX/${EP_TEST_SB_ARCHIVE:-sing-box.tar.gz}" ;;
+	*daeuniverse/dae*) [ -f "$EP_TEST_LOG/dae.fail" ] && exit 22; f="${EP_TEST_DAE_ARCHIVE:-$EP_TEST_FIX/dae.tar.xz}" ;;
+	*Makefile) f="$EP_TEST_FIX/Makefile" ;;
+	*.apk) f="$EP_TEST_FIX/asset.apk" ;;
+	*_x86_64.ipk) [ -f "$EP_TEST_LOG/x86.fail" ] && exit 22; f="$EP_TEST_FIX/asset.ipk" ;;
+	*.ipk) f="$EP_TEST_FIX/asset.ipk" ;;
+	*SHA256SUMS) f="${EP_TEST_SUMS:-$EP_TEST_FIX/SHA256SUMS}" ;;
+	*.tar.gz) f="$EP_TEST_FIX/asset.tar.gz" ;;
+	*) exit 22 ;;
+esac
+if [ -n "$out" ]; then cp "$f" "$out"; else cat "$f"; fi
+# A CDN edge can serve a stale object under an immutable release URL. flaky
+# corrupts one download, flaky.always corrupts every one of them.
+case "$url" in
+	*SHA256SUMS|*releases/latest|*Makefile) ;;
+	*)
+		if [ -f "$EP_TEST_LOG/flaky" ]; then
+			printf 'GARBAGE-BYTES\n' >> "$out"
+			[ -f "$EP_TEST_LOG/flaky.always" ] || rm -f "$EP_TEST_LOG/flaky"
+		fi ;;
+esac
+STUB
+cat > "$SB/bin/uname" <<'STUB'
+#!/bin/sh
+printf '%s\n' "${EP_TEST_UNAME:-x86_64}"
+STUB
+cat > "$SB/bin/wget" <<'STUB'
+#!/bin/sh
+exit 22
+STUB
+cat > "$SB/bin/opkg" <<'STUB'
+#!/bin/sh
+printf 'opkg %s\n' "$*" >> "$EP_TEST_LOG/pm.log"
+printf 'pm %s\n' "$*" >> "$EP_TEST_LOG/timeline"
+case "$1" in
+	install) : > "$EP_TEST_LOG/installed" ;;
+	print-architecture) cat "${EP_TEST_OPKG_ARCH:-$EP_TEST_FIX/opkg.arch}" ;;
+	list-installed) printf 'easyproxy - %s\n' "${EP_TEST_PKG_VER:-0.5.0-1}" ;;
+	remove) : ;;
+esac
+exit 0
+STUB
+cat > "$SB/bin/apk" <<'STUB'
+#!/bin/sh
+printf 'apk %s\n' "$*" >> "$EP_TEST_LOG/pm.log"
+printf 'pm %s\n' "$*" >> "$EP_TEST_LOG/timeline"
+: > "$EP_TEST_LOG/installed"
+exit 0
+STUB
+cat > "$SB/bin/easyproxy" <<'STUB'
+#!/bin/sh
+printf 'easyproxy %s\n' "$*" >> "$EP_TEST_LOG/ep.log"
+printf 'ep %s\n' "$*" >> "$EP_TEST_LOG/timeline"
+case "$1" in
+	status) printf 'engine: sing-box\nstate: idle\n' ;;
+esac
+exit 0
+STUB
+cat > "$SB/bin/uci" <<'STUB'
+#!/bin/sh
+printf 'uci ' >> "$EP_TEST_LOG/uci.log"
+printf '%s ' "$@" >> "$EP_TEST_LOG/uci.log"
+printf '\n' >> "$EP_TEST_LOG/uci.log"
+case "$1" in
+	get) exit 1 ;;
+esac
+exit 0
+STUB
+cat > "$SB/root/etc/init.d-easyproxy" <<'STUB'
+#!/bin/sh
+printf 'init %s\n' "$*" >> "$EP_TEST_LOG/init.log"
+exit 0
+STUB
+cat > "$SB/root/etc/init.d-rpcd" <<'STUB'
+#!/bin/sh
+printf 'rpcd %s\n' "$*" >> "$EP_TEST_LOG/rpcd.log"
+exit 0
+STUB
+chmod +x "$SB/bin/"* "$SB/root/etc/init.d-"*
+
+export EP_TEST_LOG="$SB/log"
+export EP_TEST_FIX="$SB/fix"
+export PATH="$SB/bin:$PATH"
+export EP_TMP="$SB/tmp"
+export EP_INIT="$SB/root/etc/init.d-easyproxy"
+export EP_BIN="$SB/bin/easyproxy"
+export EP_RPCD="$SB/root/etc/init.d-rpcd"
+export EP_ROOT="$SB/rootfs"
+export EP_CFG="$SB/opt/config.easyproxy"
+export EP_STATE_DIR="$SB/opt/easyproxy"
+export EP_LUCI_CACHE="$SB/opt/luci-indexcache"
+export EP_BACKUP_DIR="$SB/backup"
+export EP_SING_BOX_SHA="$h_sb"
+export EP_DAE_SHA="$h_dae"
+mkdir -p "$EP_TMP" "$EP_STATE_DIR" "$EP_ROOT/usr/sbin" "$EP_ROOT/etc/init.d"
+touch "$EP_CFG"
+touch "$EP_LUCI_CACHE"
+
+reset() {
+	rm -rf "$SB/log" "$SB/tmp"
+	mkdir -p "$SB/log" "$SB/tmp"
+	rm -f "$EP_STATE_DIR/nftables.conf"
+	# kernels and their ownership records start empty in every case
+	rm -rf "$EP_ROOT/usr/bin" "$EP_ROOT/usr/share/dae" "$EP_STATE_DIR/owned" "$EP_STATE_DIR/backup"
+	touch "$EP_CFG"
+}
+
+INSTALL="$SRC/scripts/install.sh"
+UNINSTALL="$SRC/scripts/uninstall.sh"
+
+# --- install: opkg host -----------------------------------------------
+reset
+sh "$INSTALL" > "$SB/out" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && ok "opkg 主机：安装退出码 0" || no "opkg 主机：安装退出码 0" "rc=$rc $(cat "$SB/out")"
+grep -q 'install .*easyproxy.*\.ipk' "$EP_TEST_LOG/pm.log" 2>/dev/null \
+	&& ok "opkg 主机：调用 opkg install 且装的是 ipk" || no "opkg 主机：调用 opkg install 且装的是 ipk" "$(cat "$EP_TEST_LOG/pm.log" 2>/dev/null)"
+grep -q '\.ipk$' "$EP_TEST_LOG/curl.urls" 2>/dev/null \
+	&& ok "opkg 主机：下载的是 ipk 资产" || no "opkg 主机：下载的是 ipk 资产" "$(cat "$EP_TEST_LOG/curl.urls" 2>/dev/null)"
+[ -f "$EP_TEST_LOG/installed" ] && ok "opkg 主机：包管理器报告已安装" || no "opkg 主机：包管理器报告已安装"
+grep -q 'init enable' "$EP_TEST_LOG/init.log" 2>/dev/null && ok "安装后注册开机启动" || no "安装后注册开机启动"
+grep -q 'rpcd restart' "$EP_TEST_LOG/rpcd.log" 2>/dev/null && ok "安装后重启 rpcd" || no "安装后重启 rpcd"
+grep -q 'easyproxy status' "$EP_TEST_LOG/ep.log" 2>/dev/null && ok "安装后打印状态" || no "安装后打印状态"
+
+# --- install: apk-only host -------------------------------------------
+reset
+cp "$SB/bin/opkg" "$SB/opkg.apktest.saved"
+rm -f "$SB/bin/opkg"
+sh "$INSTALL" > "$SB/out" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && ok "apk 主机：安装退出码 0" || no "apk 主机：安装退出码 0" "rc=$rc $(cat "$SB/out")"
+grep -q 'apk add --allow-untrusted .*\.apk' "$EP_TEST_LOG/pm.log" 2>/dev/null \
+	&& ok "apk 主机：apk add --allow-untrusted 且装的是 apk" || no "apk 主机：apk add 命令" "$(cat "$EP_TEST_LOG/pm.log" 2>/dev/null)"
+grep -q '\.apk$' "$EP_TEST_LOG/curl.urls" 2>/dev/null && ok "apk 主机：下载的是 apk 资产" || no "apk 主机：下载的是 apk 资产"
+cp "$SB/opkg.apktest.saved" "$SB/bin/opkg"
+
+# --- install: API unavailable, falls back to raw Makefile version ------
+reset
+touch "$EP_TEST_LOG/api.fail"
+sh "$INSTALL" > "$SB/out" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && ok "API 不可用时仍能安装（走版本号兜底）" || no "API 不可用时仍能安装" "rc=$rc $(cat "$SB/out")"
+grep -q 'releases/download/v0\.9\.9/' "$EP_TEST_LOG/curl.urls" 2>/dev/null \
+	&& ok "兜底 URL 由 Makefile 版本拼出（0.9.9）" || no "兜底 URL 由 Makefile 版本拼出" "$(cat "$EP_TEST_LOG/curl.urls" 2>/dev/null)"
+
+# --- install: no package manager -------------------------------------
+reset
+mv "$SB/bin/opkg" "$SB/opkg.off"
+mv "$SB/bin/apk" "$SB/apk.off"
+sh "$INSTALL" > "$SB/out" 2>&1; rc=$?
+[ "$rc" -ne 0 ] && ok "没有包管理器时拒绝安装（非 0）" || no "没有包管理器时拒绝安装" "rc=$rc $(cat "$SB/out")"
+grep -qi 'opkg\|apk' "$SB/out" && ok "拒绝时说明缺少哪种包管理器" || no "拒绝时说明缺少哪种包管理器" "$(cat "$SB/out")"
+mv "$SB/opkg.off" "$SB/bin/opkg"
+mv "$SB/apk.off" "$SB/bin/apk"
+
+# --- install: rootfs archive route -----------------------------------
+reset
+sh "$INSTALL" --rootfs > "$SB/out" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && ok "--rootfs 走 tar 解包而不是包管理器" || no "--rootfs 走 tar 解包" "rc=$rc $(cat "$SB/out")"
+grep -qE '^opkg install|^apk add' "$EP_TEST_LOG/pm.log" 2>/dev/null && no "--rootfs 不应调用包管理器安装" "$(cat "$EP_TEST_LOG/pm.log")" || ok "--rootfs 不调用包管理器安装"
+
+# --- install: --help does nothing ------------------------------------
+reset
+sh "$INSTALL" --help > "$SB/out" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && grep -q 'install.sh' "$SB/out" && ok "--help 打印用法并退出 0" || no "--help 打印用法并退出 0" "rc=$rc"
+[ -f "$EP_TEST_LOG/curl.urls" ] && no "--help 不应联网" || ok "--help 不联网"
+
+# --- install: two ipk assets, prefer the one matching this host --------
+cat > "$SB/fix/api-two.json" <<'JSON'
+{
+  "tag_name": "v0.5.0",
+  "assets": [
+    { "name": "easyproxy_0.5.0-1_all.ipk", "browser_download_url": "https://example.test/dl/easyproxy_0.5.0-1_all.ipk" },
+    { "name": "easyproxy_0.5.0-1_x86_64.ipk", "browser_download_url": "https://example.test/dl/easyproxy_0.5.0-1_x86_64.ipk" }
+  ]
+}
+JSON
+reset
+EP_TEST_API_FIX="$SB/fix/api-two.json" EP_TEST_UNAME=x86_64 sh "$INSTALL" > "$SB/out" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && ok "双 ipk 时安装成功" || no "双 ipk 时安装成功" "rc=$rc $(cat "$SB/out")"
+grep -q '_x86_64\.ipk$' "$EP_TEST_LOG/curl.urls" 2>/dev/null \
+	&& ok "x86_64 主机下载架构匹配的 ipk" || no "x86_64 主机下载架构匹配的 ipk" "$(cat "$EP_TEST_LOG/curl.urls" 2>/dev/null)"
+
+reset
+touch "$EP_TEST_LOG/x86.fail"
+EP_TEST_API_FIX="$SB/fix/api-two.json" EP_TEST_UNAME=x86_64 sh "$INSTALL" > "$SB/out" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && ok "架构包 404 时退回 all 包仍能安装" || no "架构包 404 时退回 all 包仍能安装" "rc=$rc $(cat "$SB/out")"
+grep -q '_all\.ipk$' "$EP_TEST_LOG/curl.urls" 2>/dev/null \
+	&& ok "退回时确实改用 all 地址" || no "退回时确实改用 all 地址" "$(cat "$EP_TEST_LOG/curl.urls")"
+
+reset
+printf 'all 1\nriscv64 10\n' > "$SB/fix/opkg.arch.rv"
+EP_TEST_API_FIX="$SB/fix/api-two.json" EP_TEST_OPKG_ARCH="$SB/fix/opkg.arch.rv" sh "$INSTALL" > "$SB/out" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && ok "无匹配架构时仍能安装" || no "无匹配架构时仍能安装" "rc=$rc $(cat "$SB/out")"
+grep -q '_all\.ipk$' "$EP_TEST_LOG/curl.urls" 2>/dev/null \
+	&& ok "无匹配架构时退回 all 包" || no "无匹配架构时退回 all 包" "$(cat "$EP_TEST_LOG/curl.urls" 2>/dev/null)"
+
+# --- install: opkg knows its own architectures --------------------------
+reset
+EP_TEST_API_FIX="$SB/fix/api-two.json" EP_TEST_UNAME=aarch64 sh "$INSTALL" > "$SB/out" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && ok "按 opkg 架构选包时安装成功" || no "按 opkg 架构选包时安装成功" "rc=$rc $(cat "$SB/out")"
+grep -q '_x86_64\.ipk$' "$EP_TEST_LOG/curl.urls" 2>/dev/null \
+	&& ok "信 opkg 的架构列表而不是 uname" || no "信 opkg 的架构列表而不是 uname" "$(cat "$EP_TEST_LOG/curl.urls" 2>/dev/null)"
+
+reset
+printf 'all 1\naarch64_cortex-a53 10\n' > "$SB/fix/opkg.arch.arm"
+EP_TEST_API_FIX="$SB/fix/api-two.json" EP_TEST_OPKG_ARCH="$SB/fix/opkg.arch.arm" sh "$INSTALL" > "$SB/out" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && ok "无对应架构包时不装错包、退回 all" || no "无对应架构包时不装错包、退回 all" "rc=$rc $(cat "$SB/out")"
+grep -q '_all\.ipk$' "$EP_TEST_LOG/curl.urls" 2>/dev/null \
+	&& ok "退回的是 all 包" || no "退回的是 all 包" "$(cat "$EP_TEST_LOG/curl.urls" 2>/dev/null)"
+
+# --- install: never install a package this opkg would reject -----------
+reset
+printf 'riscv64 10\n' > "$SB/fix/opkg.arch.noall"
+cat > "$SB/fix/api-only-all.json" <<'JSON'
+{
+  "tag_name": "v0.5.0",
+  "assets": [
+    { "name": "easyproxy_0.5.0-1_all.ipk", "browser_download_url": "https://example.test/dl/easyproxy_0.5.0-1_all.ipk" }
+  ]
+}
+JSON
+EP_TEST_API_FIX="$SB/fix/api-only-all.json" EP_TEST_OPKG_ARCH="$SB/fix/opkg.arch.noall" sh "$INSTALL" > "$SB/out" 2>&1; rc=$?
+[ "$rc" -ne 0 ] && ok "opkg 不收 all 且无对应架构包时拒绝安装" || no "不收 all 时拒绝安装" "rc=$rc $(cat "$SB/out")"
+grep -qi 'no installable ipk' "$SB/out" && ok "拒绝原因说明没有可装的包" || no "拒绝原因说明没有可装的包" "$(cat "$SB/out")"
+[ -f "$EP_TEST_LOG/installed" ] && no "拒绝时不应调用包管理器" || ok "拒绝时不调用包管理器"
+
+# --- install: never install a bad download ----------------------------
+reset
+EP_TEST_SUMS="$SB/fix/SHA256SUMS.bad" sh "$INSTALL" > "$SB/out" 2>&1; rc=$?
+[ "$rc" -ne 0 ] && ok "校验和不符时拒绝安装（非 0）" || no "校验和不符时拒绝安装" "rc=$rc $(cat "$SB/out")"
+grep -riq 'checksum' "$SB/out" && ok "拒绝原因提到校验和" || no "拒绝原因提到校验和" "$(cat "$SB/out")"
+[ -f "$EP_TEST_LOG/installed" ] && no "校验失败时不应调用包管理器" || ok "校验失败时不调用包管理器"
+
+reset
+sh "$INSTALL" > "$SB/out" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && ok "校验和对得上时正常安装" || no "校验和对得上时正常安装" "rc=$rc $(cat "$SB/out")"
+grep -q 'sha256' "$SB/out" && ok "安装前打印了校验结果" || no "安装前打印了校验结果" "$(cat "$SB/out")"
+
+# --- install: both kernels come with the package -----------------------
+reset
+sh "$INSTALL" > "$SB/out" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && ok "默认安装：三个组件一起装好（退出码 0）" || no "默认安装三个组件" "rc=$rc $(cat "$SB/out")"
+[ -x "$EP_ROOT/usr/bin/sing-box" ] && ok "sing-box 落在 usr/bin 且可执行" || no "sing-box 落在 usr/bin" "$(cat "$SB/out")"
+[ -x "$EP_ROOT/usr/bin/dae" ] && ok "dae 落在 usr/bin 且可执行" || no "dae 落在 usr/bin" "$(cat "$SB/out")"
+[ -f "$EP_ROOT/usr/share/dae/geoip.dat" ] && ok "dae 的路由资产一并装好" || no "dae 路由资产" "$(cat "$SB/out")"
+grep -q 'SagerNet/sing-box' "$EP_TEST_LOG/curl.urls" 2>/dev/null \
+	&& ok "sing-box 从官方 release 下载" || no "sing-box 从官方 release 下载" "$(cat "$EP_TEST_LOG/curl.urls" 2>/dev/null)"
+grep -q 'daeuniverse/dae' "$EP_TEST_LOG/curl.urls" 2>/dev/null \
+	&& ok "dae 从官方 release 下载" || no "dae 从官方 release 下载" "$(cat "$EP_TEST_LOG/curl.urls" 2>/dev/null)"
+grep -q 'sing-box sha256 ok' "$SB/out" && ok "sing-box 下载过 sha256" || no "sing-box 下载过 sha256" "$(cat "$SB/out")"
+grep -q 'dae sha256 ok' "$SB/out" && ok "dae 下载过 sha256" || no "dae 下载过 sha256" "$(cat "$SB/out")"
+grep -q 'sing-box: 1.10.7 runs' "$SB/out" && ok "装好的 sing-box 能报版本" || no "sing-box 能报版本" "$(cat "$SB/out")"
+grep -q 'dae: 2.1.2 runs' "$SB/out" && ok "装好的 dae 能报版本" || no "dae 能报版本" "$(cat "$SB/out")"
+grep -q 'sing_box.binary' "$EP_TEST_LOG/uci.log" 2>/dev/null && ok "uci 指向 sing-box" || no "uci 指向 sing-box" "$(cat "$EP_TEST_LOG/uci.log" 2>/dev/null)"
+grep -q 'dae.binary' "$EP_TEST_LOG/uci.log" 2>/dev/null && ok "uci 指向 dae" || no "uci 指向 dae" "$(cat "$EP_TEST_LOG/uci.log" 2>/dev/null)"
+[ -f "$EP_STATE_DIR/owned/sing-box" ] && [ -f "$EP_STATE_DIR/owned/dae" ] \
+	&& ok "两个内核都登记了归属" || no "内核归属登记"
+
+# --- install: component switches ---------------------------------------
+reset
+sh "$INSTALL" --no-dae > "$SB/out" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && ok "--no-dae 仍能装好并退出 0" || no "--no-dae 安装" "rc=$rc $(cat "$SB/out")"
+grep -q 'daeuniverse' "$EP_TEST_LOG/curl.urls" 2>/dev/null && no "--no-dae 不应下载 dae" || ok "--no-dae 跳过 dae"
+[ -x "$EP_ROOT/usr/bin/sing-box" ] && ok "--no-dae 时 sing-box 照常安装" || no "--no-dae 时 sing-box 未安装"
+
+reset
+sh "$INSTALL" --no-sing-box > "$SB/out" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && ok "--no-sing-box 仍能装好并退出 0" || no "--no-sing-box 安装" "rc=$rc $(cat "$SB/out")"
+grep -q 'SagerNet' "$EP_TEST_LOG/curl.urls" 2>/dev/null && no "--no-sing-box 不应下载 sing-box" || ok "--no-sing-box 跳过 sing-box"
+[ -x "$EP_ROOT/usr/bin/dae" ] && ok "--no-sing-box 时 dae 照常安装" || no "--no-sing-box 时 dae 未安装"
+
+reset
+sh "$INSTALL" --no-engine > "$SB/out" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && ok "--no-engine 只装面板，退出 0" || no "--no-engine 安装" "rc=$rc $(cat "$SB/out")"
+if grep -q 'SagerNet' "$EP_TEST_LOG/curl.urls" 2>/dev/null || grep -q 'daeuniverse' "$EP_TEST_LOG/curl.urls" 2>/dev/null; then
+	no "--no-engine 不应下载任何内核"
+else
+	ok "--no-engine 跳过两个内核"
+fi
+
+# --- install: an already present kernel is reused ----------------------
+reset
+mkdir -p "$EP_ROOT/usr/bin"
+printf '#!/bin/sh\necho "sing-box version 1.10.7"\n' > "$EP_ROOT/usr/bin/sing-box"
+printf '#!/bin/sh\necho "dae version v2.1.2"\n' > "$EP_ROOT/usr/bin/dae"
+chmod +x "$EP_ROOT/usr/bin/sing-box" "$EP_ROOT/usr/bin/dae"
+sh "$INSTALL" > "$SB/out" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && grep -q 'sing-box: already present' "$SB/out" \
+	&& ok "已有 sing-box 时复用、不重复下载" || no "已有 sing-box 时复用" "rc=$rc $(cat "$SB/out")"
+grep -q 'dae: already present' "$SB/out" && ok "已有 dae 时复用" || no "已有 dae 时复用"
+grep -q 'SagerNet' "$EP_TEST_LOG/curl.urls" 2>/dev/null \
+	&& no "复用时不应再下载 sing-box" || ok "复用时没有重复下载"
+[ -s "$EP_ROOT/usr/bin/dae" ] && grep -q 'dae version v2.1.2' "$EP_ROOT/usr/bin/dae" \
+	&& ok "已有 dae 没有被覆盖" || no "已有 dae 被覆盖"
+
+# --- install: kernel failures are reported, never hidden ---------------
+reset
+EP_SING_BOX_SHA=0000000000000000000000000000000000000000000000000000000000000000 \
+	sh "$INSTALL" > "$SB/out" 2>&1; rc=$?
+[ "$rc" -ne 0 ] && ok "sing-box 校验不符时安装报非 0" || no "sing-box 校验不符时报非 0" "rc=$rc $(cat "$SB/out")"
+[ -e "$EP_ROOT/usr/bin/sing-box" ] && no "校验失败的 sing-box 不应落地" || ok "校验失败的 sing-box 不落地"
+grep -q 'sing-box: install failed' "$SB/out" && ok "报错指明 sing-box 失败" || no "报错指明 sing-box 失败" "$(cat "$SB/out")"
+
+reset
+touch "$EP_TEST_LOG/engine.fail"
+sh "$INSTALL" > "$SB/out" 2>&1; rc=$?
+[ "$rc" -ne 0 ] && ok "sing-box 下载失败时安装报非 0" || no "sing-box 下载失败时报非 0" "rc=$rc $(cat "$SB/out")"
+grep -q 'sing-box: install failed' "$SB/out" && ok "下载失败写明 sing-box 这一步" || no "下载失败写明 sing-box" "$(cat "$SB/out")"
+[ -f "$EP_TEST_LOG/installed" ] && ok "内核失败不影响面板本体已安装" || no "内核失败时面板仍应安装"
+
+reset
+touch "$EP_TEST_LOG/dae.fail"
+sh "$INSTALL" > "$SB/out" 2>&1; rc=$?
+[ "$rc" -ne 0 ] && ok "dae 下载失败时安装报非 0" || no "dae 下载失败时报非 0" "rc=$rc $(cat "$SB/out")"
+[ -x "$EP_ROOT/usr/bin/sing-box" ] && ok "dae 失败时 sing-box 仍装好" || no "dae 失败时 sing-box 未装"
+grep -q 'dae: install failed' "$SB/out" && ok "报错指明 dae 这一步失败" || no "报错指明 dae 失败" "$(cat "$SB/out")"
+
+# --- install: the release's kernel ipk is preferred over the archive ----
+reset
+EP_TEST_API_FIX="$SB/fix/api-kernels.json" sh "$INSTALL" > "$SB/out" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && ok "release 带内核 ipk 时安装成功" || no "release 带内核 ipk 时安装" "rc=$rc $(cat "$SB/out")"
+grep -q 'sing-box_1.10.7_x86_64.ipk' "$EP_TEST_LOG/pm.log" 2>/dev/null \
+	&& ok "sing-box 优先用 release 的内核 ipk" || no "sing-box 内核 ipk 未使用" "$(cat "$EP_TEST_LOG/pm.log" 2>/dev/null)"
+grep -q 'dae_2.1.2_x86_64.ipk' "$EP_TEST_LOG/pm.log" 2>/dev/null \
+	&& ok "dae 优先用 release 的内核 ipk" || no "dae 内核 ipk 未使用" "$(cat "$EP_TEST_LOG/pm.log" 2>/dev/null)"
+
+# --- install: summary names all three components ------------------------
+reset
+sh "$INSTALL" > "$SB/out" 2>&1 || true
+grep -q 'components:' "$SB/out" && ok "安装结果列出三个组件" || no "安装结果列组件" "$(cat "$SB/out")"
+grep -q 'sing-box   1.10.7' "$SB/out" && grep -q 'dae        2.1.2' "$SB/out" \
+	&& ok "摘要里两个内核都有版本号" || no "摘要缺内核版本" "$(cat "$SB/out")"
+
+# --- upgrade: version table, then per-component upgrade -----------------
+reset
+mkdir -p "$EP_ROOT/usr/bin"
+printf '#!/bin/sh\necho "sing-box version 1.9.0"\n' > "$EP_ROOT/usr/bin/sing-box"
+printf '#!/bin/sh\necho "dae version v2.1.0"\n' > "$EP_ROOT/usr/bin/dae"
+chmod +x "$EP_ROOT/usr/bin/sing-box" "$EP_ROOT/usr/bin/dae"
+sh "$INSTALL" upgrade > "$SB/out" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && ok "一键升级全部组件退出 0" || no "一键升级退出码" "rc=$rc $(cat "$SB/out")"
+grep -q 'component    current      newest' "$SB/out" && ok "升级前先打印版本对照表" || no "升级版本对照表" "$(cat "$SB/out")"
+grep -q 'sing-box: 1.9.0 -> 1.10.7' "$SB/out" && ok "sing-box 显示旧 -> 新版本" || no "sing-box 版本变化" "$(cat "$SB/out")"
+grep -q 'dae: 2.1.0 -> 2.1.2' "$SB/out" && ok "dae 显示旧 -> 新版本" || no "dae 版本变化" "$(cat "$SB/out")"
+grep -q 'sing-box version 1.10.7' "$EP_ROOT/usr/bin/sing-box" && ok "sing-box 二进制已换新" || no "sing-box 未换新"
+grep -q 'dae version v2.1.2' "$EP_ROOT/usr/bin/dae" && ok "dae 二进制已换新" || no "dae 未换新"
+grep -q 'upgrade done' "$SB/out" && ok "升级结束有明确结论" || no "升级结论" "$(cat "$SB/out")"
+
+# already up to date
+reset
+mkdir -p "$EP_ROOT/usr/bin"
+printf '#!/bin/sh\necho "sing-box version 1.10.7"\n' > "$EP_ROOT/usr/bin/sing-box"
+printf '#!/bin/sh\necho "dae version v2.1.2"\n' > "$EP_ROOT/usr/bin/dae"
+chmod +x "$EP_ROOT/usr/bin/sing-box" "$EP_ROOT/usr/bin/dae"
+sh "$INSTALL" upgrade > "$SB/out" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && grep -q 'already up to date' "$SB/out" \
+	&& ok "都已是新版本时不重复下载" || no "已是新版本时的处理" "rc=$rc $(cat "$SB/out")"
+grep -q 'SagerNet' "$EP_TEST_LOG/curl.urls" 2>/dev/null && no "已是新版本时不应下载内核" || ok "已是新版本时没有下载"
+
+# --only dae leaves sing-box alone
+reset
+mkdir -p "$EP_ROOT/usr/bin"
+printf '#!/bin/sh\necho "sing-box version 1.9.0"\n' > "$EP_ROOT/usr/bin/sing-box"
+printf '#!/bin/sh\necho "dae version v2.1.0"\n' > "$EP_ROOT/usr/bin/dae"
+chmod +x "$EP_ROOT/usr/bin/sing-box" "$EP_ROOT/usr/bin/dae"
+sh "$INSTALL" upgrade --only dae > "$SB/out" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && ok "--only dae 只升级 dae" || no "--only dae" "rc=$rc $(cat "$SB/out")"
+grep -q 'sing-box version 1.9.0' "$EP_ROOT/usr/bin/sing-box" && ok "--only dae 时 sing-box 保持原版本" || no "--only dae 动了 sing-box"
+grep -q 'dae version v2.1.2' "$EP_ROOT/usr/bin/dae" && ok "--only dae 时 dae 升级到新版本" || no "--only dae 未升级 dae"
+
+# --only package upgrades just the panel
+reset
+EP_TEST_PKG_VER=0.4.0-1 sh "$INSTALL" upgrade --only package > "$SB/out" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && ok "--only package 升级面板并退出 0" || no "--only package" "rc=$rc $(cat "$SB/out")"
+grep -q 'easyproxy: 0.4.0-1 -> 0.5.0' "$SB/out" && ok "面板升级显示版本变化" || no "面板版本变化" "$(cat "$SB/out")"
+grep -q 'SagerNet' "$EP_TEST_LOG/curl.urls" 2>/dev/null && no "--only package 不应下载内核" || ok "--only package 不碰内核"
+
+# a broken new kernel is rolled back
+reset
+mkdir -p "$EP_ROOT/usr/bin"
+printf '#!/bin/sh\necho "sing-box version 1.9.0"\n' > "$EP_ROOT/usr/bin/sing-box"
+printf '#!/bin/sh\necho "dae version v2.1.2"\n' > "$EP_ROOT/usr/bin/dae"
+chmod +x "$EP_ROOT/usr/bin/sing-box" "$EP_ROOT/usr/bin/dae"
+EP_TEST_SB_ARCHIVE=sing-box.broken.tar.gz sh "$INSTALL" upgrade --only sing-box > "$SB/out" 2>&1; rc=$?
+[ "$rc" -ne 0 ] && ok "新内核跑不起来时升级报非 0" || no "坏内核升级退出码" "rc=$rc $(cat "$SB/out")"
+grep -q 'restored' "$SB/out" && ok "坏内核回滚到旧版本" || no "回滚提示" "$(cat "$SB/out")"
+grep -q 'sing-box version 1.9.0' "$EP_ROOT/usr/bin/sing-box" && ok "回滚后旧内核恢复可用" || no "回滚未恢复旧内核"
+grep -q 'upgrade incomplete' "$SB/out" && ok "升级失败写明哪个组件" || no "升级失败说明" "$(cat "$SB/out")"
+
+# --- status -------------------------------------------------------------
+reset
+mkdir -p "$EP_ROOT/usr/bin"
+printf '#!/bin/sh\necho "sing-box version 1.10.7"\n' > "$EP_ROOT/usr/bin/sing-box"
+printf '#!/bin/sh\necho "dae version v2.1.2"\n' > "$EP_ROOT/usr/bin/dae"
+chmod +x "$EP_ROOT/usr/bin/sing-box" "$EP_ROOT/usr/bin/dae"
+sh "$INSTALL" status > "$SB/out" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && ok "status 退出 0" || no "status 退出码" "rc=$rc $(cat "$SB/out")"
+grep -q 'easyproxy  0.5.0-1' "$SB/out" && ok "status 报面板版本" || no "status 面板版本" "$(cat "$SB/out")"
+grep -q 'sing-box   1.10.7' "$SB/out" && ok "status 报 sing-box 版本" || no "status sing-box" "$(cat "$SB/out")"
+grep -q 'dae        2.1.2' "$SB/out" && ok "status 报 dae 版本" || no "status dae" "$(cat "$SB/out")"
+
+# --- uninstall --------------------------------------------------------
+reset
+printf 'nft\n' > "$EP_STATE_DIR/nftables.conf"
+printf 'config\n' > "$EP_CFG"
+sh "$UNINSTALL" > "$SB/out" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && ok "卸载退出码 0" || no "卸载退出码 0" "rc=$rc $(cat "$SB/out")"
+grep -Eq 'easyproxy (uninstall-clean|transparent remove)' "$EP_TEST_LOG/ep.log" 2>/dev/null \
+	&& ok "卸载前先撤销透明代理抓包" || no "卸载前先撤销透明代理抓包" "$(cat "$EP_TEST_LOG/ep.log" 2>/dev/null)"
+# order: capture removal must come before the package manager runs
+tl_rm="$(grep -En 'ep (uninstall-clean|transparent remove)' "$EP_TEST_LOG/timeline" 2>/dev/null | head -1 | cut -d: -f1)"
+tl_pm="$(grep -n 'pm remove easyproxy' "$EP_TEST_LOG/timeline" 2>/dev/null | cut -d: -f1)"
+[ -n "$tl_rm" ] && [ -n "$tl_pm" ] && [ "$tl_rm" -lt "$tl_pm" ] \
+	&& ok "撤销抓包发生在包管理器卸载之前" || no "撤销抓包顺序" "rm=$tl_rm pm=$tl_pm"
+grep -q 'init stop' "$EP_TEST_LOG/init.log" 2>/dev/null && ok "卸载时停止服务" || no "卸载时停止服务"
+grep -q 'remove easyproxy' "$EP_TEST_LOG/pm.log" 2>/dev/null && ok "调用 opkg remove easyproxy" || no "调用 opkg remove easyproxy" "$(cat "$EP_TEST_LOG/pm.log" 2>/dev/null)"
+[ -f "$EP_CFG" ] && ok "默认保留配置文件（未 --purge）" || no "默认保留配置文件"
+[ -f "$EP_STATE_DIR/nftables.conf" ] && ok "默认保留状态目录（未 --purge）" || no "默认保留状态目录"
+
+# backup is written before anything is removed
+rm -f "$EP_BACKUP_DIR"/*.tar.gz 2>/dev/null
+sh "$UNINSTALL" > "$SB/out" 2>&1
+bkp="$(ls "$EP_BACKUP_DIR"/easyproxy-backup-*.tar.gz 2>/dev/null | head -1)"
+[ -n "$bkp" ] && ok "卸载前先写配置备份" || no "卸载未写备份"
+[ -n "$bkp" ] && tar -tzf "$bkp" >/dev/null 2>&1 && ok "备份文件是有效的 tar.gz" || no "备份文件损坏"
+grep -q "backup: $bkp" "$SB/out" && ok "输出里给出备份路径" || no "备份路径未提示" "$(cat "$SB/out")"
+
+rm -f "$EP_BACKUP_DIR"/*.tar.gz 2>/dev/null
+sh "$UNINSTALL" --no-backup > "$SB/out" 2>&1
+bkp="$(ls "$EP_BACKUP_DIR"/easyproxy-backup-*.tar.gz 2>/dev/null | head -1)"
+[ -z "$bkp" ] && ok "--no-backup 不写备份" || no "--no-backup 仍写了备份"
+
+# kernels this installer installed are removed; --keep-kernels keeps them
+reset
+mkdir -p "$EP_ROOT/usr/bin" "$EP_STATE_DIR/owned"
+printf '#!/bin/sh\necho "sing-box version 1.10.7"\n' > "$EP_ROOT/usr/bin/sing-box"
+printf '#!/bin/sh\necho "dae version v2.1.2"\n' > "$EP_ROOT/usr/bin/dae"
+chmod +x "$EP_ROOT/usr/bin/sing-box" "$EP_ROOT/usr/bin/dae"
+printf '%s\n' "$EP_ROOT/usr/bin/sing-box" > "$EP_STATE_DIR/owned/sing-box"
+printf '%s\n' "$EP_ROOT/usr/bin/dae" > "$EP_STATE_DIR/owned/dae"
+sh "$UNINSTALL" > "$SB/out" 2>&1
+[ -e "$EP_ROOT/usr/bin/sing-box" ] && no "自己装的内核应随手卸掉" || ok "自己装的 sing-box 随卸载移除"
+[ -e "$EP_ROOT/usr/bin/dae" ] && no "自己装的 dae 应随手卸掉" || ok "自己装的 dae 随卸载移除"
+
+reset
+mkdir -p "$EP_ROOT/usr/bin" "$EP_STATE_DIR/owned"
+printf '#!/bin/sh\necho "dae version v2.1.2"\n' > "$EP_ROOT/usr/bin/dae"
+chmod +x "$EP_ROOT/usr/bin/dae"
+printf '%s\n' "$EP_ROOT/usr/bin/dae" > "$EP_STATE_DIR/owned/dae"
+sh "$UNINSTALL" --keep-kernels > "$SB/out" 2>&1
+[ -x "$EP_ROOT/usr/bin/dae" ] && ok "--keep-kernels 保留内核" || no "--keep-kernels 仍删了内核"
+
+# a kernel the user installed themselves has no ownership record: never touched
+reset
+mkdir -p "$EP_ROOT/usr/bin"
+printf '#!/bin/sh\necho "sing-box version 2.0.0"\n' > "$EP_ROOT/usr/bin/sing-box"
+chmod +x "$EP_ROOT/usr/bin/sing-box"
+sh "$UNINSTALL" > "$SB/out" 2>&1
+[ -x "$EP_ROOT/usr/bin/sing-box" ] && ok "没有归属记录的内核不被删除" || no "用户自装的内核被误删"
+
+# --- uninstall --purge ------------------------------------------------
+reset
+printf 'nft\n' > "$EP_STATE_DIR/nftables.conf"
+printf 'config\n' > "$EP_CFG"
+sh "$UNINSTALL" --purge > "$SB/out" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && ok "--purge 退出码 0" || no "--purge 退出码 0" "rc=$rc $(cat "$SB/out")"
+[ -f "$EP_CFG" ] && no "--purge 应删除配置文件" || ok "--purge 删除配置文件"
+[ -d "$EP_STATE_DIR" ] && no "--purge 应删除状态目录" || ok "--purge 删除状态目录"
+grep -q 'rpcd restart' "$EP_TEST_LOG/rpcd.log" 2>/dev/null && ok "卸载后重启 rpcd" || no "卸载后重启 rpcd"
+
+reset
+printf 'config\n' > "$EP_CFG"
+sh "$UNINSTALL" --keep-config > "$SB/out" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && [ -f "$EP_CFG" ] && ok "--keep-config 明确保留配置" || no "--keep-config" "rc=$rc $(cat "$SB/out")"
+
+# --- uninstall on a host with no easyproxy at all ---------------------
+reset
+mv "$EP_BIN" "$SB/ep.off"
+sh "$UNINSTALL" > "$SB/out" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && ok "没装过时卸载仍返回 0（幂等）" || no "没装过时卸载仍返回 0" "rc=$rc $(cat "$SB/out")"
+mv "$SB/ep.off" "$EP_BIN"
+
+# --- a bad download is retried, then installed ----------------------------
+# A CDN edge can hand back a stale object under an immutable release URL. The
+# retry is part of the installer, not of the mirror, so one corrupt download
+# must still end in a complete install.
+reset
+: > "$EP_TEST_LOG/flaky"
+sh "$INSTALL" --rootfs > "$SB/out" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && ok "坏包重试后安装成功（退出码 0）" || no "坏包重试后安装成功" "rc=$rc $(cat "$SB/out")"
+grep -q 'attempt 2 of 3' "$SB/out" && ok "打印了第 2 次尝试" || no "打印了第 2 次尝试" "$(cat "$SB/out")"
+grep -q 'extracting at' "$SB/out" && ok "拿到正确文件后才解包" || no "拿到正确文件后才解包" "$(cat "$SB/out")"
+
+# --- a bad download that never clears is a hard failure -------------------
+reset
+: > "$EP_TEST_LOG/flaky"; : > "$EP_TEST_LOG/flaky.always"
+sh "$INSTALL" --rootfs > "$SB/out" 2>&1; rc=$?
+[ "$rc" -ne 0 ] && ok "持续坏包时安装失败（退出码非 0）" || no "持续坏包时安装失败" "rc=$rc $(cat "$SB/out")"
+grep -q 'checksum mismatch' "$SB/out" && ok "报错写明 checksum mismatch" || no "报错写明 checksum mismatch" "$(cat "$SB/out")"
+grep -q 'attempt 3 of 3' "$SB/out" && ok "最多重试到第 3 次" || no "最多重试到第 3 次" "$(cat "$SB/out")"
+grep -q 'extracting at' "$SB/out" && no "坏包不得解包" "" || ok "坏包没有解包（什么都没装）"
+
+say ""
+say "结果：$PASS 通过，$FAIL 失败"
+[ "$FAIL" -eq 0 ] || exit 1
