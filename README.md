@@ -3,29 +3,53 @@
 EasyProxy is a modular proxy-management package for ImmortalWrt, with a Chinese
 LuCI management panel.
 
-## Current stage — Stage 5: transparent capture
+## Current stage — Stage 6: maintenance CLI and multi-page panel (0.6.0)
 
-Stage 4 made the generated config do real split routing: Chinese domains and
-addresses go out through `direct`, everything else falls through to the node
-group, DNS split the same way. Stage 5 adds the piece that was deliberately left
-out: LAN traffic is now captured by the router itself, through a TPROXY table of
-its own, and can be rolled back with one command.
+Version `0.6.0` is the first release meant to be installed and used on a real
+router. On top of split routing and reversible transparent capture it adds engine
+management, node/subscription import, a full maintenance CLI and a ten-page
+Chinese dark LuCI panel.
 
 | Layer | What exists now |
 |---|---|
-| UCI config | `/etc/config/easyproxy` (global, routing, engine, node sections) |
-| Config generation | `easyproxy config generate` → sing-box JSON from `config node` sections, validated by `sing-box check` |
+| UCI config | `/etc/config/easyproxy` (main, routing, transparent, engine, nodes) |
+| Config generation | `easyproxy config generate` → sing-box JSON, validated by `sing-box check` |
 | Split routing | `route.rules`: private IPs + CN rule sets → `direct`; `route.final` → `proxy` |
-| Rule sets | downloaded once by `config generate` into `rule_set_dir`, then referenced as **local** files |
-| Transparent capture | `table ip easyproxy` (TPROXY → `tproxy-in`) + one policy rule/table; `easyproxy transparent apply` / `remove` |
-| DNS | `dns-local` (domestic, `detour: direct`) + `dns-remote` (DoH, `detour: proxy`); CN names resolve domestically |
-| Runtime | `easyproxy run` (foreground wrapper) supervised by procd with respawn |
-| CLI | `status`, `validate`, `engine`, `config generate`, `start`, `stop`, `restart`, `run`, `log`, `transparent status/apply/remove` |
-| LuCI panel | `服务 → EasyProxy → 运行总览` shows runtime, split mode, rule-set state, capture state and config state |
+| Rule sets | local `.srs` under `rule_set_dir`, refreshed by `easyproxy ruleset update` |
+| Transparent capture | `table ip easyproxy` (TPROXY) / `table ip6 easyproxy`; `transparent apply|remove|status|audit` |
+| Engines | registry `sing-box:stable`, `dae:dev`; `engine list|health|version`, `node test` |
+| Nodes | 8 share-link formats, `node list|add|import|export|del|test`, subscription fetch |
+| Maintenance | `config backup|restore|reset`, `ruleset update|verify`, `doctor [--json]`, `log rotate`, `uninstall-clean` |
+| LuCI panel | `服务 → EasyProxy`, ten views: overview, nodes, subscription, split, engines, DNS, rules, logs, backup, settings |
 
-Both stages cover the **sing-box** engine only. Selecting `dae` is accepted by
-the CLI, but `start` refuses it explicitly instead of pretending to run
-something.
+### Install in one line (SSH on the router)
+
+```sh
+# install / upgrade to the newest release
+wget -qO- https://raw.githubusercontent.com/bnm188/EasyProxy/main/scripts/install.sh | sh
+
+# uninstall (config is kept; add `-s -- --purge` to drop it as well)
+wget -qO- https://raw.githubusercontent.com/bnm188/EasyProxy/main/scripts/uninstall.sh | sh
+```
+
+Both commands work on opkg and apk firmware, fall back to a version-derived
+asset URL when `api.github.com` is rate-limited, and are safe to re-run. See
+[Install](#install) for every flag, and
+[`docs/router-install-test.md`](docs/router-install-test.md) for the
+step-by-step acceptance test on a real router.
+
+### Three safety locks (not configurable)
+
+These are compiled into the generator, not options a user can flip:
+
+| Lock | Behaviour |
+|---|---|
+| Mainland China is always `direct` | `china_policy='proxy'` is **rejected**: `config generate` refuses and tells you to set `direct`. There is no switch that turns CN traffic into proxied traffic |
+| `fail_closed` is always on | when the CN rule sets are missing *and* cannot be downloaded, the generator emits a **pure-direct config** (`route.final` / `dns.final` = `direct`) and returns a warning. It never degrades into a full-tunnel proxy |
+| Intranet never leaves the router | `10.10.10.10`, `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, every node server address, `transparent.exclude` and the router's own LAN addresses are all in `bypass_ipv4` / the direct rule set. LAN traffic is routed, not captured: it never enters the engine |
+
+Read it as: a broken or missing rule set costs you foreign websites, never your
+LAN. `easyproxy doctor` reports both locks as `ok` when they hold.
 
 ### Why rule sets are local files
 
@@ -40,8 +64,7 @@ sing-box 1.10.7). EasyProxy therefore fetches the two `.srs` files during
 |---|---|
 | files present and fresh | split routing active |
 | files missing, download succeeds | split routing active, files cached locally |
-| files missing, download fails | **warning**, generator still succeeds, split degrades to full proxy (only the private-IP rule survives) |
-| `china_policy='proxy'` | no CN rule at all, everything goes through the node group |
+| files missing, download fails | `fail_closed` takes over: the config is generated **all-direct** and `config generate` exits non-zero, so nothing falls through to the proxy |
 | no enabled nodes | `route.final` and `dns.final` fall back to `direct` / `dns-local` |
 
 The engine start path (`easyproxy run`, and the procd `start_service`) never
@@ -132,9 +155,9 @@ detect this — it validates syntax only.
 
 | UCI option | Default | Meaning |
 |---|---|---|
-| `routing.china_policy` | `direct` | `direct` = CN traffic bypasses the proxy |
+| `routing.china_policy` | `direct` | locked: CN traffic always bypasses the proxy, `proxy` is rejected |
 | `routing.proxy_policy` | `proxy` | group used for non-CN traffic and remote DNS |
-| `routing.fail_closed` | `1` | record only in this stage |
+| `routing.fail_closed` | `1` | locked: with CN rule sets missing the config is all-direct; there is no full-tunnel fallback |
 | `routing.rule_set_dir` | `/etc/easyproxy/ruleset` | where the `.srs` files live |
 | `routing.geosite_cn_url` | SagerNet `geosite-cn.srs` | domain rule-set source |
 | `routing.geoip_cn_url` | SagerNet `geoip-cn.srs` | address rule-set source |
@@ -152,6 +175,7 @@ detect this — it validates syntax only.
 | `transparent.route_table` | `100` | table holding `local default dev lo` |
 | `transparent.lan_interfaces` | `br-lan` | interfaces whose input is captured, space separated |
 | `transparent.exclude` | *(empty)* | extra IPv4 addresses/CIDRs that must stay direct |
+| `transparent.ipv6_policy` | `direct` | `direct` or `block`: IPv6 is never captured silently |
 
 ### Runtime model
 
@@ -188,14 +212,21 @@ Per type: `shadowsocks` needs `method` + `password`; `vmess` needs `uuid`
 be skipped with `enabled '0'`. A node missing a required field aborts generation
 with the section named, rather than emitting a config that would fail later.
 
+Share links are the quicker path — `easyproxy node add '<link>'` understands
+ss://, ssr://, vmess://, trojan://, vless://, hysteria2://, tuic:// and
+socks://; `easyproxy node import <file>` reads a batch, `easyproxy node export`
+prints them back, and `sub.sh`-style subscriptions are fetched by
+`/usr/lib/easyproxy/subscribe.sh <url>` (the URL is never written to UCI or the
+log).
+
 ### `easyproxy status --json`
 
 ```json
 {
   "ok": true,
   "package": "easyproxy",
-  "version": "0.5.0",
-  "stage": 5,
+  "version": "0.6.0",
+  "stage": 6,
   "enabled": 1,
   "engine": "sing-box",
   "binary": "/usr/bin/sing-box",
@@ -215,6 +246,8 @@ with the section named, rather than emitting a config that would fail later.
   "transparent": 1,
   "tproxy_port": 7891,
   "tproxy_state": "active",
+  "ipv6_policy": "direct",
+  "ipv6_state": "direct",
   "config_state": "ok",
   "config_path": "/etc/easyproxy/sing-box.json",
   "config_file": "/etc/config/easyproxy",
@@ -232,6 +265,7 @@ with the section named, rather than emitting a config that would fail later.
 | `rule_set_state` | `ready` / `missing`, from the `.srs` files on disk |
 | `transparent` | `1` when capture is configured (not when it is actually loaded) |
 | `tproxy_state` | `active` (table loaded) / `inactive` / `unsupported` (no usable nft) |
+| `ipv6_state` | `direct` / `block` / `unsupported` (no `ip6tables`-capable nft) |
 | `config_state` | `ok` / `invalid` / `missing`, verified with `sing-box check` |
 | `nodes` / `nodes_enabled` | total node sections and how many are enabled |
 
@@ -242,7 +276,8 @@ with the section named, rather than emitting a config that would fail later.
         ↓ (uci)
 /usr/sbin/easyproxy status --json
         ↓ (rpcd file.exec, ACL: luci-app-easyproxy)
-/view/easyproxy/overview.js  →  cards, split mode, rule-set state, config check
+/usr/lib/easyproxy/app.js  →  overview / nodes / subscription / split / engines /
+                              dns / rules / logs / backup / settings
 ```
 
 ## Layout
@@ -253,24 +288,37 @@ package/easyproxy/
 └── files/
     ├── etc/config/easyproxy
     ├── etc/init.d/easyproxy
+    ├── etc/hotplug.d/iface/95-easyproxy
     ├── usr/sbin/easyproxy
     ├── usr/lib/easyproxy/common.sh
     ├── usr/lib/easyproxy/config.sh
     ├── usr/lib/easyproxy/transparent.sh
+    ├── usr/lib/easyproxy/node.sh
+    ├── usr/lib/easyproxy/maint.sh
+    ├── usr/lib/easyproxy/traffic.sh
+    ├── usr/lib/easyproxy/subscribe.sh
     ├── usr/lib/easyproxy/adapters/{dae.sh,sing-box.sh}
+    ├── usr/share/easyproxy/easyproxy.default
     ├── usr/share/luci/menu.d/luci-app-easyproxy.json
     ├── usr/share/rpcd/acl.d/luci-app-easyproxy.json
-    └── www/luci-static/resources/view/easyproxy/overview.js
+    ├── www/luci-static/resources/easyproxy/app.js
+    └── www/luci-static/resources/view/easyproxy/*.js   (10 views)
 scripts/
-├── make-ipk.sh          # build the all-arch .ipk from package/easyproxy
+├── make-ipk.sh          # build the ipk (all / x86_64 / ... ) from package/easyproxy
 ├── install.sh           # one-line installer used by the README
 └── uninstall.sh         # one-line uninstaller used by the README
 tests/
-├── test-cli.sh            # CLI surface (status/validate/engine/start guard)
-├── test-runtime.sh        # config generation + start/stop lifecycle
-├── test-routing.sh        # split routing, DNS block, rule-set handling
-├── test-transparent.sh    # tproxy inbound, nft/ip takeover, idempotent rollback
+├── test-cli.sh             # CLI surface (status/validate/engine/start guard)
+├── test-runtime.sh         # config generation + start/stop lifecycle
+├── test-routing.sh         # split routing, DNS block, rule-set handling
+├── test-transparent.sh     # tproxy inbound, nft/ip takeover, IPv6 policy, rollback
+├── test-engine.sh          # engine registry, health probes, node probe, dev refusal
+├── test-nodes.sh           # share-link parsing, groups, platform/custom rules
+├── test-maintenance.sh     # backup/restore/reset, ruleset update+verify, doctor, log rotate
+├── test-ipk-layout.sh      # ipk payload + control metadata, all and x86_64
 └── test-install-scripts.sh # installer/uninstaller against stubbed opkg/apk/curl
+docs/
+└── router-install-test.md  # step-by-step acceptance test on a real router
 ```
 
 ## Tests
@@ -280,16 +328,16 @@ All suites run on any Linux shell, without OpenWrt and without a real engine
 its own rule-set fixtures with the real binary when one is supplied):
 
 ```sh
-sh tests/test-cli.sh
-sh tests/test-runtime.sh
-sh tests/test-routing.sh
-sh tests/test-transparent.sh
-sh tests/test-install-scripts.sh
+for t in tests/test-*.sh; do sh "$t" || break; done
+
 # additionally validate the generated config against a real binary:
 EP_SING_BOX_BIN=/usr/bin/sing-box sh tests/test-runtime.sh
 EP_SING_BOX_BIN=/usr/bin/sing-box sh tests/test-routing.sh
 EP_SING_BOX_BIN=/usr/bin/sing-box sh tests/test-transparent.sh
 ```
+
+Nine suites, 360 checks: routing 32, transparent 85, nodes 61, engine 45,
+maintenance 39, install scripts 30, ipk layout 27, CLI 21, runtime 20.
 
 The install-script suite stubs `opkg`, `apk`, `curl` and the init/rpcd scripts
 in a sandbox, so it covers both package managers, the API-unreachable fallback,
@@ -302,9 +350,25 @@ without touching the host's firewall and without root.
 ## Build
 
 `.github/workflows/build.yml` downloads the official ImmortalWrt SDK
-(25.12.2, x86-64), copies `package/easyproxy` into it and builds
-`easyproxy_*` packages, then uploads the `easyproxy-immortalwrt-25.12.2-x86_64`
-artifact. Runs on push/PR to `main`, on `workflow_dispatch`, and on `v*` tags.
+(25.12.2, x86-64), copies `package/easyproxy` into it, runs the repo test
+suites, builds the native package and uploads the
+`easyproxy-immortalwrt-25.12.2-x86_64` artifact. Runs on push/PR to `main`, on
+`workflow_dispatch`, and on `v*` tags. A failing suite stops the build before
+anything is published.
+
+Every release carries four installable assets plus checksums:
+
+| Asset | For |
+|---|---|
+| `easyproxy_<ver>-1_all.ipk` | any opkg firmware, architecture-independent |
+| `easyproxy_<ver>-1_x86_64.ipk` | opkg firmware that refuses `Architecture: all` (x86_64 targets) |
+| `easyproxy-<ver>-1.apk` | ImmortalWrt 25.x images using `apk` |
+| `easyproxy-<ver>-rootfs.tar.gz` | no matching package manager: extract at `/` |
+| `SHA256SUMS` | verify the downloads |
+
+`sh scripts/make-ipk.sh package/easyproxy dist all` and
+`sh scripts/make-ipk.sh package/easyproxy dist x86_64` build the two ipk flavours
+locally; the architecture is stamped into the `control` member.
 
 ## Install
 
@@ -379,8 +443,11 @@ easyproxy status
 
 `config generate` needs network access the first time so the two `.srs` files
 can be cached. On a router without internet, copy `geosite-cn.srs` and
-`geoip-cn.srs` to `/etc/easyproxy/ruleset/` by hand and run it again — otherwise
-the split degrades to full proxy and `status` reports `rule_set_state: missing`.
+`geoip-cn.srs` to `/etc/easyproxy/ruleset/` by hand and run it again —
+`fail_closed` takes over until the two files are back: the config is generated
+all-direct, `config generate` exits non-zero, and `status` reports
+`rule_set_state: missing`. CN sites and the LAN never depend on them; only
+foreign sites wait.
 
 Capture is off by default. To let the router proxy the whole LAN:
 
@@ -407,6 +474,23 @@ nothing else on the router is modified. To stop EasyProxy entirely:
 `easyproxy stop` (which removes the capture first) and
 `uci set easyproxy.main.enabled='0'`.
 
+## Maintenance
+
+```sh
+easyproxy config backup        # /etc/easyproxy/backups/easyproxy-<date>.tar.gz
+easyproxy config restore <f>   # keeps <config>.before-restore first
+easyproxy config reset         # back to the packaged defaults, keeps .before-reset
+easyproxy ruleset update       # download .new then move it, a failure keeps the old file
+easyproxy ruleset verify       # exists / non-empty / SRS magic / plausible size
+easyproxy doctor [--json]      # 11 checks: locks, engines, rule sets, capture, config
+easyproxy log rotate           # <log> -> <log>.1, then truncate
+easyproxy uninstall-clean      # delete only EasyProxy's own nft objects
+```
+
+`uninstall-clean` is what `scripts/uninstall.sh` calls first, and it prints
+`stock ImmortalWrt rules untouched` — the router's own firewall is never
+rewritten, not even during removal.
+
 ## Roadmap
 
 | Stage | Scope |
@@ -415,8 +499,9 @@ nothing else on the router is modified. To stop EasyProxy entirely:
 | 2 | Panel reads real status/validation data |
 | 3 | sing-box config generation + procd-supervised runtime |
 | 4 | Split routing + DNS (China direct, others proxied), local rule sets |
-| **5 (current)** | Transparent capture: own nft table + policy routing, reversible in one command |
-| 6 | Operable panel: nodes, subscriptions, logs |
+| 5 | Transparent capture: own nft table + policy routing, reversible in one command |
+| **6 (current, 0.6.0)** | Engine registry, node/subscription import, maintenance CLI (`config backup/restore/reset`, `ruleset update/verify`, `doctor`, `log rotate`, `uninstall-clean`), ten-page panel |
+| 7 | Compile/install/uninstall verification: dual ipk, CI test gate, on-router install test |
 
 Transparent capture got its own stage because it is the one change that touches
 firewall state on the user's router. It is kept out of fw4 entirely and ships
