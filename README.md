@@ -3,39 +3,111 @@
 EasyProxy is a modular proxy-management package for ImmortalWrt, with a Chinese
 LuCI management panel.
 
-## Current stage — Stage 3: real runtime
+## Current stage — Stage 4: split routing and DNS
 
-Stage 3 leaves the scaffolding behind and manages an actual proxy process:
+Stage 4 turns the generated config into a real split-routing setup: Chinese
+domains and addresses go out through `direct`, everything else falls through to
+the node group, and DNS is split the same way.
 
 | Layer | What exists now |
 |---|---|
 | UCI config | `/etc/config/easyproxy` (global, routing, engine, node sections) |
 | Config generation | `easyproxy config generate` → sing-box JSON from `config node` sections, validated by `sing-box check` |
+| Split routing | `route.rules`: private IPs + CN rule sets → `direct`; `route.final` → `proxy` |
+| Rule sets | downloaded once by `config generate` into `rule_set_dir`, then referenced as **local** files |
+| DNS | `dns-local` (domestic, `detour: direct`) + `dns-remote` (DoH, `detour: proxy`); CN names resolve domestically |
 | Runtime | `easyproxy run` (foreground wrapper) supervised by procd with respawn |
 | CLI | `status`, `validate`, `engine`, `config generate`, `start`, `stop`, `restart`, `run`, `log` |
-| LuCI panel | `服务 → EasyProxy → 运行总览` shows live runtime state, pid, uptime and config state |
+| LuCI panel | `服务 → EasyProxy → 运行总览` shows runtime, split mode, rule-set state and config state |
 
-Stage 3 covers the **sing-box** engine only. Selecting `dae` is accepted by the
+Stage 4 covers the **sing-box** engine only. Selecting `dae` is accepted by the
 CLI, but `start` refuses it explicitly instead of pretending to run something.
-Split routing (China direct, everything else proxied) is still Stage 4: today the
-generated config exposes a mixed inbound on `127.0.0.1:7890` for clients that can
-use it, and routes everything through the `proxy` group.
+Transparent proxying (firewall/route table takeover) is deliberately *not* part
+of this stage — see the roadmap.
+
+### Why rule sets are local files
+
+A `type: remote` rule set makes the engine download on startup, and a failed
+download is fatal: `start service: initialize rule-set` kills the whole process,
+so the router cannot start the proxy at boot without internet (verified against
+sing-box 1.10.7). EasyProxy therefore fetches the two `.srs` files during
+`config generate`, stores them under `rule_set_dir`, and emits
+`{"type": "local", "path": ...}`.
+
+| Situation | Behaviour |
+|---|---|
+| files present and fresh | split routing active |
+| files missing, download succeeds | split routing active, files cached locally |
+| files missing, download fails | **warning**, generator still succeeds, split degrades to full proxy (only the private-IP rule survives) |
+| `china_policy='proxy'` | no CN rule at all, everything goes through the node group |
+| no enabled nodes | `route.final` and `dns.final` fall back to `direct` / `dns-local` |
+
+The engine start path (`easyproxy run`, and the procd `start_service`) never
+hits the network: downloads only happen in `config generate` / `easyproxy start`.
+
+### Generated config shape
+
+```json
+{
+  "log": { "level": "info", "timestamp": true },
+  "dns": {
+    "servers": [
+      { "tag": "dns-local",  "address": "223.5.5.5", "detour": "direct" },
+      { "tag": "dns-remote", "address": "https://1.1.1.1/dns-query", "detour": "proxy" }
+    ],
+    "rules": [
+      { "domain_suffix": [".cn"], "server": "dns-local" },
+      { "rule_set": ["geosite-cn"], "server": "dns-local" },
+      { "ip_is_private": true, "server": "dns-local" }
+    ],
+    "final": "dns-remote"
+  },
+  "inbounds": [ { "type": "mixed", "tag": "mixed-in", "listen": "127.0.0.1", "listen_port": 7890 } ],
+  "outbounds": [
+    /* one per enabled node */,
+    { "type": "urltest", "tag": "proxy", "outbounds": ["hk-01"], "url": "http://www.gstatic.com/generate_204", "interval": "5m", "tolerance": 50 },
+    { "type": "direct", "tag": "direct" }
+  ],
+  "route": {
+    "rules": [
+      { "ip_is_private": true, "outbound": "direct" },
+      { "rule_set": ["geosite-cn", "geoip-cn"], "outbound": "direct" }
+    ],
+    "rule_set": [
+      { "type": "local", "tag": "geosite-cn", "format": "binary", "path": "/etc/easyproxy/ruleset/geosite-cn.srs" },
+      { "type": "local", "tag": "geoip-cn", "format": "binary", "path": "/etc/easyproxy/ruleset/geoip-cn.srs" }
+    ],
+    "final": "proxy"
+  }
+}
+```
+
+### Routing options
+
+| UCI option | Default | Meaning |
+|---|---|---|
+| `routing.china_policy` | `direct` | `direct` = CN traffic bypasses the proxy |
+| `routing.proxy_policy` | `proxy` | group used for non-CN traffic and remote DNS |
+| `routing.fail_closed` | `1` | record only in this stage |
+| `routing.rule_set_dir` | `/etc/easyproxy/ruleset` | where the `.srs` files live |
+| `routing.geosite_cn_url` | SagerNet `geosite-cn.srs` | domain rule-set source |
+| `routing.geoip_cn_url` | SagerNet `geoip-cn.srs` | address rule-set source |
+| `routing.rule_set_update_days` | `7` | refresh a cached file older than this |
+| `routing.dns_local_server` | `223.5.5.5` | domestic resolver |
+| `routing.dns_remote_server` | `https://1.1.1.1/dns-query` | remote DoH resolver |
 
 ### Runtime model
 
 ```
-/etc/config/easyproxy          (nodes, engine, listen options)
+/etc/config/easyproxy            (nodes, engine, routing, DNS options)
+        ↓ ep_rule_set_ensure     (download .srs into rule_set_dir, cached)
         ↓ ep_config_build
-/etc/easyproxy/sing-box.json   (validated with `sing-box check`)
+/etc/easyproxy/sing-box.json     (validated with `sing-box check`)
         ↓ easyproxy run
-sing-box (child process)       ← procd supervises the wrapper, respawns on exit
+sing-box (child process)         ← procd supervises the wrapper, respawns on exit
         ↓ /var/run/easyproxy/easyproxy.pid  (pid + start timestamp)
-easyproxy status --json        (pid, uptime, config state)
+easyproxy status --json          (pid, uptime, config state, split state)
 ```
-
-`easyproxy run` is what procd executes. It generates the config, writes the pid
-file, starts the engine and waits for it. If the engine dies, the wrapper returns
-its exit code, so procd restarts the instance.
 
 ### Node schema
 
@@ -65,8 +137,8 @@ with the section named, rather than emitting a config that would fail later.
 {
   "ok": true,
   "package": "easyproxy",
-  "version": "0.3.0",
-  "stage": 3,
+  "version": "0.4.0",
+  "stage": 4,
   "enabled": 1,
   "engine": "sing-box",
   "binary": "/usr/bin/sing-box",
@@ -79,6 +151,10 @@ with the section named, rather than emitting a config that would fail later.
   "runtime": "running",
   "runtime_pid": 1234,
   "runtime_uptime": 87,
+  "china_rule": 1,
+  "route_rules": 2,
+  "dns_mode": "split",
+  "rule_set_state": "ready",
   "config_state": "ok",
   "config_path": "/etc/easyproxy/sing-box.json",
   "config_file": "/etc/config/easyproxy",
@@ -90,9 +166,12 @@ with the section named, rather than emitting a config that would fail later.
 |---|---|
 | `runtime` | `running` / `stopped`, read from the pid file, not from a flag |
 | `runtime_pid` / `runtime_uptime` | wrapper pid and seconds since it started (`0` when stopped) |
+| `china_rule` | `1` when the CN direct rule is generated, `0` when traffic is fully proxied |
+| `route_rules` | number of `route.rules` entries (`1` = private IP only, `2` = private IP + CN) |
+| `dns_mode` | `split` (domestic + remote resolvers) or `local` (single resolver) |
+| `rule_set_state` | `ready` / `missing`, from the `.srs` files on disk |
 | `config_state` | `ok` / `invalid` / `missing`, verified with `sing-box check` |
 | `nodes` / `nodes_enabled` | total node sections and how many are enabled |
-| `enabled` / `engine` / `binary_ok` | real UCI values |
 
 ### Data path
 
@@ -101,7 +180,7 @@ with the section named, rather than emitting a config that would fail later.
         ↓ (uci)
 /usr/sbin/easyproxy status --json
         ↓ (rpcd file.exec, ACL: luci-app-easyproxy)
-/view/easyproxy/overview.js  →  cards, runtime block, config check
+/view/easyproxy/overview.js  →  cards, split mode, rule-set state, config check
 ```
 
 ## Layout
@@ -121,19 +200,23 @@ package/easyproxy/
     └── www/luci-static/resources/view/easyproxy/overview.js
 tests/
 ├── test-cli.sh      # CLI surface (status/validate/engine/start guard)
-└── test-runtime.sh  # config generation + start/stop lifecycle
+├── test-runtime.sh  # config generation + start/stop lifecycle
+└── test-routing.sh  # split routing, DNS block, rule-set handling
 ```
 
 ## Tests
 
-Both suites run on any Linux shell, without OpenWrt and without a real engine
-(a stub `sing-box` is generated inside a temp sandbox):
+All suites run on any Linux shell, without OpenWrt and without a real engine
+(a stub `sing-box` is generated inside a temp sandbox; the routing suite compiles
+its own rule-set fixtures with the real binary when one is supplied):
 
 ```sh
 sh tests/test-cli.sh
 sh tests/test-runtime.sh
+sh tests/test-routing.sh
 # additionally validate the generated config against a real binary:
 EP_SING_BOX_BIN=/usr/bin/sing-box sh tests/test-runtime.sh
+EP_SING_BOX_BIN=/usr/bin/sing-box sh tests/test-routing.sh
 ```
 
 ## Build
@@ -160,15 +243,20 @@ Then configure and start it from the shell:
 uci set easyproxy.main.engine='sing-box'
 uci set easyproxy.main.enabled='1'
 uci commit easyproxy
-easyproxy config generate       # writes and validates /etc/easyproxy/sing-box.json
+easyproxy config generate       # downloads rule sets, writes and validates the config
 /etc/init.d/easyproxy enable
 /etc/init.d/easyproxy start
 easyproxy status
 ```
 
+`config generate` needs network access the first time so the two `.srs` files
+can be cached. On a router without internet, copy `geosite-cn.srs` and
+`geoip-cn.srs` to `/etc/easyproxy/ruleset/` by hand and run it again — otherwise
+the split degrades to full proxy and `status` reports `rule_set_state: missing`.
+
 To roll back: `easyproxy stop` and `uci set easyproxy.main.enabled='0'`. No
-firewall, DNS or route table changes are made in Stage 3, so nothing else is
-affected.
+firewall table or system-wide DNS is touched, so a client that is not pointed at
+`127.0.0.1:7890` is unaffected.
 
 ## Roadmap
 
@@ -176,9 +264,14 @@ affected.
 |---|---|
 | 1 | Packaging fix so the panel appears in LuCI |
 | 2 | Panel reads real status/validation data |
-| **3 (current)** | sing-box config generation + procd-supervised runtime |
-| 4 | Firewall/DNS split routing (China direct, others proxy) |
-| 5 | Operable panel: nodes, subscriptions, logs |
+| 3 | sing-box config generation + procd-supervised runtime |
+| **4 (current)** | Split routing + DNS (China direct, others proxied), local rule sets |
+| 5 | Transparent proxy: nftables/route takeover so LAN traffic is captured |
+| 6 | Operable panel: nodes, subscriptions, logs |
+
+Transparent proxying was moved behind the split because it rewrites firewall
+rules on the user's router; it is the one change that is not cheap to undo, so it
+gets its own stage with its own rollback path.
 
 ## License
 
