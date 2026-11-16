@@ -111,6 +111,16 @@ if [ "$1" = "rule" ]; then
 	esac
 	exit 0
 fi
+if [ "$1" = "addr" ] || [ "$1" = "-4" ] || [ "$1" = "-o" ]; then
+	# Only what the bypass builder needs: the router's own LAN IPv4 addresses.
+	dev="$(arg_after dev "$@")"
+	case "$dev" in
+		br-lan) echo "2: br-lan    inet 192.168.10.1/24 brd 192.168.10.255 scope global br-lan" ;;
+		br-guest) echo "3: br-guest    inet 10.10.10.10/24 brd 10.10.10.255 scope global br-guest" ;;
+		*) [ "$EP_TEST_IP_NOADDR" = "1" ] || echo "1: lo    inet 127.0.0.1/8 scope host lo" ;;
+	esac
+	exit 0
+fi
 if [ "$1" = "route" ]; then
 	case "$2" in
 		add) grep -q "route $tbl local default dev lo" "$S" || echo "route $tbl local default dev lo" >> "$S" ;;
@@ -221,6 +231,10 @@ out="$("$EP" transparent apply 2>&1)"; rc=$?
 grep -q 'table ip easyproxy' "$EP_NFT_FILE" && ok "独立 table ip easyproxy（不碰 fw4）" || no "独立 table ip easyproxy"
 grep -q '203.0.113.10' "$EP_NFT_FILE" && ok "节点服务器地址进入 bypass 集合" || no "节点服务器地址进入 bypass 集合" "$(cat "$EP_NFT_FILE")"
 grep -q '192.168.0.0/16' "$EP_NFT_FILE" && ok "私有网段进入 bypass 集合" || no "私有网段进入 bypass 集合"
+grep -q '10.0.0.0/8' "$EP_NFT_FILE" && ok "10.0.0.0/8 进入 bypass 集合" || no "10.0.0.0/8 进入 bypass 集合"
+grep -q '172.16.0.0/12' "$EP_NFT_FILE" && ok "172.16.0.0/12 进入 bypass 集合" || no "172.16.0.0/12 进入 bypass 集合"
+grep -q '10.10.10.10' "$EP_NFT_FILE" && ok "10.10.10.10 显式列入 bypass" || no "10.10.10.10 显式列入 bypass" "$(cat "$EP_NFT_FILE")"
+grep -q '192.168.10.1/32' "$EP_NFT_FILE" && ok "路由器自身 LAN 地址进入 bypass" || no "路由器自身 LAN 地址进入 bypass" "$(cat "$EP_NFT_FILE")"
 grep -q 'iifname != "br-lan"' "$EP_NFT_FILE" && ok "只接管 br-lan 入向流量" || no "只接管 br-lan 入向流量" "$(cat "$EP_NFT_FILE")"
 grep -q 'tproxy to :7891' "$EP_NFT_FILE" && ok "tproxy 指向 7891" || no "tproxy 指向 7891"
 grep -q 'meta mark set 1' "$EP_NFT_FILE" && ok "打上 fwmark 1" || no "打上 fwmark 1"
@@ -248,7 +262,8 @@ write_ucis 1 7891 1 100 "br-lan br-guest" "198.51.100.7/32"
 gen
 "$EP" transparent apply >/dev/null 2>&1
 grep -q '198.51.100.7/32' "$EP_NFT_FILE" && ok "transparent.exclude 进入 bypass 集合" || no "transparent.exclude 进入 bypass 集合" "$(cat "$EP_NFT_FILE")"
-grep -q 'iifname != { "br-lan", "br-guest" }' "$EP_NFT_FILE" && ok "多个接口渲染为集合" || no "多个接口渲染为集合" "$(cat "$EP_NFT_FILE")"
+grep -q 'iifname != { "br-lan", "br-guest" }' "$EP_NFT_FILE" && ok "多个接口渲染为集合" || no "多个接口渲染为集合"
+grep -q '10.10.10.10/32' "$EP_NFT_FILE" && ok "br-guest 的管理地址 10.10.10.10 以 /32 保护" || no "10.10.10.10/32 进入 bypass"
 
 # --- 9. remove rolls everything back -------------------------------------
 "$EP" transparent remove >/dev/null 2>&1; rc=$?
