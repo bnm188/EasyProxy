@@ -3,9 +3,13 @@
 'require uci';
 'require ui';
 
+// The panel's only exec target is this CLI. The ACL next to it grants exec on
+// exactly this path and nothing else: no /bin/sh, no helper script. A generic
+// shell in the ACL would let any ubus caller holding this ACL run arbitrary
+// commands as root, because `file exec` takes the program *and* its arguments
+// from the caller. Helper scripts are reached through `easyproxy traffic` /
+// `easyproxy subscribe`, which validate their arguments themselves.
 var BIN = '/usr/sbin/easyproxy';
-var TRAFFIC = '/usr/lib/easyproxy/traffic.sh';
-var SUBSCRIBE = '/usr/lib/easyproxy/subscribe.sh';
 
 var CSS = [
 '.ep-wrap{font-family:"Noto Sans SC","Segoe UI",system-ui,sans-serif;color:#c9d6e8}',
@@ -253,7 +257,7 @@ function trafficChart() {
 			window.clearInterval(timer);
 			return;
 		}
-		fs.exec('/bin/sh', [TRAFFIC]).then(function (r) {
+		run(['traffic']).then(function (r) {
 			var d = null;
 			try { d = JSON.parse(r.stdout); } catch (e) { d = null; }
 			if (!d || !d.ok)
@@ -454,7 +458,7 @@ function pageSubscription() {
 				if (!url)
 					return notify('请先填写订阅地址', 'error');
 				var name = valOf('ep-sub-name');
-				return fs.exec('/bin/sh', [SUBSCRIBE, url].concat(name ? [name] : [])).then(function (r) {
+				return run(['subscribe', url].concat(name ? [name] : [])).then(function (r) {
 					ui.showModal('订阅导入结果', [
 						E('pre', { class: 'ep-pre' }, ((r.stdout || '') + (r.stderr || '')).trim() || '(无输出)'),
 						E('div', { class: 'right' }, [
