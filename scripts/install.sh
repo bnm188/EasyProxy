@@ -712,7 +712,7 @@ check_disk_space() {
 # missing /etc/openwrt_release (a stripped image, a test sandbox) is reported
 # instead of guessed at; EP_SKIP_COMPAT=1 forces an install on an unknown one.
 check_firmware() {
-	local rel id ver release_mm
+	local rel id ver desc relver derivative release_mm major minor
 	rel="$ROOT/etc/openwrt_release"
 	if [ ! -r "$rel" ]; then
 		info "firmware: $rel is missing, the firmware family cannot be checked"
@@ -720,8 +720,23 @@ check_firmware() {
 	fi
 	id="$(sed -n "s/^DISTRIB_ID=['\"]*//p" "$rel" | sed "s/['\"][^'\"]*.*//" | head -1)"
 	ver="$(sed -n "s/^VERSION_ID=['\"]*//p" "$rel" | sed "s/['\"][^'\"]*.*//" | head -1)"
+	desc="$(sed -n "s/^DISTRIB_DESCRIPTION=['\"]*//p" "$rel" | sed "s/['\"][^'\"]*.*//" | head -1)"
+	relver="$(sed -n "s/^DISTRIB_RELEASE=['\"]*//p" "$rel" | sed "s/['\"][^'\"]*.*//" | head -1)"
+	derivative=0
 	case "$id" in
 		ImmortalWrt|OpenWrt|LEDE|immortalwrt|openwrt) : ;;
+		Kwrt|kwrt|KWRT)
+			# Kwrt (dl.openwrt.ai, Kiddin9's builds) is an OpenWrt derivative,
+			# not a fork of its own: real images carry DISTRIB_ID='Kwrt' and
+			# DISTRIB_RELEASE='25.12-SNAPSHOT' with no VERSION_ID line, so the
+			# OpenWrt baseline has to come from DISTRIB_RELEASE (falling back to
+			# DISTRIB_DESCRIPTION). Its package manager is still opkg even on
+			# 25.12 bases, which detect_pm settles by asking the firmware.
+			derivative=1
+			[ -n "${ver:-}" ] || ver="${relver:-}"
+			if [ -z "${ver:-}" ] && [ -n "${desc:-}" ]; then
+				ver="$(printf '%s' "$desc" | sed "s/^${id}[[:space:]]*//")"
+			fi ;;
 		*)
 			if [ "${EP_SKIP_COMPAT:-}" = 1 ]; then
 				info "firmware: ${id:-unknown} is not verified, EP_SKIP_COMPAT=1 forces the install"
@@ -730,20 +745,71 @@ check_firmware() {
 			die "firmware: ${id:-unknown} is not OpenWrt/ImmortalWrt; this build targets 21.02 or newer (EP_SKIP_COMPAT=1 forces the install)" ;;
 	esac
 	if [ -z "${ver:-}" ]; then
+		if [ "$derivative" = 1 ]; then
+			if [ "${EP_SKIP_COMPAT:-}" = 1 ]; then
+				info "firmware: $id states no release at all, EP_SKIP_COMPAT=1 forces the install"
+				return 0
+			fi
+			die "firmware: $id states no DISTRIB_RELEASE, the OpenWrt baseline cannot be confirmed; this build needs 21.02 or newer (EP_SKIP_COMPAT=1 forces the install)"
+		fi
 		info "firmware: $id has no VERSION_ID, the release cannot be checked"
 		return 0
 	fi
-	release_mm="$(printf '%s' "$ver" | awk -F. '{ printf "%s.%s", $1, $2 }')"
-	case "$release_mm" in
-		2[1-9].*|3[0-9].*|[4-9][0-9].*) : ;;
-		*)
-			if [ "${EP_SKIP_COMPAT:-}" = 1 ]; then
-				info "firmware: $id $ver is not verified, EP_SKIP_COMPAT=1 forces the install"
-				return 0
-			fi
-			die "firmware: $id $ver is older than 21.02; this build needs 21.02 or newer (EP_SKIP_COMPAT=1 forces the install)" ;;
+	# 21.02 / 23.05 / 25.12 - the leading NN.mm token, so '25.12-SNAPSHOT' and
+	# 'Kwrt 25.12-SNAPSHOT 10.11.2026' both resolve. Build dates (10.11.2026)
+	# do not match, because the year part starts at 12.
+	release_mm="$(printf '%s' "$ver" | grep -oE '(1[2-9]|2[0-9]|3[0-9])\.[0-9][0-9]' | head -1)"
+	if [ -z "$release_mm" ]; then
+		if [ "${EP_SKIP_COMPAT:-}" = 1 ]; then
+			info "firmware: $id ${ver} states no OpenWrt baseline, EP_SKIP_COMPAT=1 forces the install"
+			return 0
+		fi
+		die "firmware: $id ${ver} states no OpenWrt baseline (expected a release like 23.05 or 25.12); this build needs 21.02 or newer (EP_SKIP_COMPAT=1 forces the install)"
+	fi
+	major="${release_mm%%.*}"
+	minor="${release_mm#*.}"
+	minor="${minor#0}"
+	if [ "$major" -lt 21 ] || { [ "$major" -eq 21 ] && [ "$minor" -lt 2 ]; }; then
+		if [ "${EP_SKIP_COMPAT:-}" = 1 ]; then
+			info "firmware: $id $ver is not verified, EP_SKIP_COMPAT=1 forces the install"
+			return 0
+		fi
+		die "firmware: $id $ver is older than 21.02; this build needs 21.02 or newer (EP_SKIP_COMPAT=1 forces the install)"
+	fi
+	if [ "$derivative" = 1 ]; then
+		info "firmware: $id $ver (OpenWrt $release_mm derivative)"
+	else
+		info "firmware: $id $ver"
+	fi
+}
+
+# The panel ipk and the kernel ipks exist for three families only; anything else
+# (mipsel_24kc, arm_cortex-a9, ...) would install files the device cannot run, so
+# name the architecture and stop instead of failing somewhere deeper.
+check_arch() {
+	local a m
+	a="$(host_ipk_arch)"
+	m="$(uname -m 2>/dev/null)"
+	case "$a" in
+		x86_64|amd64|aarch64*|armv7*|armv6*) return 0 ;;
 	esac
-	info "firmware: $id $ver"
+	if [ -z "$a" ]; then
+		case "$m" in
+			x86_64|amd64|aarch64|arm64|armv7l|armv7) return 0 ;;
+		esac
+	fi
+	# The panel ships an `_all.ipk` (architecture independent), so it still
+	# installs here; the kernels do not, and the kernel step says so if asked.
+	info "arch: ${a:-$m} is outside x86_64/aarch64/armv7; the panel installs, but this build carries no kernel for that architecture"
+}
+
+# The panel is a LuCI app: installing it without LuCI leaves a package that no
+# menu ever shows. Report that instead of letting the user hunt for a missing
+# page; opkg still pulls luci-base from the feeds when it can.
+check_luci() {
+	[ -r "$ROOT/usr/share/luci/menu.d" ] && return 0
+	[ -d "$ROOT/usr/lib/lua/luci" ] && return 0
+	info "luci: $ROOT/usr/share/luci/menu.d is missing; the easyproxy menu appears only after luci-base is installed"
 }
 
 # --- actions -------------------------------------------------------------
@@ -860,6 +926,8 @@ print_summary() {
 
 do_install() {
 	check_firmware
+	check_luci
+	check_arch
 	check_disk_space
 	mkwork
 	install_package || die "the package could not be installed; nothing was installed"
@@ -1051,6 +1119,8 @@ do_upgrade() {
 	fi
 
 	check_firmware
+	check_luci
+	check_arch
 	check_disk_space
 	backup_config || true
 

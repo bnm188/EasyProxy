@@ -3,10 +3,10 @@
 EasyProxy 是给 ImmortalWrt 用的模块化代理管理包：一条 SSH 命令装好「面板 + sing-box + dae」三件套，装完在 LuCI 的「服务 → EasyProxy」里用中文面板管理节点、分流、透明代理和维护。
 
 - 当前版本：**0.7.0**（Release `v0.7.0`）
-- 适用固件：ImmortalWrt（`opkg` 与 `apk` 两种都支持，也支持 rootfs 直接展开）
+- 适用固件：ImmortalWrt、OpenWrt（`opkg` 与 `apk` 两种都支持，也支持 rootfs 直接展开），以及 Kwrt（`dl.openwrt.ai` 构建，需 OpenWrt 21.02 及以上基线）
 - 内核架构：`x86_64`、`aarch64_cortex-a53`、`arm_cortex-a7_neon-vfpv4`
 - 面板：10 个中文页面
-- 测试：12 套 **578** 项（`tests/run-all.sh` 是唯一计数来源），CI 会下载并校验 pinned **sing-box 1.14.4** 后跑真实内核 `check`
+- 测试：12 套 **591** 项（`tests/run-all.sh` 是唯一计数来源），CI 会下载并校验 pinned **sing-box 1.14.4** 后跑真实内核 `check`
 
 ---
 
@@ -72,7 +72,7 @@ wget -qO- https://raw.githubusercontent.com/bnm188/EasyProxy/main/scripts/instal
 wget -qO- https://raw.githubusercontent.com/bnm188/EasyProxy/main/scripts/uninstall.sh | sh
 ```
 
-`opkg` 与 `apk` 固件都支持；`api.github.com` 被限流时会按 `PKG_VERSION` 拼出资产地址；命令可重复执行。想先看再跑：
+`opkg` 与 `apk` 固件都支持，Kwrt 也在识别范围内（见下节）；`api.github.com` 被限流时会按 `PKG_VERSION` 拼出资产地址；命令可重复执行。想先看再跑：
 
 ```sh
 wget -O /tmp/install.sh https://raw.githubusercontent.com/bnm188/EasyProxy/main/scripts/install.sh
@@ -93,13 +93,31 @@ sh /tmp/install.sh
 
 安装器会做这些事：
 
-1. 检测固件（`opkg` / `apk`），两者都没有且没加 `--rootfs` 就停止；
+1. 检测固件：`ImmortalWrt` / `OpenWrt` 认 `VERSION_ID`，Kwrt 认 `DISTRIB_RELEASE`（它的镜像没有 `VERSION_ID`），两者都必须能解析出 OpenWrt 基线且不低于 21.02；包管理器（`opkg` / `apk`）两者都没有且没加 `--rootfs` 就停止；
 2. 从最新 Release 挑匹配本机架构的资产（opkg 优先架构包，拿不到再退 `_all.ipk`）；
 3. **每个下载都先过 `SHA256SUMS`**，校验不过最多重下 3 次（CDN 边缘可能给旧对象），仍不过就失败；
 4. 按「面板 → sing-box → dae」顺序安装，各自来自自己的 Release 资产；没有现成资产时用脚本内固定 sha256 的上游包，解开确认是真正的 ELF 再落到 `/usr/bin/`；
 5. 把装了什么记进 `/etc/easyproxy/owned/`，以后卸载只删这些，用户自己装的 sing-box/dae 不会被碰；
 6. 把 `easyproxy.sing_box.binary` / `easyproxy.dae.binary` 指向它们，`main.engine` 为空时才补值；启用服务并重启 `rpcd` 让菜单出现；
 7. 对两个内核各跑一次 `version`，打印分组件小结，任何一个没装好就退出非 0。
+
+### Kwrt 固件
+
+Kwrt（`dl.openwrt.ai` 上的构建）是基于 OpenWrt 的衍生固件，安装器把它和 ImmortalWrt、OpenWrt 一样当作受支持对象，但判定依据不同：
+
+| 项 | 实测值（取自 `kwrt-10.08.2026-ramips-mt7621-…-rootfs.tar.gz` 的 `/etc/openwrt_release`） |
+|---|---|
+| `DISTRIB_ID` | `Kwrt` |
+| `DISTRIB_RELEASE` | `25.12-SNAPSHOT` |
+| `VERSION_ID` | **没有这一行**，所以版本只能从 `DISTRIB_RELEASE` / `DISTRIB_DESCRIPTION` 取 |
+| 包管理器 | `opkg`（镜像里有 `/bin/opkg`、`/etc/opkg/distfeeds.conf`，没有 `apk`；即使 25.12 基线也没换 apk） |
+| LuCI | 自带 `luci-base`、`/usr/share/luci/menu.d`、`/usr/share/rpcd/acl.d`，面板依赖满足 |
+
+- 基线 ≥ 21.02：放行，日志写明 `firmware: Kwrt 25.12-SNAPSHOT (OpenWrt 25.12 derivative)`；
+- 基线 < 21.02（例如 19.07）：拒绝并写明低于 21.02；
+- 版本号解析不出来（如只有 `SNAPSHOT`）：拒绝并说明无法确认基线，不再默默放过；
+- 架构不在 `x86_64` / `aarch64` / `armv7`（例如 `mipsel_24kc`）：`_all.ipk` 面板照装，但会明确提示这个构建没有该架构的内核包；
+- 确认过版本仍要强装：`EP_SKIP_COMPAT=1`（日志会标注是强制安装）。
 
 ### 装完还不能直接用（重要）
 

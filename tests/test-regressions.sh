@@ -158,7 +158,7 @@ cat > "$SBI/bin/opkg" <<STUB
 #!/bin/sh
 printf 'opkg %s\n' "\$*" >> "$SBI/log/pm.log"
 case "\$1" in
-	print-architecture) printf 'all 1\nx86_64 10\n' ;;
+	print-architecture) printf 'all 1\n%s 10\n' "\${EP_TEST_ARCH:-x86_64}" ;;
 	list-installed) printf 'easyproxy - %s\n' "\${EP_TEST_PKG_VER:-0.6.0-1}" ;;
 	install)
 		if [ -f "$SBI/log/fail_pm" ]; then
@@ -201,6 +201,7 @@ run_installer() {
 		EP_RAW_BASE="https://raw.test/main" \
 		EP_SING_BOX_BIN="$SBI/bin/sb-probe" EP_DAE_BIN="$SBI/bin/dae-probe" \
 		EP_MIN_FREE_KB="${EP_MIN_FREE_KB:-}" EP_SKIP_COMPAT="${EP_SKIP_COMPAT:-}" \
+		EP_TEST_ARCH="${EP_TEST_ARCH:-}" \
 		EP_TEST_PKG_VER="${EP_TEST_PKG_VER:-0.6.0-1}" \
 		sh "$INSTALL" "$@"
 }
@@ -239,6 +240,52 @@ printf '%s' "$OUT" | grep -qi 'firmware' && ok "拒绝理由写明固件不兼�
 printf "DISTRIB_ID='ImmortalWrt'\nDISTRIB_RELEASE='25.12.2'\nVERSION_ID='25.12.2'\n" > "$SBI/root/etc/openwrt_release"
 OUT="$(run_installer --ipk --no-engine 2>&1)"; RC=$?
 [ "$RC" -eq 0 ] && ok "ImmortalWrt 25.12.2 通过兼容检查（rc=0）" || no "ImmortalWrt 25.12.2 通过兼容检查" "rc=$RC $(printf '%s' "$OUT" | tail -3)"
+
+# --- D7d: Kwrt (OpenWrt derivative) recognition -----------------------------
+# The values below are copied verbatim from a real Kwrt image
+# (dl.openwrt.ai/releases/targets/ramips/mt7621/kwrt-10.08.2026-...-rootfs.tar.gz):
+# DISTRIB_ID='Kwrt', DISTRIB_RELEASE='25.12-SNAPSHOT' and no VERSION_ID line.
+say ""
+say "== D7d Kwrt 固件识别 =="
+kwrt_rel() {
+	printf "DISTRIB_ID='Kwrt'\nDISTRIB_RELEASE='%s'\nDISTRIB_REVISION='10.11.2026'\nDISTRIB_TARGET='x86/64'\nDISTRIB_ARCH='x86_64'\nDISTRIB_DESCRIPTION='%s'\nDISTRIB_TAINTS='busybox override'\n" "$1" "$2" > "$SBI/root/etc/openwrt_release"
+}
+sb_reset
+kwrt_rel '25.12-SNAPSHOT' 'Kwrt 25.12-SNAPSHOT 10.11.2026'
+OUT="$(run_installer --ipk --no-engine 2>&1)"; RC=$?
+[ "$RC" -eq 0 ] && ok "Kwrt 25.12-SNAPSHOT 被识别并放行（rc=0）" || no "Kwrt 25.12-SNAPSHOT 被识别并放行" "rc=$RC $(printf '%s' "$OUT" | tail -3)"
+printf '%s' "$OUT" | grep -q 'Kwrt 25.12' && ok "放行日志写明 Kwrt 与其 OpenWrt 基线版本" || no "放行日志写明 Kwrt 与基线版本" "$(printf '%s' "$OUT" | grep -i firmware | tail -2)"
+sb_reset
+kwrt_rel '23.05.5' 'Kwrt 23.05.5 09.08.2025'
+OUT="$(run_installer --ipk --no-engine 2>&1)"; RC=$?
+[ "$RC" -eq 0 ] && ok "Kwrt 23.05.5 同样放行（rc=0）" || no "Kwrt 23.05.5 同样放行" "rc=$RC $(printf '%s' "$OUT" | tail -3)"
+sb_reset
+kwrt_rel '19.07.10' 'Kwrt 19.07.10'
+OUT="$(run_installer --ipk --no-engine 2>&1)"; RC=$?
+[ "$RC" -ne 0 ] && ok "Kwrt 19.07（低于 21.02）被拒绝（rc=$RC）" || no "Kwrt 19.07 被拒绝" "rc=$RC $(printf '%s' "$OUT" | tail -3)"
+printf '%s' "$OUT" | grep -q '21.02' && ok "拒绝理由写明 21.02 基线" || no "拒绝理由写明 21.02 基线" "$(printf '%s' "$OUT" | tail -3)"
+sb_reset
+kwrt_rel 'SNAPSHOT' 'Kwrt'
+OUT="$(run_installer --ipk --no-engine 2>&1)"; RC=$?
+[ "$RC" -ne 0 ] && ok "Kwrt 无版本号时拒绝安装（不能确认基线，rc=$RC）" || no "Kwrt 无版本号时拒绝安装" "rc=$RC $(printf '%s' "$OUT" | tail -3)"
+printf '%s' "$OUT" | grep -q 'Kwrt' && ok "无法确认版本时的拒绝理由点名 Kwrt" || no "拒绝理由点名 Kwrt" "$(printf '%s' "$OUT" | tail -3)"
+sb_reset
+kwrt_rel 'SNAPSHOT' 'Kwrt'
+OUT="$(EP_SKIP_COMPAT=1 run_installer --ipk --no-engine 2>&1)"; RC=$?
+[ "$RC" -eq 0 ] && ok "EP_SKIP_COMPAT=1 仍可强制装 Kwrt（rc=0）" || no "EP_SKIP_COMPAT=1 强制装 Kwrt" "rc=$RC $(printf '%s' "$OUT" | tail -3)"
+sb_reset
+kwrt_rel '25.12-SNAPSHOT' 'Kwrt 25.12-SNAPSHOT 10.11.2026'
+OUT="$(run_installer --ipk --no-engine 2>&1)"
+printf '%s' "$OUT" | grep -q 'luci:' && ok "缺少 LuCI 时提示面板菜单不会出现" || no "缺少 LuCI 时提示" "$(printf '%s' "$OUT" | tail -3)"
+mkdir -p "$SBI/root/usr/share/luci/menu.d"
+OUT="$(run_installer --ipk --no-engine 2>&1)"
+printf '%s' "$OUT" | grep -q 'luci:' && no "装有 LuCI 时不再提示" "$(printf '%s' "$OUT" | grep 'luci:' | tail -2)" || ok "装有 LuCI 时不再提示"
+sb_reset
+kwrt_rel '25.12-SNAPSHOT' 'Kwrt 25.12-SNAPSHOT 10.11.2026'
+OUT="$(EP_TEST_ARCH=mipsel_24kc run_installer --ipk --no-engine 2>&1)"; RC=$?
+[ "$RC" -eq 0 ] && ok "Kwrt mipsel_24kc 仍能装面板（_all.ipk 架构无关，rc=0）" || no "Kwrt mipsel_24kc 装面板" "rc=$RC $(printf '%s' "$OUT" | tail -3)"
+printf '%s' "$OUT" | grep -q 'mipsel_24kc' && ok "架构提示点名实际架构" || no "架构提示点名实际架构" "$(printf '%s' "$OUT" | tail -3)"
+printf '%s' "$OUT" | grep -q 'no kernel for that architecture' && ok "明确提示该架构没有内核包（不会硬装）" || no "提示没有内核包" "$(printf '%s' "$OUT" | tail -3)"
 
 # --- D7c: config backup + package rollback ----------------------------------
 say ""
