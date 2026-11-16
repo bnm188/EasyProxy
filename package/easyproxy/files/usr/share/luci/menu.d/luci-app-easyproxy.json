@@ -1,0 +1,14 @@
+{
+	"admin/services/easyproxy": {
+		"title": "EasyProxy",
+		"order": 60,
+		"action": {
+			"type": "view",
+			"path": "easyproxy/overview"
+		},
+		"depends": {
+			"acl": [ "luci-app-easyproxy" ],
+			"uci": [ "easyproxy" ]
+		}
+	}
+}

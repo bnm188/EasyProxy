@@ -1,0 +1,17 @@
+{
+	"luci-app-easyproxy": {
+		"description": "Read EasyProxy status through the CLI and edit its UCI configuration",
+		"read": {
+			"uci": [ "easyproxy" ],
+			"file": {
+				"/usr/sbin/easyproxy": [ "exec" ]
+			}
+		},
+		"write": {
+			"uci": [ "easyproxy" ],
+			"file": {
+				"/usr/sbin/easyproxy": [ "exec" ]
+			}
+		}
+	}
+}
