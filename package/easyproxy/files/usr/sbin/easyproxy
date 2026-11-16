@@ -2,13 +2,14 @@
 
 . /usr/lib/easyproxy/common.sh
 . /usr/lib/easyproxy/config.sh
+. /usr/lib/easyproxy/transparent.sh
 
 PROG="easyproxy"
 SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
 
 usage() {
 	cat <<EOF
-EasyProxy ${EP_VERSION} — Stage ${EP_STAGE} (runtime + split routing)
+EasyProxy ${EP_VERSION} — Stage ${EP_STAGE} (runtime + split routing + transparent capture)
 Usage:
   easyproxy status [--json]        Show configuration and runtime status
   easyproxy validate [--json]      Validate configuration values
@@ -18,6 +19,9 @@ Usage:
   easyproxy stop                   Stop the managed runtime
   easyproxy restart                Restart the managed runtime
   easyproxy run                    Run in the foreground (used by procd)
+  easyproxy transparent status     Show transparent capture state
+  easyproxy transparent apply      Capture LAN traffic (nftables + policy routing)
+  easyproxy transparent remove     Roll the capture back
   easyproxy log                    Show recent log lines
   easyproxy help                   Show this help
 EOF
@@ -70,6 +74,20 @@ cmd_status_text() {
 	else
 		printf 'Routing: all traffic proxied (china_policy=proxy)\n'
 	fi
+	case "$(ep_transparent_state)" in
+		active)
+			printf 'Transparent: active (%s, tproxy 0.0.0.0:%s)\n' \
+				"$(ep_transparent_ifaces)" "$(ep_tproxy_port)" ;;
+		unsupported)
+			printf 'Transparent: unsupported (nft not available)\n' ;;
+		*)
+			if ep_transparent_enabled; then
+				printf 'Transparent: configured but not applied (%s)\n' "$(ep_transparent_ifaces)"
+			else
+				printf 'Transparent: disabled\n'
+			fi
+			;;
+	esac
 	printf 'Runtime: %s' "$runtime"
 	[ "$runtime" = "running" ] && printf ' (pid %s, up %ss)' "$pid" "$up"
 	printf '\n'
@@ -80,6 +98,7 @@ cmd_status_text() {
 cmd_status_json() {
 	local enabled engine binary bstate china proxy fail_closed nodes
 	local runtime pid up config_state config_path nodes_enabled china_rule route_rules dns_mode rule_set_state
+	local transparent tproxy_port tproxy_state
 	enabled="$(ep_bool "$(ep_get main enabled 0)")"
 	engine="$(ep_get main engine none)"
 	binary="$(ep_engine_binary "$engine")"
@@ -92,6 +111,10 @@ cmd_status_json() {
 	[ -n "$nodes" ] || nodes="0"
 	[ -n "$nodes_enabled" ] || nodes_enabled="0"
 	rule_set_state="$(ep_rule_set_state)"
+	transparent="$(ep_bool "$(ep_get transparent enabled 0)")"
+	tproxy_port="$(ep_tproxy_port)"
+	tproxy_state="$(ep_transparent_state)"
+
 	if [ "$china" = "direct" ] && [ "$nodes_enabled" -gt 0 ] && [ "$rule_set_state" = "ready" ]; then
 		china_rule=1
 		route_rules=2
@@ -108,7 +131,7 @@ cmd_status_json() {
 	config_path="$(ep_engine_config_path "$engine")"
 	config_state="$(ep_config_state)"
 
-	printf '{"ok":true,"package":"%s","version":"%s","stage":%s,"enabled":%s,"engine":"%s","binary":"%s","binary_ok":%s,"china_policy":"%s","proxy_policy":"%s","fail_closed":%s,"nodes":%s,"nodes_enabled":%s,"runtime":"%s","runtime_pid":%s,"runtime_uptime":%s,"china_rule":%s,"route_rules":%s,"dns_mode":"%s","rule_set_state":"%s","config_state":"%s","config_path":"%s","config_file":"%s","generated":"%s"}\n' \
+	printf '{"ok":true,"package":"%s","version":"%s","stage":%s,"enabled":%s,"engine":"%s","binary":"%s","binary_ok":%s,"china_policy":"%s","proxy_policy":"%s","fail_closed":%s,"nodes":%s,"nodes_enabled":%s,"runtime":"%s","runtime_pid":%s,"runtime_uptime":%s,"china_rule":%s,"route_rules":%s,"dns_mode":"%s","rule_set_state":"%s","transparent":%s,"tproxy_port":%s,"tproxy_state":"%s","config_state":"%s","config_path":"%s","config_file":"%s","generated":"%s"}\n' \
 		"$(ep_json_escape "$PROG")" \
 		"$(ep_json_escape "$EP_VERSION")" \
 		"$EP_STAGE" \
@@ -128,6 +151,9 @@ cmd_status_json() {
 		"$route_rules" \
 		"$dns_mode" \
 		"$(ep_json_escape "$rule_set_state")" \
+		"$transparent" \
+		"$tproxy_port" \
+		"$(ep_json_escape "$tproxy_state")" \
 		"$(ep_json_escape "$config_state")" \
 		"$(ep_json_escape "$config_path")" \
 		"$(ep_json_escape "$EP_CONFIG_FILE")" \
@@ -302,17 +328,29 @@ cmd_start() {
 	while [ "$i" -lt 5 ]; do
 		if [ "$(ep_runtime_state)" = "running" ]; then
 			echo "EasyProxy started (pid $(ep_pid))."
+			if ep_transparent_enabled; then
+				if ep_transparent_apply; then
+					echo "Transparent capture applied ($(ep_transparent_ifaces) → tproxy 0.0.0.0:$(ep_tproxy_port))."
+				else
+					printf 'Warning: transparent capture not applied: %s\n' "$EP_ERR" >&2
+				fi
+			fi
 			return 0
 		fi
 		sleep 1
 		i=$((i + 1))
 	done
 	echo "EasyProxy failed to start; see $EP_LOG_FILE" >&2
+	if ep_transparent_enabled; then
+		echo "Hint: transparent capture is enabled. If the log shows 'configure tproxy TCP listener: operation not permitted', the kernel lacks nftables TPROXY support; install the tproxy kmod or set easyproxy.transparent.enabled=0." >&2
+	fi
 	return 1
 }
 
 cmd_stop() {
 	local pid i
+	# Drop the capture first: captured packets must not land on a closing port.
+	ep_transparent_remove
 	if [ -x /etc/init.d/easyproxy ]; then
 		/etc/init.d/easyproxy stop >/dev/null 2>&1
 	fi
@@ -338,6 +376,58 @@ cmd_stop() {
 cmd_restart() {
 	cmd_stop >/dev/null
 	cmd_start
+}
+
+cmd_transparent() {
+	local action state
+	action="${1:-status}"
+	state="$(ep_transparent_state)"
+	case "$action" in
+		status)
+			if [ "$JSON" = "1" ]; then
+				printf '{"ok":true,"enabled":%s,"state":"%s","port":%s,"fwmark":%s,"route_table":%s,"interfaces":"%s","nft":"%s","nft_available":%s,"file":"%s","generated":"%s"}\n' \
+					"$(ep_bool "$(ep_get transparent enabled 0)")" \
+					"$(ep_json_escape "$state")" \
+					"$(ep_tproxy_port)" \
+					"$(ep_transparent_fwmark)" \
+					"$(ep_transparent_route_table)" \
+					"$(ep_json_escape "$(ep_transparent_ifaces)")" \
+					"$(ep_json_escape "$EP_NFT_BIN")" \
+					"$([ "$state" = "unsupported" ] && printf 'false' || printf 'true')" \
+					"$(ep_json_escape "$EP_NFT_FILE")" \
+					"$(ep_utc_now)"
+			else
+				printf 'Enabled: %s\n' "$(ep_bool "$(ep_get transparent enabled 0)")"
+				printf 'State: %s\n' "$state"
+				printf 'Capture: %s → tproxy 0.0.0.0:%s\n' "$(ep_transparent_ifaces)" "$(ep_tproxy_port)"
+				printf 'Fwmark: %s (route table %s)\n' "$(ep_transparent_fwmark)" "$(ep_transparent_route_table)"
+				printf 'Rule file: %s\n' "$EP_NFT_FILE"
+			fi
+			;;
+		apply)
+			if ep_transparent_apply; then
+				printf 'Transparent capture applied: %s → tproxy 0.0.0.0:%s (fwmark %s, table %s)\n' \
+					"$(ep_transparent_ifaces)" "$(ep_tproxy_port)" \
+					"$(ep_transparent_fwmark)" "$(ep_transparent_route_table)"
+				printf 'Rules: %s\n' "$EP_NFT_FILE"
+			else
+				if [ "$JSON" = "1" ]; then
+					printf '{"ok":false,"error":"%s"}\n' "$(ep_json_escape "$EP_ERR")"
+				fi
+				printf 'Transparent capture failed: %s\n' "$EP_ERR" >&2
+				return 1
+			fi
+			;;
+		remove)
+			ep_transparent_remove
+			echo "Transparent capture removed."
+			;;
+		*)
+			echo "Unknown transparent action: $action" >&2
+			return 2
+			;;
+	esac
+	return 0
 }
 
 cmd_run() {
@@ -408,6 +498,14 @@ case "$CMD" in
 		esac
 		;;
 	start) cmd_start ;;
+	transparent)
+		case "$SUB" in
+			apply) cmd_transparent apply ;;
+			remove|down|off) cmd_transparent remove ;;
+			status|"") cmd_transparent status ;;
+			*) echo "Unknown transparent action: $SUB" >&2; exit 2 ;;
+		esac
+		;;
 	stop) cmd_stop ;;
 	restart) cmd_restart ;;
 	run) cmd_run ;;
