@@ -64,6 +64,10 @@ return view.extend({
 		var runUp = Number(d.runtime_uptime || 0);
 		var nodesEnabled = Number(d.nodes_enabled || 0);
 		var configState = d.config_state || 'missing';
+		var chinaRule = Number(d.china_rule || 0) === 1;
+		var routeRules = Number(d.route_rules || 0);
+		var dnsMode = d.dns_mode || 'local';
+		var ruleSetState = d.rule_set_state || 'missing';
 
 		var css = `
 		.ep-shell {
@@ -338,7 +342,12 @@ return view.extend({
 		var configText = configState === 'ok' ? '已生成且有效'
 			: (configState === 'invalid' ? '已生成但校验失败' : '尚未生成');
 
-		var chinaText = china === 'direct' ? '直连 DIRECT' : (china ? china.toUpperCase() : '—');
+		var splitText = chinaRule ? '大陆直连' : '全代理';
+		var splitNote = chinaRule
+			? ('规则 ' + routeRules + ' 条 · DNS ' + dnsMode)
+			: (ruleSetState === 'missing' ? '规则集缺失 · 已降级' : 'china_policy=proxy');
+		var ruleSetText = ruleSetState === 'ready' ? '已就绪' : '缺失';
+		var dnsText = dnsMode === 'split' ? '分流（国内 DNS / 远程 DoH）' : '单上游（国内 DNS）';
 		var failNote = failClosed ? '故障保护：开启' : '故障保护：关闭';
 
 		var enginePanel = E('div', {}, [
@@ -369,8 +378,10 @@ return view.extend({
 			E('div', {}, '✓ 国外流量：' + String(proxy).toUpperCase()),
 			E('div', {}, (failClosed ? '✓ ' : '⚠ ') + '故障保护：' + (failClosed ? '已开启（fail-closed）' : '已关闭（fail-open）')),
 			E('div', {}, (enabled ? '✓ ' : '⚠ ') + '总开关：' + (enabled ? '已启用' : '未启用')),
+			E('div', {}, (ruleSetState === 'ready' ? '✓ ' : '⚠ ') + '大陆规则集：' + ruleSetText),
+			E('div', {}, '◎ DNS：' + dnsText),
 			E('div', { 'class': 'ep-muted' },
-				'以上取值读取自 /etc/config/easyproxy；Stage 3 已管理内核进程，分流规则在 Stage 4 生效。')
+				'大陆规则集由 easyproxy config generate 下载到本地后引用，内核启动不再联网下载。')
 		]);
 
 		var checkLines = messages.length
@@ -395,7 +406,7 @@ return view.extend({
 			E('div', { 'class': 'ep-empty' }, [
 				E('span', {}, '▤'),
 				E('div', {}, '暂无流量采集数据'),
-				E('div', { 'class': 'ep-muted', 'style': 'margin-top:0' }, 'Stage 3 已接管内核进程，流量曲线待后续阶段接入')
+				E('div', { 'class': 'ep-muted', 'style': 'margin-top:0' }, '流量曲线待后续阶段接入')
 			])
 		]);
 
@@ -430,8 +441,8 @@ return view.extend({
 							binaryOk ? 'ep-blue' : 'ep-amber'),
 						card('◆', '节点数量', nodesEnabled + ' / ' + nodes,
 							nodes > 0 ? ('已启用 ' + nodesEnabled + ' 个') : '尚未配置节点', 'ep-blue'),
-						card('▥', '中国流量策略', chinaText, failNote,
-							china === 'direct' ? 'ep-green' : 'ep-amber')
+						card('▥', '分流模式', splitText, splitNote,
+							chinaRule ? 'ep-green' : 'ep-amber')
 					]),
 					E('div', { 'class': 'ep-layout' }, [
 						panel('流量统计', trafficPanel),
