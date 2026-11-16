@@ -52,14 +52,19 @@ while [ $# -gt 0 ]; do
 done
 printf '%s\n' "$url" >> "$EP_TEST_LOG/curl.urls"
 case "$url" in
-	*releases/latest) [ -f "$EP_TEST_LOG/api.fail" ] && exit 22; f="$EP_TEST_FIX/api.json" ;;
+	*releases/latest) [ -f "$EP_TEST_LOG/api.fail" ] && exit 22; f="${EP_TEST_API_FIX:-$EP_TEST_FIX/api.json}" ;;
 	*Makefile) f="$EP_TEST_FIX/Makefile" ;;
 	*.apk) f="$EP_TEST_FIX/asset.apk" ;;
+	*_x86_64.ipk) [ -f "$EP_TEST_LOG/x86.fail" ] && exit 22; f="$EP_TEST_FIX/asset.ipk" ;;
 	*.ipk) f="$EP_TEST_FIX/asset.ipk" ;;
 	*.tar.gz) f="$EP_TEST_FIX/asset.tar.gz" ;;
 	*) exit 22 ;;
 esac
 if [ -n "$out" ]; then cp "$f" "$out"; else cat "$f"; fi
+STUB
+cat > "$SB/bin/uname" <<'STUB'
+#!/bin/sh
+printf '%s\n' "${EP_TEST_UNAME:-x86_64}"
 STUB
 cat > "$SB/bin/wget" <<'STUB'
 #!/bin/sh
@@ -70,7 +75,7 @@ cat > "$SB/bin/opkg" <<'STUB'
 printf 'opkg %s\n' "$*" >> "$EP_TEST_LOG/pm.log"
 printf 'pm %s\n' "$*" >> "$EP_TEST_LOG/timeline"
 case "$1" in
-	install) : > "$EP_TEST_LOG/installed"; ;;
+	install) : > "$EP_TEST_LOG/installed" ;;
 esac
 exit 0
 STUB
@@ -177,6 +182,35 @@ reset
 sh "$INSTALL" --help > "$SB/out" 2>&1; rc=$?
 [ "$rc" -eq 0 ] && grep -q 'install.sh' "$SB/out" && ok "--help 打印用法并退出 0" || no "--help 打印用法并退出 0" "rc=$rc"
 [ -f "$EP_TEST_LOG/curl.urls" ] && no "--help 不应联网" || ok "--help 不联网"
+
+# --- install: two ipk assets, prefer the one matching this host --------
+cat > "$SB/fix/api-two.json" <<'JSON'
+{
+  "tag_name": "v0.5.0",
+  "assets": [
+    { "name": "easyproxy_0.5.0-1_all.ipk", "browser_download_url": "https://example.test/dl/easyproxy_0.5.0-1_all.ipk" },
+    { "name": "easyproxy_0.5.0-1_x86_64.ipk", "browser_download_url": "https://example.test/dl/easyproxy_0.5.0-1_x86_64.ipk" }
+  ]
+}
+JSON
+reset
+EP_TEST_API_FIX="$SB/fix/api-two.json" EP_TEST_UNAME=x86_64 sh "$INSTALL" > "$SB/out" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && ok "双 ipk 时安装成功" || no "双 ipk 时安装成功" "rc=$rc $(cat "$SB/out")"
+grep -q '_x86_64\.ipk$' "$EP_TEST_LOG/curl.urls" 2>/dev/null \
+	&& ok "x86_64 主机下载架构匹配的 ipk" || no "x86_64 主机下载架构匹配的 ipk" "$(cat "$EP_TEST_LOG/curl.urls" 2>/dev/null)"
+
+reset
+touch "$EP_TEST_LOG/x86.fail"
+EP_TEST_API_FIX="$SB/fix/api-two.json" EP_TEST_UNAME=x86_64 sh "$INSTALL" > "$SB/out" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && ok "架构包 404 时退回 all 包仍能安装" || no "架构包 404 时退回 all 包仍能安装" "rc=$rc $(cat "$SB/out")"
+[ "$(tail -1 "$EP_TEST_LOG/curl.urls")" = "https://example.test/dl/easyproxy_0.5.0-1_all.ipk" ] \
+	&& ok "退回时确实改用 all 地址" || no "退回时确实改用 all 地址" "$(cat "$EP_TEST_LOG/curl.urls")"
+
+reset
+EP_TEST_API_FIX="$SB/fix/api-two.json" EP_TEST_UNAME=riscv64 sh "$INSTALL" > "$SB/out" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && ok "无匹配架构时仍能安装" || no "无匹配架构时仍能安装" "rc=$rc $(cat "$SB/out")"
+grep -q '_all\.ipk$' "$EP_TEST_LOG/curl.urls" 2>/dev/null \
+	&& ok "无匹配架构时退回 all 包" || no "无匹配架构时退回 all 包" "$(cat "$EP_TEST_LOG/curl.urls" 2>/dev/null)"
 
 # --- uninstall --------------------------------------------------------
 reset
