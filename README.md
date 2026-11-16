@@ -216,8 +216,8 @@ Share links are the quicker path — `easyproxy node add '<link>'` understands
 ss://, ssr://, vmess://, trojan://, vless://, hysteria2://, tuic:// and
 socks://; `easyproxy node import <file>` reads a batch, `easyproxy node export`
 prints them back, and `sub.sh`-style subscriptions are fetched by
-`/usr/lib/easyproxy/subscribe.sh <url>` (the URL is never written to UCI or the
-log).
+`/usr/lib/easyproxy/subscribe.sh <url>` (the URL is never written to UCI or
+the log).
 
 ### `easyproxy status --json`
 
@@ -336,12 +336,15 @@ EP_SING_BOX_BIN=/usr/bin/sing-box sh tests/test-routing.sh
 EP_SING_BOX_BIN=/usr/bin/sing-box sh tests/test-transparent.sh
 ```
 
-Nine suites, 360 checks: routing 32, transparent 85, nodes 61, engine 45,
-maintenance 39, install scripts 30, ipk layout 27, CLI 21, runtime 20.
+Nine suites, 381 checks: routing 32, transparent 85, nodes 61, engine 44,
+maintenance 44, install scripts 36, ipk layout 40, CLI 21, runtime 20
+(`runtime` drops to 19 and `transparent` to 84 when no real `sing-box` binary is
+supplied, as in CI).
 
 The install-script suite stubs `opkg`, `apk`, `curl` and the init/rpcd scripts
 in a sandbox, so it covers both package managers, the API-unreachable fallback,
-the rootfs route and the uninstall ordering without touching `/etc` at all.
+the rootfs route, the arch-matched ipk choice and the uninstall ordering without
+touching `/etc` at all.
 
 The transparent suite stubs `nft` and `ip`, so the takeover state machine is
 exercised (apply, idempotent re-apply, rollback, refusals, missing nft)
@@ -381,9 +384,11 @@ wget -qO- https://raw.githubusercontent.com/bnm188/EasyProxy/main/scripts/instal
 ```
 
 It detects whether the firmware has `opkg` or `apk`, picks the matching asset of
-the **latest release** (`.ipk` for opkg, `.apk` for apk-based images), installs it,
-enables the service and restarts `rpcd` so the LuCI menu shows up. Re-running it
-simply installs the newest release again.
+the **latest release**: on opkg firmware the ipk that matches this host's
+architecture (falling back to `_all.ipk` when there is no arch-specific one or
+when it fails to download), on apk images the `.apk`. Then it installs the
+package, enables the service and restarts `rpcd` so the LuCI menu shows up.
+Re-running it simply installs the newest release again.
 
 | Command | What it does |
 |---|---|
@@ -501,7 +506,7 @@ rewritten, not even during removal.
 | 4 | Split routing + DNS (China direct, others proxied), local rule sets |
 | 5 | Transparent capture: own nft table + policy routing, reversible in one command |
 | **6 (current, 0.6.0)** | Engine registry, node/subscription import, maintenance CLI (`config backup/restore/reset`, `ruleset update/verify`, `doctor`, `log rotate`, `uninstall-clean`), ten-page panel |
-| 7 | Compile/install/uninstall verification: dual ipk, CI test gate, on-router install test |
+| 7 (done in 0.6.0) | Compile/install/uninstall verification: dual ipk (all + x86_64), CI test gate, arch-aware installer, on-router acceptance checklist in `docs/router-install-test.md` |
 
 Transparent capture got its own stage because it is the one change that touches
 firewall state on the user's router. It is kept out of fw4 entirely and ships
