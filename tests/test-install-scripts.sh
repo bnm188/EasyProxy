@@ -57,3 +57,37 @@ for n in easyproxy-0.5.0-rootfs.tar.gz easyproxy-0.9.9-rootfs.tar.gz; do
 	printf '%s  %s\n' "$h_tgz" "$n" >> "$SB/fix/SHA256SUMS"
 done
 sed 's/^[0-9a-f]/0/' "$SB/fix/SHA256SUMS" > "$SB/fix/SHA256SUMS.bad"
+
+# A release that also carries the kernel ipks, so the "prefer the kernel ipk"
+# route can be exercised.
+cat > "$SB/fix/api-kernels.json" <<'JSON'
+{
+  "tag_name": "v0.5.0",
+  "assets": [
+    { "name": "easyproxy_0.5.0-1_all.ipk", "browser_download_url": "https://example.test/dl/easyproxy_0.5.0-1_all.ipk" },
+    { "name": "sing-box_1.10.7_x86_64.ipk", "browser_download_url": "https://example.test/dl/sing-box_1.10.7_x86_64.ipk" },
+    { "name": "dae_2.1.2_x86_64.ipk", "browser_download_url": "https://example.test/dl/dae_2.1.2_x86_64.ipk" },
+    { "name": "SHA256SUMS", "browser_download_url": "https://example.test/dl/SHA256SUMS" }
+  ]
+}
+JSON
+
+# sing-box fixture: same layout as the official archive, and it answers
+# `version` the way the real binary does.
+mkdir -p "$SB/fix/singbox/sing-box-1.10.7-linux-amd64"
+cat > "$SB/fix/singbox/sing-box-1.10.7-linux-amd64/sing-box" <<'STUB'
+#!/bin/sh
+echo "sing-box version 1.10.7"
+STUB
+chmod +x "$SB/fix/singbox/sing-box-1.10.7-linux-amd64/sing-box"
+tar -czf "$SB/fix/sing-box.tar.gz" -C "$SB/fix/singbox" sing-box-1.10.7-linux-amd64
+h_sb="$(sha256sum "$SB/fix/sing-box.tar.gz" | awk '{ print $1 }')"
+
+# A kernel that installs but cannot run: the upgrade must roll it back.
+mkdir -p "$SB/fix/singbox-broken/sing-box-1.10.7-linux-amd64"
+cat > "$SB/fix/singbox-broken/sing-box-1.10.7-linux-amd64/sing-box" <<'STUB'
+#!/bin/sh
+exit 1
+STUB
+chmod +x "$SB/fix/singbox-broken/sing-box-1.10.7-linux-amd64/sing-box"
+tar -czf "$SB/fix/sing-box.broken.tar.gz" -C "$SB/fix/singbox-broken" sing-box-1.10.7-linux-amd64
