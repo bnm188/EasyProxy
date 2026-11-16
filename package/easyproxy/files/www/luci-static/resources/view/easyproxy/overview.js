@@ -346,6 +346,9 @@ return view.extend({
 		var splitNote = chinaRule
 			? ('规则 ' + routeRules + ' 条 · DNS ' + dnsMode)
 			: (ruleSetState === 'missing' ? '规则集缺失 · 已降级' : 'china_policy=proxy');
+		var transparent = Number(d.transparent || 0) === 1;
+		var tproxyState = d.tproxy_state || 'inactive';
+		var tproxyPort = d.tproxy_port || 0;
 		var ruleSetText = ruleSetState === 'ready' ? '已就绪' : '缺失';
 		var dnsText = dnsMode === 'split' ? '分流（国内 DNS / 远程 DoH）' : '单上游（国内 DNS）';
 		var failNote = failClosed ? '故障保护：开启' : '故障保护：关闭';
@@ -380,8 +383,14 @@ return view.extend({
 			E('div', {}, (enabled ? '✓ ' : '⚠ ') + '总开关：' + (enabled ? '已启用' : '未启用')),
 			E('div', {}, (ruleSetState === 'ready' ? '✓ ' : '⚠ ') + '大陆规则集：' + ruleSetText),
 			E('div', {}, '◎ DNS：' + dnsText),
+			E('div', {}, (tproxyState === 'active' ? '✓ ' : (tproxyState === 'unsupported' ? '⚠ ' : '○ ')) +
+				'透明代理：' + (tproxyState === 'active'
+					? ('已接管局域网流量（tproxy ' + tproxyPort + '）')
+					: (tproxyState === 'unsupported'
+						? '本机无 nft，无法接管'
+						: (transparent ? '已配置但未接管' : '未启用（手动设代理）')))),
 			E('div', { 'class': 'ep-muted' },
-				'大陆规则集由 easyproxy config generate 下载到本地后引用，内核启动不再联网下载。')
+				'大陆规则集由 config generate 下载到本地后引用；透明代理只在引擎运行后才接管，remove 可完整回滚。')
 		]);
 
 		var checkLines = messages.length
