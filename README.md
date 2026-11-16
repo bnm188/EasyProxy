@@ -314,20 +314,7 @@ package/easyproxy/
     ├── www/luci-static/resources/easyproxy/app.js
     └── www/luci-static/resources/view/easyproxy/*.js   (10 views)
 scripts/
-├── make-ipk.sh          # build the ipk (all / x86_64 / ... ) from package/easyproxy
-├── make-kernel-ipk.sh   # build sing-box_<ver>_<arch>.ipk / dae_<ver>_<arch>.ipk
-tests/
-├── test-cli.sh             # CLI surface (status/validate/engine/start guard)
-├── test-runtime.sh         # config generation + start/stop lifecycle
-├── test-routing.sh         # split routing, DNS block, rule-set handling
-├── test-transparent.sh     # tproxy inbound, nft/ip takeover, IPv6 policy, rollback
-├── test-engine.sh          # engine registry, health probes, node probe, dev refusal
-├── test-nodes.sh           # share-link parsing, groups, platform/custom rules
-├── test-maintenance.sh     # backup/restore/reset, ruleset update+verify, doctor, log rotate
-├── test-ipk-layout.sh      # ipk payload + control metadata, all and x86_64
-└── test-install-scripts.sh # installer/uninstaller against stubbed opkg/apk/curl
-docs/
-└── router-install-test.md  # step-by-step acceptance test on a real router
+├── Makefile? no - see the files below
 ```
 
 ## Tests
