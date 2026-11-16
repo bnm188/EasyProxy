@@ -1,7 +1,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=easyproxy
-PKG_VERSION:=0.4.0
+PKG_VERSION:=0.5.0
 PKG_RELEASE:=1
 
 PKG_LICENSE:=MIT
@@ -19,9 +19,9 @@ endef
 
 define Package/easyproxy/description
  Modular proxy management framework for ImmortalWrt.
- Stage 4 generates a split-routing sing-box config (China direct, others
- proxied) with local rule sets, supervises the runtime through procd and
- shows live state in the panel.
+ Stage 5 generates a split-routing sing-box config with local rule sets,
+ can capture LAN traffic through an nftables tproxy table (fully reversible),
+ supervises the runtime through procd and shows live state in the panel.
 endef
 
 define Package/easyproxy/conffiles
@@ -41,6 +41,7 @@ define Package/easyproxy/install
 	$(INSTALL_DIR) $(1)/usr/lib/easyproxy/adapters
 	$(INSTALL_DATA) ./files/usr/lib/easyproxy/common.sh $(1)/usr/lib/easyproxy/common.sh
 	$(INSTALL_DATA) ./files/usr/lib/easyproxy/config.sh $(1)/usr/lib/easyproxy/config.sh
+	$(INSTALL_DATA) ./files/usr/lib/easyproxy/transparent.sh $(1)/usr/lib/easyproxy/transparent.sh
 	$(INSTALL_DATA) ./files/usr/lib/easyproxy/adapters/dae.sh $(1)/usr/lib/easyproxy/adapters/dae.sh
 	$(INSTALL_DATA) ./files/usr/lib/easyproxy/adapters/sing-box.sh $(1)/usr/lib/easyproxy/adapters/sing-box.sh
 	$(INSTALL_DIR) $(1)/www/luci-static/resources/view/easyproxy

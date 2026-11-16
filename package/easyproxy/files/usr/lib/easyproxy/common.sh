@@ -2,8 +2,8 @@
 
 EP_CONFIG="easyproxy"
 EP_CONFIG_FILE="/etc/config/easyproxy"
-EP_VERSION="0.4.0"
-EP_STAGE="4"
+EP_VERSION="0.5.0"
+EP_STAGE="5"
 
 EP_RUNTIME_DIR="${EP_RUNTIME_DIR:-/var/run/easyproxy}"
 EP_PID_FILE="$EP_RUNTIME_DIR/easyproxy.pid"
@@ -34,7 +34,7 @@ ep_adapter_path() {
 		dae) printf '%s' '/usr/lib/easyproxy/adapters/dae.sh' ;;
 		sing-box) printf '%s' '/usr/lib/easyproxy/adapters/sing-box.sh' ;;
 		*) return 1 ;;
-		esac
+	esac
 }
 
 # UCI section that holds the defaults of a given engine

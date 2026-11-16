@@ -8,6 +8,7 @@ USE_PROCD=1
 
 . /usr/lib/easyproxy/common.sh
 . /usr/lib/easyproxy/config.sh
+. /usr/lib/easyproxy/transparent.sh
 
 start_service() {
 	local enabled engine binary
@@ -35,9 +36,26 @@ start_service() {
 	procd_close_instance
 
 	ep_log "instance handed to procd (engine: $engine)"
+
+	# Capture is only switched on once the engine is actually up: a tproxy rule
+	# with no listener black-holes LAN traffic, so a failed start must leave
+	# the firewall alone.
+	if ep_transparent_enabled; then
+		i=0
+		while [ "$i" -lt 5 ] && [ "$(ep_runtime_state)" != "running" ]; do
+			sleep 1
+			i=$((i + 1))
+		done
+		if ep_transparent_apply; then
+			ep_log "transparent capture applied on $(ep_transparent_ifaces) (tproxy 0.0.0.0:$(ep_tproxy_port))"
+		else
+			ep_log "transparent capture not applied: $EP_ERR"
+		fi
+	fi
 }
 
 stop_service() {
+	ep_transparent_remove
 	rm -f "$EP_PID_FILE"
 	return 0
 }
