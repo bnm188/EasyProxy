@@ -8,7 +8,7 @@ SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
 
 usage() {
 	cat <<EOF
-EasyProxy ${EP_VERSION} — Stage ${EP_STAGE} (runtime + config generation)
+EasyProxy ${EP_VERSION} — Stage ${EP_STAGE} (runtime + split routing)
 Usage:
   easyproxy status [--json]        Show configuration and runtime status
   easyproxy validate [--json]      Validate configuration values
@@ -58,6 +58,18 @@ cmd_status_text() {
 	printf 'Proxy policy: %s\n' "$proxy"
 	printf 'Fail closed: %s\n' "$fail_closed"
 	printf 'Nodes: %s\n' "$nodes"
+	if [ "$(ep_rule_set_state)" = "ready" ]; then
+		printf 'Rule sets: ready (%s)\n' "$(ep_rule_set_dir)"
+	else
+		printf 'Rule sets: missing (%s)\n' "$(ep_rule_set_dir)"
+	fi
+	if [ "$china" = "direct" ] && [ "$(ep_rule_set_state)" = "ready" ]; then
+		printf 'Routing: split (China direct, others proxied)\n'
+	elif [ "$china" = "direct" ]; then
+		printf 'Routing: all traffic proxied (rule sets missing)\n'
+	else
+		printf 'Routing: all traffic proxied (china_policy=proxy)\n'
+	fi
 	printf 'Runtime: %s' "$runtime"
 	[ "$runtime" = "running" ] && printf ' (pid %s, up %ss)' "$pid" "$up"
 	printf '\n'
@@ -67,7 +79,7 @@ cmd_status_text() {
 
 cmd_status_json() {
 	local enabled engine binary bstate china proxy fail_closed nodes
-	local runtime pid up config_state config_path nodes_enabled
+	local runtime pid up config_state config_path nodes_enabled china_rule route_rules dns_mode rule_set_state
 	enabled="$(ep_bool "$(ep_get main enabled 0)")"
 	engine="$(ep_get main engine none)"
 	binary="$(ep_engine_binary "$engine")"
@@ -79,13 +91,24 @@ cmd_status_json() {
 	nodes_enabled="$(ep_node_count_enabled)"
 	[ -n "$nodes" ] || nodes="0"
 	[ -n "$nodes_enabled" ] || nodes_enabled="0"
+	rule_set_state="$(ep_rule_set_state)"
+	if [ "$china" = "direct" ] && [ "$nodes_enabled" -gt 0 ] && [ "$rule_set_state" = "ready" ]; then
+		china_rule=1
+		route_rules=2
+		dns_mode="split"
+	else
+		china_rule=0
+		route_rules=1
+		dns_mode="local"
+	fi
+
 	runtime="$(ep_runtime_state)"
 	pid="$(runtime_pid)"
 	up="$(ep_runtime_uptime)"
 	config_path="$(ep_engine_config_path "$engine")"
 	config_state="$(ep_config_state)"
 
-	printf '{"ok":true,"package":"%s","version":"%s","stage":%s,"enabled":%s,"engine":"%s","binary":"%s","binary_ok":%s,"china_policy":"%s","proxy_policy":"%s","fail_closed":%s,"nodes":%s,"nodes_enabled":%s,"runtime":"%s","runtime_pid":%s,"runtime_uptime":%s,"config_state":"%s","config_path":"%s","config_file":"%s","generated":"%s"}\n' \
+	printf '{"ok":true,"package":"%s","version":"%s","stage":%s,"enabled":%s,"engine":"%s","binary":"%s","binary_ok":%s,"china_policy":"%s","proxy_policy":"%s","fail_closed":%s,"nodes":%s,"nodes_enabled":%s,"runtime":"%s","runtime_pid":%s,"runtime_uptime":%s,"china_rule":%s,"route_rules":%s,"dns_mode":"%s","rule_set_state":"%s","config_state":"%s","config_path":"%s","config_file":"%s","generated":"%s"}\n' \
 		"$(ep_json_escape "$PROG")" \
 		"$(ep_json_escape "$EP_VERSION")" \
 		"$EP_STAGE" \
@@ -101,6 +124,10 @@ cmd_status_json() {
 		"$(ep_json_escape "$runtime")" \
 		"$pid" \
 		"$up" \
+		"$china_rule" \
+		"$route_rules" \
+		"$dns_mode" \
+		"$(ep_json_escape "$rule_set_state")" \
 		"$(ep_json_escape "$config_state")" \
 		"$(ep_json_escape "$config_path")" \
 		"$(ep_json_escape "$EP_CONFIG_FILE")" \
@@ -191,7 +218,7 @@ cmd_config_generate() {
 	local engine binary path nodes final checked
 	engine="$(ep_get main engine none)"
 	[ "$engine" != "none" ] || { EP_ERR="no proxy engine selected"; return 1; }
-	[ "$engine" = "sing-box" ] || { EP_ERR="config generation is only implemented for sing-box (Stage 3)"; return 1; }
+	[ "$engine" = "sing-box" ] || { EP_ERR="config generation is only implemented for sing-box"; return 1; }
 	path="$(ep_engine_config_path "$engine")"
 	binary="$(ep_engine_binary "$engine")"
 	if [ "$(ep_binary_state "$binary")" = "available" ]; then
@@ -211,17 +238,23 @@ cmd_config_generate() {
 	final="${EP_FINAL:-direct}"
 
 	if [ "$JSON" = "1" ]; then
-		printf '{"ok":true,"path":"%s","outbounds":%s,"nodes":%s,"final":"%s","checked":%s,"generated":"%s"}\n' \
+		printf '{"ok":true,"path":"%s","outbounds":%s,"nodes":%s,"final":"%s","rule_sets":%s,"checked":%s,"generated":"%s"}\n' \
 			"$(ep_json_escape "$path")" \
 			"$((nodes + 2))" \
 			"$nodes" \
 			"$(ep_json_escape "$final")" \
+			"${EP_SPLIT:-0}" \
 			"$checked" \
 			"$(ep_utc_now)"
 	else
 		printf 'Config generated: %s\n' "$path"
 		printf 'Enabled nodes: %s\n' "$nodes"
 		printf 'Default route: %s\n' "$final"
+		if [ "${EP_SPLIT:-0}" = "1" ]; then
+			echo "Split routing: China direct, others proxied"
+		else
+			echo "Split routing: inactive (all traffic proxied)"
+		fi
 		if [ "$checked" = "true" ]; then
 			echo "Engine validation: passed"
 		else
@@ -229,6 +262,7 @@ cmd_config_generate() {
 		fi
 	fi
 	[ "$nodes" -gt 0 ] || echo "Warning: no enabled nodes; generated config only provides direct routing." >&2
+	[ -z "${EP_WARN:-}" ] || printf 'Warning: %s\n' "$EP_WARN" >&2
 	return 0
 }
 
@@ -238,7 +272,7 @@ cmd_start() {
 	[ "$enabled" = "1" ] || { echo "EasyProxy is disabled. Set easyproxy.main.enabled=1 to enable." >&2; return 1; }
 	engine="$(ep_get main engine none)"
 	[ "$engine" != "none" ] || { echo "No proxy engine selected." >&2; return 1; }
-	[ "$engine" = "sing-box" ] || { echo "$engine runtime is not implemented yet (Stage 3 covers sing-box)." >&2; return 2; }
+	[ "$engine" = "sing-box" ] || { echo "$engine runtime is not implemented yet (sing-box only)." >&2; return 2; }
 	binary="$(ep_engine_binary "$engine")"
 	[ "$(ep_binary_state "$binary")" = "available" ] || { echo "Engine binary is missing: $binary" >&2; return 1; }
 
@@ -251,6 +285,7 @@ cmd_start() {
 		echo "Config generation failed: $EP_ERR" >&2
 		return 1
 	fi
+	[ -z "${EP_WARN:-}" ] || printf 'Warning: %s\n' "$EP_WARN" >&2
 
 	mkdir -p "$EP_RUNTIME_DIR" 2>/dev/null
 	log="$EP_LOG_FILE"
@@ -307,10 +342,12 @@ cmd_restart() {
 
 cmd_run() {
 	local engine binary cfg child rc
+	# Rule sets are prepared by `config generate`; never block boot on a download
+	EP_RULE_SET_NO_FETCH=1
 	engine="$(ep_get main engine none)"
 	[ "$(ep_bool "$(ep_get main enabled 0)")" = "1" ] || { echo "EasyProxy is disabled." >&2; return 1; }
 	[ "$engine" != "none" ] || { echo "No proxy engine selected." >&2; return 1; }
-	[ "$engine" = "sing-box" ] || { echo "$engine runtime is not implemented yet (Stage 3 covers sing-box)." >&2; return 2; }
+	[ "$engine" = "sing-box" ] || { echo "$engine runtime is not implemented yet (sing-box only)." >&2; return 2; }
 	binary="$(ep_engine_binary "$engine")"
 	[ "$(ep_binary_state "$binary")" = "available" ] || { echo "Engine binary is missing: $binary" >&2; return 1; }
 	cfg="$(ep_engine_config_path "$engine")"
