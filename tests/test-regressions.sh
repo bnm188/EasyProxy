@@ -291,6 +291,16 @@ if grep -q 'EP_SING_BOX_BIN' "$WF"; then
 else
 	no "CI 把真实内核路径传给测试套件" "没有 EP_SING_BOX_BIN"
 fi
+if grep -n 'GITHUB_ENV' "$WF" | grep -q 'EP_SING_BOX_BIN'; then
+	no "工作流没有把内核路径泄漏成全局环境变量" "EP_SING_BOX_BIN 仍被写进 \$GITHUB_ENV，安装套件会误认为内核已存在而跳过下载"
+else
+	ok "工作流没有把内核路径泄漏成全局环境变量"
+fi
+if grep -q 'env -u EP_SING_BOX_BIN sh' "$WF"; then
+	ok "安装类套件在清空内核路径的环境里运行"
+else
+	no "安装类套件在清空内核路径的环境里运行" "没有 env -u EP_SING_BOX_BIN"
+fi
 if grep -q "grep -q '  SKIP  '" "$WF"; then
 	ok "CI 把 SKIP 视为失败（跳过的测试不算通过）"
 else

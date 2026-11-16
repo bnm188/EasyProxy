@@ -48,7 +48,11 @@ jobs:
           cp "sing-box-${SB_VER}-linux-amd64/sing-box" /opt/easyproxy-ci/sing-box
           chmod +x /opt/easyproxy-ci/sing-box
           /opt/easyproxy-ci/sing-box version
-          echo "EP_SING_BOX_BIN=/opt/easyproxy-ci/sing-box" >> "$GITHUB_ENV"
+          # The path is deliberately NOT exported through $GITHUB_ENV: that env
+          # reaches every later step, and the installer suite asserts that the
+          # kernel is downloaded, so a global EP_SING_BOX_BIN made those 12
+          # assertions fail in CI (run #116..#122). It is handed to the four
+          # config suites only, in the test step below.
 
       # Every behaviour this release ships is guarded by the repo suites, so a
       # build that would publish a broken package fails here instead. A suite
@@ -58,20 +62,23 @@ jobs:
         run: |
           set -uo pipefail
           mkdir -p test-logs
+          SB=/opt/easyproxy-ci/sing-box
           failed=""
           skipped=""
           # Only the suites that validate a generated config get the real kernel:
           # the installer suite asserts that the kernel is downloaded, so a host
           # EP_SING_BOX_BIN would make those assertions pass without a download.
+          # Everything else runs with the variable removed, not merely unset for
+          # one command, so a stray export can never reach the installer suite.
           for t in tests/test-*.sh; do
             log="test-logs/${t##*/}.log"
             echo "=== $t"
             rc=0
             case "${t##*/}" in
               test-routing.sh|test-runtime.sh|test-transparent.sh|test-engine.sh)
-                EP_SING_BOX_BIN="$EP_SING_BOX_BIN" sh "$t" > "$log" 2>&1 || rc=$? ;;
+                EP_SING_BOX_BIN="$SB" sh "$t" > "$log" 2>&1 || rc=$? ;;
               *)
-                sh "$t" > "$log" 2>&1 || rc=$? ;;
+                env -u EP_SING_BOX_BIN sh "$t" > "$log" 2>&1 || rc=$? ;;
             esac
             if [ "$rc" -eq 0 ]; then
               tail -n 1 "$log"
