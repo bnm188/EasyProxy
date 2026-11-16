@@ -1,14 +1,57 @@
 {
 	"admin/services/easyproxy": {
 		"title": "EasyProxy",
-		"order": 60,
-		"action": {
-			"type": "view",
-			"path": "easyproxy/overview"
-		},
-		"depends": {
-			"acl": [ "luci-app-easyproxy" ],
-			"uci": [ "easyproxy" ]
-		}
+		"order": 55,
+		"action": { "type": "first-level", "path": "easyproxy/overview" }
+	},
+	"admin/services/easyproxy/overview": {
+		"title": "运行总览",
+		"order": 1,
+		"action": { "type": "view", "path": "easyproxy/overview" }
+	},
+	"admin/services/easyproxy/nodes": {
+		"title": "节点管理",
+		"order": 2,
+		"action": { "type": "view", "path": "easyproxy/nodes" }
+	},
+	"admin/services/easyproxy/subscription": {
+		"title": "订阅管理",
+		"order": 3,
+		"action": { "type": "view", "path": "easyproxy/subscription" }
+	},
+	"admin/services/easyproxy/split": {
+		"title": "智能分流",
+		"order": 4,
+		"action": { "type": "view", "path": "easyproxy/split" }
+	},
+	"admin/services/easyproxy/engines": {
+		"title": "内核管理",
+		"order": 5,
+		"action": { "type": "view", "path": "easyproxy/engines" }
+	},
+	"admin/services/easyproxy/dns": {
+		"title": "DNS 设置",
+		"order": 6,
+		"action": { "type": "view", "path": "easyproxy/dns" }
+	},
+	"admin/services/easyproxy/rules": {
+		"title": "规则管理",
+		"order": 7,
+		"action": { "type": "view", "path": "easyproxy/rules" }
+	},
+	"admin/services/easyproxy/logs": {
+		"title": "日志中心",
+		"order": 8,
+		"action": { "type": "view", "path": "easyproxy/logs" }
+	},
+	"admin/services/easyproxy/backup": {
+		"title": "备份与恢复",
+		"order": 9,
+		"action": { "type": "view", "path": "easyproxy/backup" }
+	},
+	"admin/services/easyproxy/settings": {
+		"title": "系统设置",
+		"order": 10,
+		"action": { "type": "view", "path": "easyproxy/settings" }
 	}
 }

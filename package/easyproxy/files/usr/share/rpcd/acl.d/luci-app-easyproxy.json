@@ -1,16 +1,22 @@
 {
 	"luci-app-easyproxy": {
-		"description": "Read EasyProxy status through the CLI and edit its UCI configuration",
+		"description": "EasyProxy panel: run the CLI, read/write its UCI section, read its log",
 		"read": {
+			"ubus": {
+				"file": [ "exec", "read", "list" ]
+			},
 			"uci": [ "easyproxy" ],
 			"file": {
-				"/usr/sbin/easyproxy": [ "exec" ]
+				"/etc/config/easyproxy": [ "read" ],
+				"/etc/easyproxy/*": [ "read" ],
+				"/var/log/easyproxy.log": [ "read" ],
+				"/proc/net/dev": [ "read" ]
 			}
 		},
 		"write": {
 			"uci": [ "easyproxy" ],
 			"file": {
-				"/usr/sbin/easyproxy": [ "exec" ]
+				"/etc/easyproxy/*": [ "write" ]
 			}
 		}
 	}
