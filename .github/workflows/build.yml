@@ -37,9 +37,9 @@ jobs:
       - name: Install the pinned sing-box used by the tests
         run: |
           set -euo pipefail
-          SB_VER=1.10.7
+          SB_VER=1.14.4
           SB_URL="https://github.com/SagerNet/sing-box/releases/download/v${SB_VER}/sing-box-${SB_VER}-linux-amd64.tar.gz"
-          SB_SHA=1951a0785c8b4e1e21e0640227a49528ca772aec3d680061652e3d6b687e00fe
+          SB_SHA=699a1b510aa4396b2176d32d1181920399ebf1e267835da6f3b598d0f7c24968
 
           curl -fSL "$SB_URL" -o sb.tar.gz || { echo "::error title=sing-box download::cannot download $SB_URL"; exit 1; }
           echo "$SB_SHA  sb.tar.gz" | sha256sum -c - || { echo "::error title=sing-box checksum::the pinned sing-box archive changed"; exit 1; }
@@ -151,8 +151,8 @@ jobs:
         run: |
           set -euo pipefail
           cd dist
-          SB_VER="$(sed -n 's/^SING_BOX_VER=.*:-\([0-9][0-9.]*\)}.*/\1/p' ../scripts/make-kernel-ipk.sh)"
-          DAE_VER="$(sed -n 's/^DAE_VER=.*:-\([0-9][0-9.]*\)}.*/\1/p' ../scripts/make-kernel-ipk.sh)"
+          SB_VER="$(sed -n 's/^SING_BOX_VER=.*:-\\([0-9][0-9.]*\\)}.*/\\1/p' ../scripts/make-kernel-ipk.sh)"
+          DAE_VER="$(sed -n 's/^DAE_VER=.*:-\\([0-9][0-9.]*\\)}.*/\\1/p' ../scripts/make-kernel-ipk.sh)"
           [ -n "$SB_VER" ] && [ -n "$DAE_VER" ] || { echo "::error::cannot read the kernel versions"; exit 1; }
           VER="$(sed -n 's/^PKG_VERSION:=//p' ../package/easyproxy/Makefile | head -1)"
           {

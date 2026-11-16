@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # 一次性发布脚本：应用已审阅的 0.7.0 补丁、跑测试与构建、创建 v0.7.0 Release。
 # 由 .github/workflows/release-0.7.0-once.yml 调用一次，发布后由文档提交删除。
+#
+# 注意：GITHUB_TOKEN 没有 workflows 权限，机器人提交里不能包含 .github/workflows/
+# 下的任何改动，所以 build.yml 的 sing-box pin 由维护者单独推送，本补丁只含其余文件。
 set -euo pipefail
 
 echo "[1/9] guard"
@@ -11,15 +14,14 @@ if grep -q '^PKG_VERSION:=0.7.0$' package/easyproxy/Makefile; then
 fi
 
 echo "[2/9] download the reviewed patch"
-PATCH_URL="https://aka.doubaocdn.com/s/ZRN1zqcBGA"
-PATCH_SHA=09afb57f5566ed957fe5bb6994207a6bf9b802b95a1e8ba8d7d380afab8dc306
+PATCH_URL="https://aka.doubaocdn.com/s/OqYUm19kOf"
+PATCH_SHA=0077eee2309b94f488afa4ac15aca7832b7b1bb7147701c9ea64c077f5072a59
 curl -fsSL --retry 3 "$PATCH_URL" -o /tmp/release.patch || { echo "::error title=patch download::cannot download the reviewed patch"; exit 1; }
 echo "$PATCH_SHA  /tmp/release.patch" | sha256sum -c - || { echo "::error title=patch checksum::patch is not the reviewed one"; exit 1; }
 
 echo "[3/9] apply the patch and commit"
 git apply --check /tmp/release.patch || { echo "::error title=apply::patch does not apply to main"; exit 1; }
 git apply /tmp/release.patch
-rm -f .github/workflows/release-0.7.0-once.yml
 git config user.name "github-actions[bot]"
 git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 git add -A
