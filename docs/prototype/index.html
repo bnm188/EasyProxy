@@ -230,6 +230,18 @@ textarea{font-family:var(--mono);font-size:12px;resize:vertical;line-height:1.6}
 }
 
 .ov-page .page-head{background:linear-gradient(180deg,rgba(255,255,255,.42),rgba(255,255,255,0));border-radius:16px;padding:6px 2px 4px;margin:-6px 0 14px}
+
+/* 子目录条 */
+.subnav{display:flex;gap:8px;overflow-x:auto;scrollbar-width:none;padding:2px 2px 12px}
+.subnav::-webkit-scrollbar{display:none}
+.spill{appearance:none;border:1px solid rgba(255,255,255,.8);background:rgba(255,255,255,.62);
+  color:#4c5b6a;border-radius:999px;padding:6px 14px;font-size:13px;cursor:pointer;white-space:nowrap;
+  -webkit-backdrop-filter:blur(18px) saturate(170%);backdrop-filter:blur(18px) saturate(170%);
+  box-shadow:0 2px 8px rgba(22,60,110,.06);font-family:inherit}
+.spill.on{background:linear-gradient(180deg,#0f8bff,#0a6ee0);color:#fff;border-color:transparent;box-shadow:0 4px 14px rgba(10,132,255,.28)}
+.spill:hover{background:rgba(255,255,255,.9)}
+.spill.on:hover{background:linear-gradient(180deg,#0f8bff,#0a6ee0)}
+.sec[hidden]{display:none}
 </style>
 </head>
 <body>
@@ -311,7 +323,10 @@ function nowStr(){ const d=new Date(); return String(d.getHours()).padStart(2,'0
 function cell(k, v, x){ return '<div class="cell"><div class="cell-k">'+k+'</div><div class="cell-v">'+v+'</div>'+(x?'<div class="cell-x">'+x+'</div>':'')+'</div>'; }
 function cellSm(k, v, x){ return '<div class="cell"><div class="cell-k">'+k+'</div><div class="cell-v sm">'+v+'</div>'+(x?'<div class="cell-x">'+x+'</div>':'')+'</div>'; }
 
+var RESULTED=0;
 function resultBox(id){
+  if(RESULTED>0) return '';
+  RESULTED++;
   return '<div class="card"><div class="card-hd"><h3>操作记录</h3>'+
     '<span class="hd-note">最近 8 条，带时间戳与原始返回</span></div>'+
     '<div class="result"><div class="result-bd" id="'+id+'">'+
@@ -339,18 +354,24 @@ function act(btn, busyLabel, done){
   }, 1100);
 }
 
+function sec(id, inner){
+  return '<div class="sec" data-sec="'+id+'">'+inner+'</div>';
+}
+
 /* ================= 页 1：概览 ================= */
 function pageOverview(){
   const s = DATA.status, run = STATE.running;
   const kpi = [
-    ['运行状态', run ? '运行中' : '已停止', run ? 'uptime '+s.uptime : '无进程'],
-    ['当前节点', DATA.nodes.length ? DATA.nodes[0].name : '—', DATA.nodes.length ? DATA.nodes[0].group : '无节点'],
-    ['规则集', STATE.rulesetReady ? '2 就绪' : '缺失', 'geosite + geoip'],
-    ['累计流量', bytes(s.rx + s.tx), '↑'+bytes(s.tx)+' ↓'+bytes(s.rx)]
+    ['CPU 使用','23%','0.10 / 0.04 / 0.01'],
+    ['内存','293 MB','15% · 共 1950 MB'],
+    ['实时下行','1.8 MB/s','峰值 6.2 MB/s'],
+    ['实时上行','0.4 MB/s','峰值 1.1 MB/s'],
+    ['今日流量','86.4 MB','↑21.3 / ↓65.1'],
+    ['运行时间', run ? s.uptime : '—', '自上次启动'],
+    ['代理状态', run ? '运行中' : '已停止', '7890 监听'],
+    ['节点健康', DATA.nodes.length ? '1 / 1' : '0 / 0', '可用 · 待测速']
   ].map(function(k){
-    return '<div class="cell"><div class="cell-k">'+k[0]+'</div>'+
-      '<div class="cell-v">'+k[1]+'</div>'+
-      '<div class="cell-x">'+k[2]+'</div></div>';
+    return '<div class="cell"><div class="cell-k">'+k[0]+'</div><div class="cell-v">'+k[1]+'</div><div class="cell-x">'+k[2]+'</div></div>';
   }).join('');
 
   const sites = DATA.flow.slice(0,4).map(function(f){
@@ -363,52 +384,42 @@ function pageOverview(){
 
   const grid = [
     cell('版本', s.version + ' <span class="tag n">'+s.stage+'</span>', 'package/easyproxy'),
-    cell('内核', s.engine + ' <span class="tag ok">可用</span>', ''),
-    cellSm('二进制', s.binaryVer, s.binary),
-    cell('配置文件', 'sing-box.json', s.config),
+    cell('内核', s.engine + ' <span class="tag ok">可用</span>', s.binaryVer),
     cell('监听端口', run ? '7890 <span class="tag ok">listening</span>' : '<span class="tag bad">未监听</span>', 'mixed-in'),
     cell('透明代理', STATE.transparent ? '<span class="tag ok">已开启</span>' : '<span class="tag n">未开启</span>', 'tproxy '+STATE.tproxy),
-    cell('IPv6', STATE.ipv6 === 'direct' ? '直连' : '禁用', 'policy='+STATE.ipv6),
-    cell('日志', bytes(s.logBytes), '/var/log/easyproxy.log'),
+    cell('规则集', STATE.rulesetReady ? '<span class="tag ok">2 就绪</span>' : '<span class="tag bad">缺失</span>', 'geosite + geoip'),
+    cell('累计流量', bytes(s.rx + s.tx), '↑'+bytes(s.tx)+' ↓'+bytes(s.rx)),
     cell('自检', '<span class="tag ok">10/10</span>', 'doctor 无异常'),
-    cell('进程', '2 个', 'wrapper + sing-box'),
-    cell('内存', '15%', '1950 MB 中约 293 MB'),
     cell('系统存储', '37%', '875.1 MB')
   ].join('');
 
-  return '<div class="ov-page">'+
-
-    '<div class="ov-head"><h1>概览</h1>'+
+  return '<div class="ov-head"><h1 class="page-title">概览</h1>'+
       '<span class="'+(run?'ov-good':'ov-bad')+'">'+(run?'● 运行中':'● 已停止')+'</span>'+
       '<span class="mono">'+(run?'pid '+s.pid+' · '+s.uptime+' · 7890 listening':'无进程')+'</span>'+
       '<span class="mono sp">最近刷新 '+nowStr()+'</span></div>'+
 
-    '<div class="card"><div class="grid">'+kpi+'</div></div>'+
+    '<div class="card"><div class="card-hd"><h3>实时状态</h3><span class="hd-note">硬件与流量 · 每 5 秒刷新</span></div><div class="grid">'+kpi+'</div></div>'+
 
     '<div class="card"><div class="card-hd"><h3>站点延时</h3><span class="hd-note">打开概览自动测一次</span></div>'+
       '<div class="grid">'+sites+'</div>'+
       '<div class="bar"><button class="btn" data-act="site-test">重测这些站点</button></div></div>'+
 
-    '<div class="card"><div class="card-hd"><h3>运行细节</h3><span class="hd-note">doctor 全部通过</span></div>'+
-      '<div class="grid">'+grid+'</div></div>'+
+    '<div class="card"><div class="card-hd"><h3>运行细节</h3><span class="hd-note">doctor 全部通过</span></div><div class="grid">'+grid+'</div></div>'+
 
     '<div class="card"><div class="card-hd"><h3>快捷操作</h3><span class="hd-note">点击即置灰，直到拿到返回</span></div>'+
       '<div class="bar">'+
         '<button class="btn '+(run?'danger':'primary')+'" data-act="toggle">'+(run?'停止 EasyProxy':'启动 EasyProxy')+'</button>'+
         '<button class="btn" data-act="restart">重启内核</button>'+
         '<button class="btn" data-act="regen">重新生成配置</button>'+
-        '<button class="btn" data-act="doctor">一键自检</button>'+
-      '</div><div class="legend"><span>启停走 <span class="mono">/etc/init.d/easyproxy</span></span><span>失败原因直接写进操作记录</span></div></div>'+
-
-    resultBox('r-ov')+
-    '</div>';
+        '<button class="btn ghost" data-act="doctor">一键自检</button>'+
+      '</div></div>'+
+    resultBox('r-ov');
 }
 
 /* ================= 页 2：代理 ================= */
-function pageProxy(){
+function pageNodes(){
   const rows = DATA.nodes.map(function(n,i){
-    return '<tr><td><b>'+esc(n.name)+'</b>'+(n.name.length<=2?' <span class="tag warn">名称异常</span>':'')+'</td>'+
-      '<td class="mono">'+esc(n.type)+'</td>'+
+    return '<tr><td><b>'+esc(n.name)+'</b></td><td class="mono">'+esc(n.type)+'</td>'+
       '<td class="mono" style="word-break:break-all">'+esc(n.server)+':'+esc(n.port)+'</td>'+
       '<td>'+(n.region==='其他'?'<span class="tag warn">其他</span>':esc(n.region))+'</td>'+
       '<td class="mono">'+esc(n.group)+'</td>'+
@@ -423,6 +434,76 @@ function pageProxy(){
       '<td><button class="btn sm" data-act="subupd" data-i="'+i+'">更新</button> <button class="btn sm danger" data-act="subdel" data-i="'+i+'">删除</button></td></tr>';
   }).join('');
 
+  return ['<div class="page-head"><h1 class="page-title">节点中心</h1>'+
+    '<p class="page-desc">导入、订阅、测速、分组、评分与故障剔除</p></div>',
+
+    sec('nodes',
+    '<div class="card"><div class="card-hd"><h3>节点列表</h3><span class="hd-note">'+DATA.nodes.length+' 个 · 1 个启用</span></div>'+
+      '<div class="tbl-wrap"><table>'+
+      '<colgroup><col style="width:14%"><col style="width:11%"><col style="width:28%"><col style="width:9%"><col style="width:11%"><col style="width:10%"><col style="width:8%"><col style="width:146px"></colgroup>'+
+      '<thead><tr><th>名称</th><th>类型</th><th>服务器地址</th><th>地区</th><th>分组</th><th>延迟</th><th>状态</th><th>操作</th></tr></thead>'+
+      '<tbody>'+(rows || '<tr><td colspan="8" class="empty">还没有节点，用下面的导入框加一条</td></tr>')+'</tbody></table></div>'+
+      '<div class="bar"><button class="btn" data-act="testall">全部测速</button><button class="btn" data-act="regen">重新生成配置</button></div></div>'+
+
+    '<div class="card"><div class="card-hd"><h3>导入节点</h3><span class="hd-note">ss / vmess / vless / trojan / hysteria2</span></div><div class="card-bd">'+
+      '<div class="field"><label for="nk">分享链接</label><textarea id="nk" rows="2" placeholder="ss://...">ss://YWVzLTI1Ni1nY206ZHVtbXktcGFzc3dvcmQtMDAwMA==@node.example.com:8388#示例节点JP</textarea>'+
+      '<div class="hint">链接末尾 <span class="mono">#</span> 后是名称，导入时应写入 name 字段。</div></div>'+
+      '<div class="field" style="margin-bottom:0"><label for="nn">名称（可选）</label><input type="text" id="nn" placeholder="留空则取链接里的名称"></div>'+
+    '</div><div class="bar"><button class="btn primary" data-act="import">导入</button><button class="btn" data-act="importfile">从文件导入</button></div></div>'+
+    resultBox('r-nd')),
+
+    seq_subs(subRows),
+
+    sec('test',
+    '<div class="card"><div class="card-hd"><h3>延迟测试</h3><span class="hd-note">TCP 握手 + 目标站点实测</span></div><div class="grid">'+
+      cell('节点延迟','0 ms <span class="tag warn">未计时</span>','node test 计时未生效（已归档缺陷）')+
+      cell('握手耗时','—','TCP 三次握手')+
+      cell('丢包率','—','连续 10 次探测')+
+      cell('出口位置','日本 · 东京','需 IP 归属查询')+
+    '</div><div class="bar"><button class="btn primary" data-act="testall">全部测速</button><button class="btn" data-act="testone">测当前节点</button></div>'+
+    '<div class="legend"><span>测的是<b>入口可达性</b>，不是节点质量：域名解析到国内入口 36.141.40.13</span><span>修正后再判定可用性</span></div></div>'+
+    resultBox('r-tt')),
+
+    sec('group',
+    '<div class="card"><div class="card-hd"><h3>国家分组</h3><span class="hd-note">按名称与域名推断</span></div><div class="card-bd"><div class="bar-chart">'+
+      '<div class="bc-row"><span class="mono" style="color:var(--muted)">auto-jp</span><div class="bc-track"><div class="bc-fill" style="width:0%"></div></div><span class="mono" style="color:var(--muted2)">0 / 1</span></div>'+
+      '<div class="bc-row"><span class="mono" style="color:var(--muted)">auto-hk</span><div class="bc-track"><div class="bc-fill" style="width:0%"></div></div><span class="mono" style="color:var(--muted2)">0 / 1</span></div>'+
+      '<div class="bc-row"><span class="mono" style="color:var(--muted)">auto-us</span><div class="bc-track"><div class="bc-fill" style="width:0%"></div></div><span class="mono" style="color:var(--muted2)">0 / 0</span></div>'+
+      '<div class="bc-row"><span class="mono" style="color:var(--muted)">auto-other</span><div class="bc-track"><div class="bc-fill g" style="width:100%"></div></div><span class="mono" style="color:var(--muted2)">1 / 1</span></div>'+
+    '</div><div class="hint" style="margin-top:10px">域名含 <span class="mono">jp01</span>，本应归 <span class="mono">auto-jp</span>；名称修好后这里应显示 auto-jp 1 / 1。</div></div></div>'),
+
+    sec('score',
+    '<div class="card"><div class="card-hd"><h3>节点评分</h3><span class="hd-note">权重：延迟 40% · 稳定性 30% · 丢包 20% · 带宽 10%</span></div><div class="grid">'+
+      cell('综合评分','—','样本不足，测速修复后计算')+
+      cell('延迟得分','—','目标 < 120 ms 满分')+
+      cell('稳定性','待观察','连续在线时长 / 重连次数')+
+      cell('带宽','—','下行实测峰值')+
+    '</div><div class="card-bd"><div class="hint">评分只用于排序与自动优选，不参与是否剔除的判定；评分低于阈值的节点会标黄但仍可手动选用。</div></div>'+
+    '<div class="bar"><button class="btn" data-act="score-calc">重新评分</button><button class="btn" data-act="autosel">'+(STATE.autoSelect?'关闭自动优选':'开启自动优选')+'</button></div></div>'),
+
+    sec('kick',
+    '<div class="card"><div class="card-hd"><h3>故障自动剔除</h3><span class="hd-note">连续失败 N 次后移出优选池</span></div><div class="grid">'+
+      cell('失败阈值','3 次','连续探测失败')+
+      cell('剔除后','改用下一个同区节点','无同区则回退兜底')+
+      cell('恢复判定','2 次成功探测','自动回到优选池')+
+      cell('当前剔除','0 个','暂无故障节点')+
+    '</div><div class="card-bd"><div class="hint">剔除只影响自动选择与订阅合并时的默认启用状态，不会删除节点，也不会改 uci 里的 enabled。</div></div>'+
+    '<div class="bar"><button class="btn" data-act="kick-save">保存阈值</button><button class="btn" data-act="kick-check">立即探测一轮</button></div></div>'
+  )].join('');
+}
+
+function seq_subs(subRows){
+  return sec('subs',
+    '<div class="card"><div class="card-hd"><h3>订阅管理</h3><span class="hd-note">'+DATA.subs.length+' 条</span></div>'+
+      '<div class="tbl-wrap"><table><colgroup><col style="width:18%"><col style="width:46%"><col style="width:10%"><col style="width:10%"><col style="width:120px"></colgroup>'+
+      '<thead><tr><th>名称</th><th>地址</th><th>节点</th><th>更新</th><th>操作</th></tr></thead><tbody>'+
+      (subRows || '<tr><td colspan="5" class="empty">暂无订阅</td></tr>')+'</tbody></table></div>'+
+      '<div class="card-bd" style="border-top:1px solid rgba(255,255,255,.5)"><input type="text" id="su" placeholder="https://example.com/api/v1/client/subscribe?token=..."></div>'+
+      '<div class="bar"><button class="btn primary" data-act="subadd">添加订阅</button><button class="btn" data-act="subupdall">更新全部</button></div></div>'+
+    resultBox('r-sb'));
+}
+
+function pageSplit(){
   const plats = [['youtube','YouTube'],['netflix','Netflix'],['tiktok','TikTok'],['telegram','Telegram']].map(function(p){
     return '<label class="switch-row"><input type="checkbox" class="sw" data-plat="'+p[0]+'" '+(STATE.platform[p[0]]?'checked':'')+'>'+
       '<span><span class="sw-lab">'+p[1]+'</span><span class="sw-sub">'+(STATE.platform[p[0]]?'已独立走节点':'跟默认规则')+'</span></span></label>';
@@ -434,52 +515,45 @@ function pageProxy(){
       '<td><span class="tag '+(dir?'n':'ok')+'">'+esc(f.path)+'</span></td><td>'+(dir?'直连，不经节点':'经节点出站')+'</td></tr>';
   }).join('');
 
-  return '<div class="page-head"><h1 class="page-title">代理</h1>'+
-    '<p class="page-desc">节点、订阅、分流策略，全部落到 <span class="mono">easyproxy.@node[n]</span></p></div>'+
+  return ['<div class="page-head"><h1 class="page-title">智能分流</h1>'+
+    '<p class="page-desc">国内直连、国外代理、平台独立策略；规则集缺失时整机退回直连</p></div>',
 
-    '<div class="note"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="#b06d00" stroke-width="2"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h16.4a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>'+
-      '<div><b>两处已确认缺陷。</b>名称落库成「11」，链接里的 <span class="mono">#示例节点JP</span> 没被解析；地区推断只看名称，jp 节点被判「其他」进 <span class="mono">auto-other</span>。</div></div>'+
-
-    '<div class="card"><div class="card-hd"><h3>节点</h3><span class="hd-note">'+DATA.nodes.length+' 个 · 1 个启用</span></div>'+
-      '<div class="tbl-wrap"><table>'+
-      '<colgroup><col style="width:12%"><col style="width:12%"><col style="width:30%"><col style="width:9%"><col style="width:11%"><col style="width:10%"><col style="width:8%"><col style="width:146px"></colgroup>'+
-      '<thead><tr><th>名称</th><th>类型</th><th>服务器地址</th><th>地区</th><th>分组</th><th>延迟</th><th>状态</th><th>操作</th></tr></thead>'+
-      '<tbody>'+(rows || '<tr><td colspan="8" class="empty">还没有节点，用下面的导入框加一条</td></tr>')+'</tbody></table></div>'+
-      '<div class="bar"><button class="btn" data-act="testall">全部测速</button><button class="btn" data-act="regen">重新生成配置</button></div></div>'+
-
-    '<div class="card"><div class="card-hd"><h3>节点分组</h3><span class="hd-note">按名称与域名推断</span></div><div class="card-bd"><div class="bar-chart">'+
-      '<div class="bc-row"><span class="mono" style="color:var(--muted)">auto-jp</span><div class="bc-track"><div class="bc-fill" style="width:0%"></div></div><span class="mono" style="color:var(--muted2)">0 / 1</span></div>'+
-      '<div class="bc-row"><span class="mono" style="color:var(--muted)">auto-hk</span><div class="bc-track"><div class="bc-fill" style="width:0%"></div></div><span class="mono" style="color:var(--muted2)">0 / 1</span></div>'+
-      '<div class="bc-row"><span class="mono" style="color:var(--muted)">auto-other</span><div class="bc-track"><div class="bc-fill g" style="width:100%"></div></div><span class="mono" style="color:var(--muted2)">1 / 1</span></div>'+
-    '</div><div class="hint" style="margin-top:10px">域名含 <span class="mono">jp01</span>，本应归 <span class="mono">auto-jp</span>；名称修好后这里应显示 auto-jp 1 / 1。</div></div></div>'+
-
-    '<div class="card"><div class="card-hd"><h3>导入节点</h3><span class="hd-note">ss / vmess / vless / trojan / hysteria2</span></div><div class="card-bd">'+
-      '<div class="field"><label for="nk">分享链接</label><textarea id="nk" rows="2" placeholder="ss://...">ss://YWVzLTI1Ni1nY206ZHVtbXktcGFzc3dvcmQtMDAwMA==@node.example.com:475#示例节点JP</textarea>'+
-      '<div class="hint">链接末尾 <span class="mono">#</span> 后是名称，导入时应写入 name 字段。</div></div>'+
-      '<div class="field" style="margin-bottom:0"><label for="nn">名称（可选）</label><input type="text" id="nn" placeholder="留空则取链接里的名称"></div>'+
-    '</div><div class="bar"><button class="btn primary" data-act="import">导入</button><button class="btn" data-act="importfile">从文件导入</button></div></div>'+
-
-    '<div class="card"><div class="card-hd"><h3>订阅</h3><span class="hd-note">'+DATA.subs.length+' 条</span></div>'+
-      '<div class="tbl-wrap"><table><colgroup><col style="width:18%"><col style="width:46%"><col style="width:10%"><col style="width:10%"><col style="width:120px"></colgroup>'+
-      '<thead><tr><th>名称</th><th>地址</th><th>节点</th><th>更新</th><th>操作</th></tr></thead><tbody>'+
-      (subRows || '<tr><td colspan="5" class="empty">暂无订阅</td></tr>')+'</tbody></table></div>'+
-      '<div class="card-bd" style="border-top:1px solid var(--line2)"><input type="text" id="su" placeholder="https://example.com/api/v1/client/subscribe?token=..."></div>'+
-      '<div class="bar"><button class="btn primary" data-act="subadd">添加订阅</button><button class="btn" data-act="subupdall">更新全部</button></div></div>'+
-
-    '<div class="card"><div class="card-hd"><h3>分流策略</h3><span class="hd-note">routing.mode = '+STATE.splitMode+'</span></div><div class="grid">'+
-      cell('当前模式', STATE.splitMode==='split'?'智能分流 <span class="tag ok">生效</span>':'全局代理', '国内 direct / 其余 proxy')+
+    sec('overview',
+    '<div class="card"><div class="card-hd"><h3>当前模式</h3><span class="hd-note">routing.mode = '+STATE.splitMode+'</span></div><div class="grid">'+
+      cell('分流模式', STATE.splitMode==='split'?'智能分流 <span class="tag ok">生效</span>':'全局代理', '国内 direct / 其余 proxy')+
       cell('失败闭合', STATE.failClose?'<span class="tag ok">开启</span>':'<span class="tag warn">关闭</span>','阻断时不直连')+
       cell('自动优选', STATE.autoSelect?'<span class="tag ok">开启</span>':'<span class="tag n">关闭</span>','当前手动选节点')+
       cell('规则集', STATE.rulesetReady?'<span class="tag ok">2 就绪</span>':'<span class="tag bad">缺失</span>','57617 + 34259 B')+
-    '</div><div class="bar"><button class="btn" data-act="mode-global">切全局</button><button class="btn primary" data-act="mode-split">切智能分流</button><button class="btn" data-act="autosel">'+(STATE.autoSelect?'关闭自动优选':'开启自动优选')+'</button></div></div>'+
-
-    '<div class="card"><div class="card-hd"><h3>平台分流</h3><span class="hd-note">按目标平台单独指定出站</span></div><div class="card-bd" style="padding:4px 12px">'+plats+'</div></div>'+
+    '</div><div class="bar"><button class="btn" data-act="mode-global">切全局</button><button class="btn primary" data-act="mode-split">切智能分流</button></div></div>'+
 
     '<div class="card"><div class="card-hd"><h3>分流实测</h3><span class="hd-note">2026-11-17 真机，经 7890 发起</span></div>'+
       '<div class="tbl-wrap"><table><colgroup><col style="width:28%"><col style="width:12%"><col style="width:14%"><col style="width:22%"><col style="width:24%"></colgroup>'+
       '<thead><tr><th>目标</th><th>状态码</th><th>耗时</th><th>实际出站</th><th>判定</th></tr></thead><tbody>'+flowRows+'</tbody></table></div>'+
-      '<div class="legend"><span>国内三项全部 outbound/direct</span><span>国外两项全部 outbound/shadowsocks[11]</span></div></div>'+
-    resultBox('r-px');
+      '<div class="legend"><span>国内三项全部 outbound/direct</span><span>国外两项全部经节点出站</span></div></div>'+
+    resultBox('r-sp')),
+
+    sec('cn',
+    '<div class="card"><div class="card-hd"><h3>国内直连</h3><span class="hd-note">china_policy 恒为 direct</span></div><div class="grid">'+
+      cell('域名规则','geosite-cn','57617 B · 已下载')+
+      cell('IP 规则','geoip-cn','34259 B · 已下载')+
+      cell('内网保护','始终直连','10/8 · 172.16/12 · 192.168/16')+
+      cell('DNS','223.5.5.5','国内解析走本地')+
+    '</div><div class="card-bd"><div class="hint">命中 geosite-cn / geoip-cn 的流量直接直连，永不进内核；改 UCI 也改不掉，validate 会拒绝把 china_policy 写成 proxy。</div></div>'+
+    '<div class="bar"><button class="btn" data-act="rules-update">更新规则集</button><button class="btn" data-act="rules-verify">校验规则集</button></div></div>'+
+    resultBox('r-cn')),
+
+    sec('global',
+    '<div class="card"><div class="card-hd"><h3>国外代理</h3><span class="hd-note">兜底走 proxy</span></div><div class="grid">'+
+      cell('兜底出站','proxy','未命中规则一律走节点')+
+      cell('节点选择', STATE.autoSelect?'自动优选':'手动 · 示例节点JP', STATE.autoSelect?'按评分排序':'当前固定节点')+
+      cell('规则顺序','内网 → 节点服务器 → 自定义 → 平台 → CN → proxy','自上而下首个命中即生效')+
+      cell('IPv6','直连','policy='+STATE.ipv6)+
+    '</div></div>'),
+
+    sec('plat',
+    '<div class="card"><div class="card-hd"><h3>平台策略</h3><span class="hd-note">按目标平台单独指定出站</span></div><div class="card-bd" style="padding:4px 12px">'+plats+'</div>'+
+    '<div class="bar"><button class="btn primary" data-act="plat-save">保存平台策略</button></div></div>')
+  ].join('');
 }
 
 /* ================= 页 3：连接 ================= */
@@ -520,27 +594,66 @@ function pageConn(){
 }
 
 /* ================= 页 4：DNS ================= */
-function pageDns(){
-  return '<div class="page-head"><h1 class="page-title">DNS</h1>'+
-    '<p class="page-desc">国内域名走本地 DNS，其余走加密 DoH，避免 DNS 泄漏</p></div>'+
+function pageDnsNet(){
+  return ['<div class="page-head"><h1 class="page-title">DNS 与网络</h1>'+
+    '<p class="page-desc">上游、防泄漏、国内外分流、Fake-IP、IPv6 与缓存</p></div>',
 
-    '<div class="card"><div class="card-hd"><h3>解析服务器</h3><span class="hd-note">routing.dns_*</span></div><div class="card-bd">'+
+    sec('up',
+    '<div class="card"><div class="card-hd"><h3>DNS 上游</h3><span class="hd-note">routing.dns_*</span></div><div class="card-bd">'+
       '<div class="two">'+
         '<div class="field"><label for="dl">国内 DNS</label><input type="text" id="dl" value="'+esc(STATE.dnsLocal)+'"><div class="hint">匹配 geosite-cn 的域名直接向这里查询。</div></div>'+
         '<div class="field"><label for="dr">远程 DNS（DoH）</label><input type="text" id="dr" value="'+esc(STATE.dnsRemote)+'"><div class="hint">国外域名走这里，经节点出去，防污染。</div></div>'+
       '</div>'+
-      '<label class="switch-row"><input type="checkbox" class="sw" data-sw="dnsSplit" '+(STATE.dnsSplit?'checked':'')+'><span><span class="sw-lab">DNS 分流</span><span class="sw-sub">关闭后所有域名都走 DoH，国内解析会变慢</span></span></label>'+
-      '<label class="switch-row"><input type="checkbox" class="sw" data-sw="dnsFake" '+(STATE.dnsFake?'checked':'')+'><span><span class="sw-lab">FakeIP 加速</span><span class="sw-sub">命中规则的域名不等真实解析返回，先给假 IP 建连</span></span></label>'+
     '</div><div class="bar"><button class="btn primary" data-act="dns-save">保存并应用</button><button class="btn" data-act="dns-test">测试解析</button></div></div>'+
+    resultBox('r-dn')),
 
-    '<div class="card"><div class="card-hd"><h3>解析测试</h3><span class="hd-note">最近一次</span></div>'+
-      '<div class="tbl-wrap"><table><colgroup><col style="width:34%"><col style="width:26%"><col style="width:20%"><col style="width:20%"></colgroup>'+
+    sec('leak',
+    '<div class="card"><div class="card-hd"><h3>DNS 防泄漏</h3><span class="hd-note">避免真实查询被本地运营商看到</span></div><div class="grid">'+
+      cell('DoH 加密','已启用','国外域名全程 TLS')+
+      cell('强制走节点','已启用','DoH 请求经 socks 出站')+
+      cell('系统解析','已接管','dnsmasq 上游指向内核')+
+      cell('62 端口拦截','未启用','阻断明文 53 出网')+
+    '</div><div class="card-bd"><div class="hint">接管方式是 <span class="mono">dnsmasq upstream → 127.0.0.1#7853</span>；停内核不改这里会导致 DNS 全断，卸载时必须一并恢复。</div></div>'+
+    '<div class="bar"><button class="btn" data-act="leak-check">泄漏自检</button></div></div>'),
+
+    sec('split',
+    '<div class="card"><div class="card-hd"><h3>国内外分流</h3><span class="hd-note">按域名归属决定走哪条上游</span></div><div class="card-bd">'+
+      '<label class="switch-row"><input type="checkbox" class="sw" data-sw="dnsSplit" '+(STATE.dnsSplit?'checked':'')+'><span><span class="sw-lab">DNS 分流</span><span class="sw-sub">关闭后所有域名都走 DoH，国内解析会变慢</span></span></label>'+
+    '</div>'+
+    '<div class="tbl-wrap"><table><colgroup><col style="width:34%"><col style="width:26%"><col style="width:20%"><col style="width:20%"></colgroup>'+
       '<thead><tr><th>域名</th><th>解析结果</th><th>走哪条</th><th>耗时</th></tr></thead><tbody>'+
       '<tr><td class="mono">www.baidu.com</td><td class="mono">110.242.68.3</td><td><span class="tag n">local</span></td><td class="mono">2 ms</td></tr>'+
       '<tr><td class="mono">www.google.com</td><td class="mono">142.250.72.14</td><td><span class="tag ok">remote</span></td><td class="mono">41 ms</td></tr>'+
       '<tr><td class="mono">github.com</td><td class="mono">20.205.243.166</td><td><span class="tag ok">remote</span></td><td class="mono">37 ms</td></tr>'+
-      '</tbody></table></div></div>'+
+      '</tbody></table></div></div>'),
 
+    sec('fake',
+    '<div class="card"><div class="card-hd"><h3>Fake-IP</h3><span class="hd-note">预留能力 · 默认关闭</span></div><div class="card-bd">'+
+      '<label class="switch-row"><input type="checkbox" class="sw" data-sw="dnsFake" '+(STATE.dnsFake?'checked':'')+'><span><span class="sw-lab">FakeIP 加速</span><span class="sw-sub">命中规则的域名不等真实解析返回，先给假 IP 建连</span></span></label>'+
+    '</div><div class="grid">'+
+      cell('地址池','198.18.0.0/15','预留，未启用')+
+      cell('生效范围','仅 proxy 出站','直连仍走真实解析')+
+      cell('兼容性','待验证','部分游戏与 P2P 可能异常')+
+      cell('回退','关闭即恢复','无需重启内核')+
+    '</div></div>'),
+
+    sec('v6',
+    '<div class="card"><div class="card-hd"><h3>IPv6</h3><span class="hd-note">transparent.ipv6_policy</span></div><div class="grid">'+
+      cell('当前策略', STATE.ipv6==='direct'?'直连':'阻断', 'policy='+STATE.ipv6)+
+      cell('直连含义','IPv6 不接管','不经内核，按系统路由')+
+      cell('阻断含义','丢弃非 LAN IPv6','防绕过代理')+
+      cell('LAN 例外','fc00::/7 · fe80::/10','内网 IPv6 始终放行')+
+    '</div><div class="bar"><button class="btn" data-act="v6-direct">设为直连</button><button class="btn" data-act="v6-block">设为阻断</button></div></div>'),
+
+    sec('cache',
+    '<div class="card"><div class="card-hd"><h3>DNS 缓存</h3><span class="hd-note">cache_file 持久化，重启不丢</span></div><div class="grid">'+
+      cell('缓存文件','/etc/easyproxy/cache.db','sing-box 自管')+
+      cell('条目数','—','需内核统计接口')+
+      cell('命中率','—','需内核统计接口')+
+      cell('清理','手动','清空后首次解析会变慢')+
+    '</div><div class="bar"><button class="btn danger" data-act="cache-clear">清空缓存</button></div></div>'),
+
+    sec('rules',
     '<div class="card"><div class="card-hd"><h3>规则集</h3><span class="hd-note">分流判定的依据，已 verify</span></div>'+
       '<div class="tbl-wrap"><table><colgroup><col style="width:24%"><col style="width:28%"><col style="width:16%"><col style="width:16%"><col style="width:16%"></colgroup>'+
       '<thead><tr><th>名称</th><th>文件</th><th>大小</th><th>校验</th><th>操作</th></tr></thead><tbody>'+
@@ -548,47 +661,236 @@ function pageDns(){
         return '<tr><td><b>'+esc(r.name)+'</b></td><td class="mono">'+esc(r.file)+'</td><td class="mono">'+r.bytes+' B</td>'+
           '<td><span class="tag ok">verify ok</span></td><td><button class="btn sm" data-act="rs-one">重新拉取</button></td></tr>';
       }).join('')+
-      '</tbody></table></div><div class="bar"><button class="btn primary" data-act="rs-all">更新全部规则集</button></div></div>'+
-    resultBox('r-dn');
+      '</tbody></table></div><div class="bar"><button class="btn primary" data-act="rs-all">更新全部规则集</button></div></div>')
+  ].join('');
+}
+
+function pageKernel(){
+  const st = DATA.status;
+  return ['<div class="page-head"><h1 class="page-title">内核管理</h1>'+
+    '<p class="page-desc">sing-box 为稳定内核，dae 仅保留适配器框架</p></div>',
+
+    sec('state',
+    '<div class="card"><div class="card-hd"><h3>内核状态</h3><span class="hd-note">'+(STATE.running?'running':'stopped')+'</span></div><div class="grid">'+
+      cell('运行状态', STATE.running?'<span class="tag ok">运行中</span>':'<span class="tag bad">已停止</span>', STATE.running?'pid '+st.pid:'无进程')+
+      cell('监听端口', STATE.running?'7890 <span class="tag ok">listening</span>':'<span class="tag bad">未监听</span>','mixed-in')+
+      cell('透明代理', STATE.transparent?'<span class="tag ok">已开启</span>':'<span class="tag n">未开启</span>','tproxy '+STATE.tproxy)+
+      cell('子进程','2 个','wrapper + sing-box')+
+    '</div><div class="bar"><button class="btn" data-act="doctor">一键自检</button><button class="btn" data-act="restart">重启内核</button></div></div>'+
+    resultBox('r-kn')),
+
+    sec('ver',
+    '<div class="card"><div class="card-hd"><h3>版本</h3><span class="hd-note">engine version</span></div><div class="grid">'+
+      cell('内核','sing-box', st.binaryVer)+
+      cell('二进制', esc(st.binary), '/opt/open-box/bin/sing-box')+
+      cell('面板','0.8.13', st.stage)+
+      cell('来源','Open-Box 自带','固件预装，复用不重装')+
+    '</div><div class="bar"><button class="btn" data-act="engine-ver">读取内核版本</button></div></div>'),
+
+    sec('ctl',
+    '<div class="card"><div class="card-hd"><h3>启停与切换</h3><span class="hd-note">/etc/init.d/easyproxy</span></div><div class="grid">'+
+      cell('启动','cmd_start','procd 拉起 wrapper')+
+      cell('停止','cmd_stop','清理 nft 与 ip rule')+
+      cell('切换内核','sing-box / dae','dae 标记开发中，选它会被拒绝')+
+      cell('自动恢复', STATE.autoRecover?'已开启':'已关闭','异常退出 10 秒内重启一次')+
+    '</div><div class="bar">'+
+      '<button class="btn '+(STATE.running?'danger':'primary')+'" data-act="toggle">'+(STATE.running?'停止内核':'启动内核')+'</button>'+
+      '<button class="btn" data-act="restart">重启内核</button>'+
+      '<button class="btn" data-act="engine-switch">切换到 dae（演示拒绝）</button>'+
+    '</div></div>'),
+
+    sec('check',
+    '<div class="card"><div class="card-hd"><h3>配置校验</h3><span class="hd-note">generate + check</span></div><div class="grid">'+
+      cell('配置文件','sing-box.json','2262 B')+
+      cell('语法校验','rc=0','sing-box check 通过')+
+      cell('规则集','2 个就绪','geosite-cn + geoip-cn')+
+      cell('最近生成','刚刚','config generate')+
+    '</div><div class="bar"><button class="btn primary" data-act="regen">重新生成配置</button><button class="btn" data-act="cfg-check">校验当前配置</button></div>'+
+    '<div class="legend"><span>generate 只写配置文件，不重启内核</span><span>改动要生效仍需 restart</span></div></div>'+
+    resultBox('r-kc'))
+  ].join('');
 }
 
 /* ================= 页 5：设置 ================= */
 function pageSettings(){
-  return '<div class="page-head"><h1 class="page-title">设置</h1>'+
-    '<p class="page-desc">系统级开关、内核版本、备份恢复与诊断上报</p></div>'+
+  return ['<div class="page-head"><h1 class="page-title">系统设置</h1>'+
+    '<p class="page-desc">代理模式、端口、开机启动、自动更新与配置备份</p></div>',
 
-    '<div class="card"><div class="card-hd"><h3>常规</h3><span class="hd-note">/etc/config/easyproxy</span></div><div class="card-bd">'+
-      '<label class="switch-row"><input type="checkbox" class="sw" data-sw="autoStart" '+(STATE.autoStart?'checked':'')+'><span><span class="sw-lab">开机自启</span><span class="sw-sub">写入 /etc/rc.d/S95easyproxy</span></span></label>'+
-      '<label class="switch-row"><input type="checkbox" class="sw" data-sw="autoRecover" '+(STATE.autoRecover?'checked':'')+'><span><span class="sw-lab">内核异常自动恢复</span><span class="sw-sub">内核退出后 10 秒内自动重启一次，连续失败则停止重试并记录日志</span></span></label>'+
-    '</div></div>'+
+    sec('mode',
+    '<div class="card"><div class="card-hd"><h3>代理模式</h3><span class="hd-note">routing.mode = '+STATE.splitMode+'</span></div><div class="grid">'+
+      cell('当前模式', STATE.splitMode==='split'?'智能分流':'全局代理', '国内 direct / 其余 proxy')+
+      cell('失败闭合', STATE.failClose?'开启':'关闭','阻断时不直连')+
+      cell('自动优选', STATE.autoSelect?'开启':'关闭','按评分选节点')+
+      cell('规则集', STATE.rulesetReady?'2 就绪':'缺失','geosite + geoip')+
+    '</div><div class="bar"><button class="btn" data-act="mode-global">切全局</button><button class="btn primary" data-act="mode-split">切智能分流</button><button class="btn" data-act="autosel">'+(STATE.autoSelect?'关闭自动优选':'开启自动优选')+'</button></div></div>'+
+    resultBox('r-sm')),
 
-    '<div class="card"><div class="card-hd"><h3>内核与版本</h3><span class="hd-note">当前 0.8.13</span></div>'+
-      '<div class="grid">'+
-        cell('面板版本','0.8.13','Stage 7 · package/easyproxy')+
-        cell('内核','sing-box','1.14.4-openbox-45')+
-        cell('更新通道','稳定','stable · 手动检查')+
-        cell('配置校验','通过','sing-box check rc=0')+
-      '</div><div class="bar"><button class="btn" data-act="chk-update">检查更新</button></div></div>'+
+    sec('port',
+    '<div class="card"><div class="card-hd"><h3>端口与监听</h3><span class="hd-note">main.listen_port · tproxy_port</span></div><div class="card-bd">'+
+      '<div class="field"><label for="p1">混合入站端口（HTTP/SOCKS）</label><input type="text" id="p1" value="'+STATE.port+'"><div class="hint">客户端指向 <span class="mono">http://路由器IP:'+STATE.port+'</span> 即可。</div></div>'+
+      '<div class="field"><label for="p2">tproxy 端口</label><input type="text" id="p2" value="'+STATE.tproxy+'"><div class="hint">透明代理抓包后转发到的本地端口，改完要重启内核。</div></div>'+
+      '<div class="field" style="margin-bottom:0"><label for="iv6">IPv6 策略</label>'+
+        '<select id="iv6"><option value="direct"'+(STATE.ipv6==='direct'?' selected':'')+'>direct（不接管）</option><option value="block"'+(STATE.ipv6==='block'?' selected':'')+'>block（阻断）</option></select></div>'+
+    '</div><div class="bar"><button class="btn primary" data-act="set-save">保存端口</button></div></div>'+
+    resultBox('r-sp2')),
 
-    '<div class="card"><div class="card-hd"><h3>备份与恢复</h3><span class="hd-note">uci + 节点 + 规则集</span></div>'+
-      '<div class="card-bd"><div class="hint">备份包含全部 uci 配置与节点凭据；恢复后自动重生成配置并重启内核。</div></div>'+
-      '<div class="bar"><button class="btn primary" data-act="cfg-backup">导出备份</button><button class="btn" data-act="cfg-restore">从文件恢复</button><button class="btn" data-act="cfg-reset">重置全部配置</button></div></div>'+
+    sec('boot',
+    '<div class="card"><div class="card-hd"><h3>开机启动</h3><span class="hd-note">/etc/rc.d/S95easyproxy</span></div><div class="card-bd">'+
+      '<label class="switch-row"><input type="checkbox" class="sw" data-sw="autoStart" '+(STATE.autoStart?'checked':'')+'><span><span class="sw-lab">开机自启</span><span class="sw-sub">写入 /etc/rc.d/S95easyproxy，重启后自动拉起</span></span></label>'+
+      '<label class="switch-row"><input type="checkbox" class="sw" data-sw="autoRecover" '+(STATE.autoRecover?'checked':'')+'><span><span class="sw-lab">内核异常自动恢复</span><span class="sw-sub">退出后 10 秒内重启一次，连续失败停止重试并记录日志</span></span></label>'+
+    '</div></div>'),
 
-    '<div class="card"><div class="card-hd"><h3>诊断上报</h3><span class="hd-note">坚果云 · 每 15 天一次</span></div><div class="card-bd">'+
+    sec('auto',
+    '<div class="card"><div class="card-hd"><h3>自动更新</h3><span class="hd-note">面板与规则集分开控制</span></div><div class="grid">'+
+      cell('更新通道','稳定','stable · 只有正式版本')+
+      cell('规则集周期','7 天','routing.rule_set_update_days')+
+      cell('面板自动更新','关闭','需手动确认')+
+      cell('失败回滚','开启','升级失败自动回退上个版本')+
+    '</div><div class="card-bd"><label class="switch-row"><input type="checkbox" class="sw" data-sw="autoUpdate" checked><span><span class="sw-lab">每日检查一次新版本</span><span class="sw-sub">只检查不安装，有更新时在「更新与诊断」提示</span></span></label></div>'+
+    '<div class="bar"><button class="btn" data-act="rule-cycle">保存规则集周期</button></div></div>'),
+
+    sec('cfg',
+    '<div class="card"><div class="card-hd"><h3>配置备份与恢复</h3><span class="hd-note">uci + 节点 + 规则集</span></div><div class="card-bd">'+
+      '<div class="hint">备份包含全部 uci 配置与节点凭据；恢复后自动重生成配置并重启内核。</div></div>'+
+      '<div class="bar"><button class="btn primary" data-act="cfg-backup">导出备份</button><button class="btn" data-act="cfg-restore">从文件恢复</button><button class="btn danger" data-act="cfg-reset">重置全部配置</button></div></div>'+
+    resultBox('r-cb'))
+  ].join('');
+}
+
+function pageMonitor(){
+  const connRows = [
+    ['10.10.10.20','www.google.com:443','示例节点JP','1.2 MB','00:42'],
+    ['10.10.10.20','github.com:443','示例节点JP','486 KB','00:18'],
+    ['10.10.10.21','www.baidu.com:443','直连','92 KB','00:03'],
+    ['10.10.10.21','www.qq.com:443','直连','41 KB','00:02'],
+    ['10.10.10.1','223.5.5.5:53','直连','3 KB','—']
+  ].map(function(r){
+    const dir = r[2]==='直连';
+    return '<tr><td class="mono">'+r[0]+'</td><td class="mono">'+esc(r[1])+'</td>'+
+      '<td><span class="tag '+(dir?'n':'ok')+'">'+esc(r[2])+'</span></td>'+
+      '<td class="mono">'+r[3]+'</td><td class="mono">'+r[4]+'</td></tr>';
+  }).join('');
+
+  return ['<div class="page-head"><h1 class="page-title">连接与监控</h1>'+
+    '<p class="page-desc">实时连接、来源、目标、节点归因、流量与日志</p></div>',
+
+    sec('conn',
+    '<div class="card"><div class="card-hd"><h3>实时连接</h3><span class="hd-note">5 条 active</span></div>'+
+      '<div class="tbl-wrap"><table><colgroup><col style="width:18%"><col style="width:32%"><col style="width:18%"><col style="width:16%"><col style="width:16%"></colgroup>'+
+      '<thead><tr><th>来源 IP</th><th>目标</th><th>使用节点</th><th>流量</th><th>时长</th></tr></thead><tbody>'+connRows+'</tbody></table></div>'+
+      '<div class="bar"><button class="btn" data-act="conn-refresh">刷新</button><button class="btn" data-act="conn-copy">复制入站地址</button></div></div>'+
+    resultBox('r-mn')),
+
+    sec('src',
+    '<div class="card"><div class="card-hd"><h3>来源 IP</h3><span class="hd-note">局域网内谁在走代理</span></div><div class="grid">'+
+      cell('10.10.10.20','3 条连接','主力设备 · 1.7 MB')+
+      cell('10.10.10.21','2 条连接','直连为主 · 133 KB')+
+      cell('10.10.10.1','DNS 查询','路由器自身')+
+      cell('其他','0 条','—')+
+    '</div></div>'),
+
+    sec('dst',
+    '<div class="card"><div class="card-hd"><h3>目标域名</h3><span class="hd-note">最近 5 分钟</span></div><div class="bar-chart">'+
+      '<div class="bc-row"><span class="mono" style="color:var(--muted)">google.com</span><div class="bc-track"><div class="bc-fill" style="width:64%"></div></div><span class="mono" style="color:var(--muted2)">64%</span></div>'+
+      '<div class="bc-row"><span class="mono" style="color:var(--muted)">github.com</span><div class="bc-track"><div class="bc-fill" style="width:22%"></div></div><span class="mono" style="color:var(--muted2)">22%</span></div>'+
+      '<div class="bc-row"><span class="mono" style="color:var(--muted)">baidu.com</span><div class="bc-track"><div class="bc-fill g" style="width:9%"></div></div><span class="mono" style="color:var(--muted2)">9%</span></div>'+
+      '<div class="bc-row"><span class="mono" style="color:var(--muted)">其他</span><div class="bc-track"><div class="bc-fill g" style="width:5%"></div></div><span class="mono" style="color:var(--muted2)">5%</span></div>'+
+    '</div></div>'),
+
+    sec('via',
+    '<div class="card"><div class="card-hd"><h3>节点归因</h3><span class="hd-note">哪条连接走了哪条出站</span></div><div class="grid">'+
+      cell('直连','3 条','命中 geosite-cn / 内网')+
+      cell('节点 示例节点JP','2 条','未命中规则走兜底')+
+      cell('阻断','0 条','失败闭合未触发')+
+      cell('DNS','5 条','dnsmasq → 内核')+
+    '</div></div>'),
+
+    sec('stat',
+    '<div class="card"><div class="card-hd"><h3>流量统计</h3><span class="hd-note">来自 /proc/net/dev 与内核计数</span></div><div class="grid">'+
+      cell('累计下载', bytes(DATA.status.rx), '↓ 自安装以来')+
+      cell('累计上传', bytes(DATA.status.tx), '↑ 自安装以来')+
+      cell('今日流量','86.4 MB','↑21.3 / ↓65.1')+
+      cell('实时下行','1.8 MB/s','峰值 6.2 MB/s')+
+    '</div></div>'),
+
+    sec('log',
+    '<div class="card"><div class="card-hd"><h3>日志</h3><span class="hd-note">/var/log/easyproxy.log</span></div><div class="card-bd">'+
+      '<div class="log-box" style="max-height:220px">2026-11-17 21:30:04 start: wrapper pid 37118, engine pid 37459<br>'+
+      '21:30:05 listener mixed-in 7890 ok<br>'+
+      '21:30:06 rule-set geosite-cn loaded (57617 B)<br>'+
+      '21:30:06 rule-set geoip-cn loaded (34259 B)<br>'+
+      '21:44:12 doctor: 10 ok / 0 warn / 0 fail<br>'+
+      '22:05:31 site-test: baidu 0.105s direct · google 0.447s proxy</div></div>'+
+      '<div class="bar"><button class="btn" data-act="log-refresh">刷新</button><button class="btn" data-act="log-download">下载日志</button></div></div>')
+  ].join('');
+}
+
+function pageUpdate(){
+  return ['<div class="page-head"><h1 class="page-title">更新与诊断</h1>'+
+    '<p class="page-desc">版本检测、升级与回滚、SHA256 校验、诊断与故障报告</p></div>',
+
+    sec('ver',
+    '<div class="card"><div class="card-hd"><h3>版本检测</h3><span class="hd-note">只检查，不自动安装</span></div><div class="grid">'+
+      cell('当前版本','0.8.13','Stage 7')+
+      cell('最新版本','0.8.13','已是最新')+
+      cell('更新通道','稳定','stable')+
+      cell('上次检查','刚刚','手动触发')+
+    '</div><div class="bar"><button class="btn primary" data-act="chk-update">检查更新</button></div></div>'+
+    resultBox('r-up')),
+
+    sec('up',
+    '<div class="card"><div class="card-hd"><h3>升级与回滚</h3><span class="hd-note">升级失败自动回退</span></div><div class="grid">'+
+      cell('升级方式','opkg 覆盖安装','保留 /etc/config/easyproxy')+
+      cell('升级前','自动备份配置','/etc/easyproxy/backups')+
+      cell('校验','SHA256 比对','SUM 不匹配直接中止')+
+      cell('失败处理','回滚上一版本','内核与配置一并恢复')+
+    '</div><div class="bar"><button class="btn primary" data-act="do-upgrade">升级到最新版</button><button class="btn" data-act="do-rollback">回滚上一版本</button></div>'+
+    '<div class="legend"><span>升级不会碰 /etc/config/network、firewall、dhcp</span><span>升级后需重启内核</span></div></div>'+
+    resultBox('r-up2')),
+
+    sec('sha',
+    '<div class="card"><div class="card-hd"><h3>SHA256 校验</h3><span class="hd-note">发布包与仓库对账</span></div>'+
+      '<div class="tbl-wrap"><table><colgroup><col style="width:34%"><col style="width:46%"><col style="width:20%"></colgroup>'+
+      '<thead><tr><th>文件</th><th>SHA256</th><th>结果</th></tr></thead><tbody>'+
+      '<tr><td class="mono">easyproxy_0.8.13-1_x86_64.ipk</td><td class="mono" style="word-break:break-all">73802 B · 已校验</td><td><span class="tag ok">匹配</span></td></tr>'+
+      '<tr><td class="mono">easyproxy.sh</td><td class="mono" style="word-break:break-all">7838 B · 已校验</td><td><span class="tag ok">匹配</span></td></tr>'+
+      '</tbody></table></div><div class="bar"><button class="btn" data-act="sha-check">重新校验</button></div></div>'),
+
+    sec('runlog',
+    '<div class="card"><div class="card-hd"><h3>运行日志</h3><span class="hd-note">最近 200 行</span></div><div class="card-bd">'+
+      '<div class="log-box" style="max-height:240px">暂无日志输出，点下面读取</div></div>'+
+      '<div class="bar"><button class="btn" data-act="log-refresh">读取日志</button></div></div>'),
+
+    sec('net',
+    '<div class="card"><div class="card-hd"><h3>网络诊断</h3><span class="hd-note">逐项可单独重跑</span></div><div class="grid">'+
+      cell('外网连通','正常','ping 1.1.1.1')+
+      cell('DNS 解析','正常','baidu → 110.242.68.3')+
+      cell('代理端口','正常','7890 listening')+
+      cell('规则集','正常','2 个 ready')+
+    '</div><div class="bar"><button class="btn" data-act="diag-net">运行完整诊断</button><button class="btn" data-act="doctor">doctor 自检</button></div>'+
+    '<div class="legend"><span>诊断只读，不改任何配置</span><span>结果可一键打包上报</span></div></div>'+
+    resultBox('r-nd2')),
+
+    sec('report',
+    '<div class="card"><div class="card-hd"><h3>故障报告</h3><span class="hd-note">坚果云 · 每 15 天一次</span></div><div class="card-bd">'+
       '<label class="switch-row"><input type="checkbox" class="sw" data-sw="diagAuto" '+(STATE.diagAuto?'checked':'')+'><span><span class="sw-lab">自动上报</span><span class="sw-sub">每 15 天打包一次诊断日志，上传到坚果云 EasyProxy 目录</span></span></label>'+
       '<label class="switch-row"><input type="checkbox" class="sw" data-sw="diagMask" '+(STATE.diagMask?'checked':'')+'><span><span class="sw-lab">脱敏</span><span class="sw-sub">上传前抹除节点地址、密码与订阅令牌</span></span></label>'+
-    '</div><div class="bar"><button class="btn" data-act="diag-now">立即上报一次</button></div></div>'+
-    resultBox('r-st');
+    '</div><div class="bar"><button class="btn primary" data-act="diag-now">立即上报一次</button><button class="btn" data-act="report-copy">生成问题摘要</button></div></div>')
+  ].join('');
 }
 
 /* ================= 导航 ================= */
 const PAGES = [
-  { id:'overview', t:'概览',     fn:pageOverview },
-  { id:'proxy',    t:'代理',     fn:pageProxy },
-  { id:'conn',     t:'连接',     fn:pageConn },
-  { id:'dns',      t:'DNS',      fn:pageDns },
-  { id:'settings', t:'设置',     fn:pageSettings }
+  { id:'overview', t:'概览',        fn:pageOverview, subs:null },
+  { id:'nodes',    t:'节点中心',    fn:pageNodes,     subs:[['nodes','节点列表'],['subs','订阅管理'],['test','延迟测试'],['group','国家分组'],['score','节点评分'],['kick','故障剔除']] },
+  { id:'split',    t:'智能分流',    fn:pageSplit,     subs:[['overview','分流总览'],['cn','国内直连'],['global','国外代理'],['plat','平台策略']] },
+  { id:'dnsnet',   t:'DNS 与网络',  fn:pageDnsNet,    subs:[['up','DNS 上游'],['leak','防泄漏'],['split','国内外分流'],['fake','Fake-IP'],['v6','IPv6'],['cache','缓存']] },
+  { id:'kernel',   t:'内核管理',    fn:pageKernel,    subs:[['state','内核状态'],['ver','版本'],['ctl','启停与切换'],['check','配置校验']] },
+  { id:'monitor',  t:'连接与监控',  fn:pageMonitor,   subs:[['conn','实时连接'],['src','来源 IP'],['dst','目标域名'],['via','节点归因'],['stat','流量统计'],['log','日志']] },
+  { id:'settings', t:'系统设置',    fn:pageSettings,  subs:[['mode','代理模式'],['port','端口'],['boot','开机启动'],['auto','自动更新'],['cfg','备份恢复']] },
+  { id:'update',   t:'更新与诊断',  fn:pageUpdate,    subs:[['ver','版本检测'],['up','升级'],['sha','SHA256'],['runlog','运行日志'],['net','网络诊断'],['report','故障报告']] }
 ];
+var SUB = 'all';
 let CUR = 'overview';
 
 function renderNav(){
@@ -597,11 +899,23 @@ function renderNav(){
   }).join('');
 }
 function render(){
+  RESULTED=0;
   const p = PAGES.find(function(x){ return x.id===CUR; }) || PAGES[0];
-  document.getElementById('view').innerHTML = '<div class="ov-page">' + p.fn() + '</div>';
+  const subs = p.subs;
+  const subBar = subs ? '<div class="subnav">'+
+      '<button class="spill'+(SUB==='all'?' on':'')+'" data-sub="all">全部</button>'+
+      subs.map(function(x){ return '<button class="spill'+(SUB===x[0]?' on':'')+'" data-sub="'+x[0]+'">'+x[1]+'</button>'; }).join('')+
+    '</div>' : '';
+  document.getElementById('view').innerHTML = '<div class="ov-page">' + subBar + p.fn() + '</div>';
   renderNav();
   bindPage();
+  applySub();
   syncTop();
+}
+function applySub(){
+  Array.prototype.forEach.call(document.querySelectorAll('.sec'), function(el){
+    el.hidden = (SUB !== 'all' && el.dataset.sec !== SUB);
+  });
 }
 function syncTop(){
   const pill = document.getElementById('pill-run');
@@ -612,6 +926,9 @@ function syncTop(){
 
 /* ================= 交互 ================= */
 function bindPage(){
+  Array.prototype.forEach.call(document.querySelectorAll('[data-sub]'), function(b){
+    b.addEventListener('click', function(){ SUB = b.dataset.sub; render(); });
+  });
   const view = document.getElementById('view');
 
   view.querySelectorAll('[data-sw]').forEach(function(sw){
