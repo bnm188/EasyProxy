@@ -196,6 +196,15 @@ textarea{font-family:var(--mono);font-size:12px;resize:vertical;line-height:1.6}
 .ov-page .cell-k{font-size:11.5px;color:#5e6d7d;letter-spacing:.02em}
 .ov-page .cell-v{font-size:24px;font-weight:600;letter-spacing:-.4px;margin-top:7px;line-height:1.25}
 .ov-page .cell-x{margin-top:4px;font-size:11.5px;color:#7e8c9b}
+.ov-page .kpi-bar{margin-top:10px;height:6px;border-radius:99px;background:rgba(24,44,72,.10);overflow:hidden;position:relative}
+.ov-page .kpi-bar i{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,#19a974,#3ecf8e);
+ transition:width 1.15s cubic-bezier(.22,.8,.2,1),background .9s linear;position:relative;overflow:hidden}
+.ov-page .kpi-bar i::after{content:"";position:absolute;top:0;bottom:0;width:40%;
+ background:linear-gradient(90deg,transparent,rgba(255,255,255,.6),transparent);animation:kpiSheen 2.6s linear infinite}
+@keyframes kpiSheen{from{transform:translateX(-120%)}to{transform:translateX(320%)}}
+.ov-page .kpi-lv{margin-left:auto;font-size:10px;padding:1px 6px;border-radius:99px;border:1px solid currentColor;opacity:.9}
+.ov-page .kpi-lv.g{color:#128a5a}.ov-page .kpi-lv.y{color:#b4791c}.ov-page .kpi-lv.r{color:#c63b40}
+.ov-page .cell-v.kpi-num{font-variant-numeric:tabular-nums}
 .ov-page .bar{padding:13px 17px;display:flex;gap:8px;flex-wrap:wrap;border-top:1px solid rgba(255,255,255,.5)}
 .ov-page .btn{border-radius:999px;background:rgba(255,255,255,.86);border:1px solid rgba(255,255,255,.94);
   box-shadow:0 2px 10px rgba(22,60,110,.09);padding:6px 14px;font-size:13px}
@@ -362,16 +371,20 @@ function sec(id, inner){
 function pageOverview(){
   const s = DATA.status, run = STATE.running;
   const kpi = [
-    ['CPU 使用','23%','0.10 / 0.04 / 0.01'],
-    ['内存','293 MB','15% · 共 1950 MB'],
-    ['实时下行','1.8 MB/s','经节点 · 峰 6.2'],
-    ['实时上行','0.4 MB/s','经节点 · 峰 1.1'],
-    ['今日节点流量','86.4 MB','↑21.3 / ↓65.1 · 不含直连'],
-    ['运行时间', run ? s.uptime : '—', '自上次启动'],
-    ['代理状态', run ? '运行中' : '已停止', '7890 监听'],
-    ['节点健康', DATA.nodes.length ? '1 / 1' : '0 / 0', '可用 · 待测速']
+    ['cpu','CPU 使用','23%','0.10 / 0.04 / 0.01',23,true],
+    ['mem','内存','293 MB','15% · 共 1950 MB',15,true],
+    ['down','实时下行','1.8 MB/s','经节点 · 峰 6.2 MB/s',29,true],
+    ['up','实时上行','0.4 MB/s','经节点 · 峰 1.1 MB/s',36,true],
+    ['today','今日节点流量','86.4 MB','↑21.3 / ↓65.1 · 不含直连',43,true],
+    ['uptime','运行时间', run ? s.uptime : '—','自上次启动',0,false],
+    ['state','代理状态', run ? '运行中' : '已停止','7890 监听',0,false],
+    ['health','节点健康', DATA.nodes.length ? '1 / 1' : '0 / 0','可用 · 待测速',0,false]
   ].map(function(k){
-    return '<div class="cell"><div class="cell-k">'+k[0]+'</div><div class="cell-v">'+k[1]+'</div><div class="cell-x">'+k[2]+'</div></div>';
+    var bar = k[5] ? '<div class="kpi-bar'+(k[0]==='cpu'?' cpu':'')+'"><i id="b-'+k[0]+'" style="width:'+k[4]+'%"></i></div>' : '';
+    var lv = k[0]==='cpu' ? '<span class="kpi-lv g" id="lv-cpu">正常</span>' : '';
+    return '<div class="cell"><div class="cell-k">'+k[1]+lv+'</div>'+
+      '<div class="cell-v kpi-num" id="v-'+k[0]+'">'+k[2]+'</div>'+bar+
+      '<div class="cell-x" id="x-'+k[0]+'">'+k[3]+'</div></div>';
   }).join('');
 
   const sites = DATA.flow.slice(0,4).map(function(f){
@@ -398,7 +411,7 @@ function pageOverview(){
       '<span class="mono">'+(run?'pid '+s.pid+' · '+s.uptime+' · 7890 listening':'无进程')+'</span>'+
       '<span class="mono sp">最近刷新 '+nowStr()+'</span></div>'+
 
-    '<div class="card"><div class="card-hd"><h3>实时状态</h3><span class="hd-note">硬件与节点流量 · 每 5 秒刷新</span></div><div class="grid">'+kpi+'</div></div>'+
+    '<div class="card"><div class="card-hd"><h3>实时状态</h3><span class="hd-note">硬件与节点流量 · 每 1.5 秒刷新（演示数据）</span></div><div class="grid">'+kpi+'</div></div>'+
 
     '<div class="card"><div class="card-hd"><h3>站点延时</h3><span class="hd-note">打开概览自动测一次</span></div>'+
       '<div class="grid">'+sites+'</div>'+
@@ -925,7 +938,47 @@ function syncTop(){
 }
 
 /* ================= 交互 ================= */
+var KPI_TIMER=null, KPI_T=0;
+function stopKpi(){ if(KPI_TIMER){ clearInterval(KPI_TIMER); KPI_TIMER=null; } }
+function startKpi(){
+  stopKpi();
+  if(!document.getElementById('b-cpu')) return;
+  KPI_TIMER = setInterval(function(){
+    KPI_T++;
+    var cpu = Math.round(Math.max(11, Math.min(96, 45 + Math.sin(KPI_T/1.7)*45 + Math.random()*8)));
+    var bc = document.getElementById('b-cpu');
+    if(!bc){ stopKpi(); return; }
+    bc.style.width = cpu + '%';
+    bc.style.background = cpu<50 ? 'linear-gradient(90deg,#19a974,#3ecf8e)'
+      : cpu<80 ? 'linear-gradient(90deg,#d99327,#f5c45e)'
+      : 'linear-gradient(90deg,#c63b40,#f07175)';
+    document.getElementById('v-cpu').textContent = cpu + '%';
+    var lv = document.getElementById('lv-cpu');
+    lv.textContent = cpu<50 ? '正常' : cpu<80 ? '偏高' : '过载';
+    lv.className = 'kpi-lv ' + (cpu<50?'g':cpu<80?'y':'r');
+
+    var mem = Math.round(280 + Math.sin(KPI_T/2.6)*14 + Math.random()*10);
+    var bm = document.getElementById('b-mem'); if(bm) bm.style.width = Math.round(mem/1950*100) + '%';
+    document.getElementById('v-mem').textContent = mem + ' MB';
+    document.getElementById('x-mem').textContent = Math.round(mem/1950*100) + '% · 共 1950 MB';
+
+    var dn = (1.4 + Math.abs(Math.sin(KPI_T/1.9))*0.9 + Math.random()*0.3).toFixed(1);
+    var bd = document.getElementById('b-down'); if(bd) bd.style.width = Math.round(dn/6.2*100) + '%';
+    document.getElementById('v-down').textContent = dn + ' MB/s';
+
+    var up = (0.25 + Math.abs(Math.cos(KPI_T/2.4))*0.35 + Math.random()*0.1).toFixed(1);
+    var bu = document.getElementById('b-up'); if(bu) bu.style.width = Math.round(up/1.1*100) + '%';
+    document.getElementById('v-up').textContent = up + ' MB/s';
+
+    var td = 86.4 + KPI_T*0.37 + Math.random()*0.6;
+    var bt = document.getElementById('b-today'); if(bt) bt.style.width = Math.min(96, Math.round(td/200*100)) + '%';
+    document.getElementById('v-today').textContent = td.toFixed(1) + ' MB';
+    document.getElementById('x-today').textContent = '↑' + (21.3+KPI_T*0.09).toFixed(1) + ' / ↓' + (65.1+KPI_T*0.28).toFixed(1) + ' · 不含直连';
+  }, 1500);
+}
+
 function bindPage(){
+  startKpi();
   Array.prototype.forEach.call(document.querySelectorAll('[data-sub]'), function(b){
     b.addEventListener('click', function(){ SUB = b.dataset.sub; render(); });
   });
