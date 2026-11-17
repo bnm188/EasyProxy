@@ -97,9 +97,21 @@ want_file usr/share/luci/menu.d/luci-app-easyproxy.json
 want_file usr/share/rpcd/acl.d/luci-app-easyproxy.json
 want_file usr/share/rpcd/ucode/luci.easyproxy.uc
 want_file www/luci-static/resources/easyproxy/app.js
+want_file www/luci-static/resources/easyproxy/ubus.js
 want_file www/luci-static/resources/view/easyproxy/overview.js
 want_file www/luci-static/resources/view/easyproxy/settings.js
 want_file etc/easyproxy/ruleset
+
+# Newer LuCI (27.x) ships rpc.js instead of ubus.js, so the panel must not
+# depend on the firmware's ubus module any more. The want_file above proves the
+# module is packaged; this asserts the repo-side source actually uses it.
+APPJS="$SRC/package/easyproxy/files/www/luci-static/resources/easyproxy/app.js"
+if grep -q "^'require ubus';" "$APPJS"; then
+	no "app.js 不再依赖固件的 ubus 模块" "'require ubus' 仍在：LuCI 27.x 上整页 NetworkError"
+else
+	ok "app.js 不再依赖固件的 ubus 模块"
+fi
+grep -q "^'require easyproxy.ubus as ubus';" "$APPJS" && ok "app.js 改用随包发布的 ubus 模块" || no "app.js 未引用 easyproxy.ubus"
 
 # The files shipped in the package must be the ones the repo edited: repack
 # from a stale copy and the extraction below would not match.

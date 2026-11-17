@@ -186,6 +186,8 @@ grep -q '入口旁路（国内不进内核）' "$APP" && ok "面板有入口旁�
 grep -q "run(['bypass', 'restore']" "$APP" && ok "面板一键恢复直连调用 bypass restore" || no "面板恢复按钮未接 CLI"
 grep -q 'function bypassHint' "$APP" && ok "面板按状态给出说明文案" || no "面板缺少状态文案函数"
 node --check "$APP" >/dev/null 2>&1 && ok "app.js 语法通过" || no "app.js 语法错误"
+UBUSJS="$SRC/package/easyproxy/files/www/luci-static/resources/easyproxy/ubus.js"
+node --check "$UBUSJS" >/dev/null 2>&1 && ok "ubus.js 语法通过" || no "ubus.js 语法错误或缺失"
 grep -q 'act_rescue' "$SRC/scripts/easyproxy-manager.sh" && ok "SSH 入口有紧急恢复直连" || no "SSH 入口缺少紧急恢复"
 grep -q '10) dispatch rescue' "$SRC/scripts/easyproxy-manager.sh" && ok "菜单第 10 项已接线" || no "菜单未接线"
 

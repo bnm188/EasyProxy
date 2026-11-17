@@ -1,7 +1,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=easyproxy
-PKG_VERSION:=0.8.12
+PKG_VERSION:=0.8.13
 PKG_RELEASE:=1
 
 PKG_LICENSE:=MIT
@@ -83,6 +83,7 @@ define Package/easyproxy/install
 	$(INSTALL_DATA) ./files/usr/share/easyproxy/easyproxy.default $(1)/usr/share/easyproxy/easyproxy.default
 	$(INSTALL_DIR) $(1)/www/luci-static/resources/easyproxy
 	$(INSTALL_DATA) ./files/www/luci-static/resources/easyproxy/app.js $(1)/www/luci-static/resources/easyproxy/app.js
+	$(INSTALL_DATA) ./files/www/luci-static/resources/easyproxy/ubus.js $(1)/www/luci-static/resources/easyproxy/ubus.js
 	$(INSTALL_DIR) $(1)/www/luci-static/resources/view/easyproxy
 	$(INSTALL_DATA) ./files/www/luci-static/resources/view/easyproxy/overview.js $(1)/www/luci-static/resources/view/easyproxy/overview.js
 	$(INSTALL_DATA) ./files/www/luci-static/resources/view/easyproxy/nodes.js $(1)/www/luci-static/resources/view/easyproxy/nodes.js

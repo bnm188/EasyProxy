@@ -1,6 +1,6 @@
 'use strict';
 'require fs';
-'require ubus';
+'require easyproxy.ubus as ubus';
 'require uci';
 'require ui';
 'require baseclass';
