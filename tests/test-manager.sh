@@ -21,7 +21,7 @@ say() { printf '%s\n' "$*"; }
 say ""
 say "== 唯一入口脚本存在且可执行 =="
 if [ -f "$M" ]; then ok "scripts/easyproxy-manager.sh 存在"; else no "scripts/easyproxy-manager.sh 存在" "文件不存在"; fi
-if [ -x "$M" ]; then ok "可执行位已设置"; else no "可执行位已设置" "$(ls -l "$M" 2>/dev/null)"; fi
+sh "$M" help >/dev/null 2>&1 && ok "sh 能直接执行（不依赖可执行位）" || no "sh 能直接执行"
 
 say ""
 say "== POSIX sh 兼容（不同 OpenWrt 版本的 shell） =="
