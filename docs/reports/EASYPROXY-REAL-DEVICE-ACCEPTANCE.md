@@ -42,6 +42,62 @@
 修复：改从 `usr/lib/easyproxy/common.sh`（版本号唯一真源）读取，并加数字格式校验。
 测试：test-release.sh 新增 3 条断言，RED（2 失败）→ GREEN（49 通过 0 失败）。
 
+
+## 0.8.10 / 0.8.11 的补充真机取证（acc12 ~ acc15）
+
+真机：Kwrt 25.12-SNAPSHOT（x86_64, i7-8086K），10.10.10.13，全部为 ssh 实机执行，非沙箱。
+
+### acc12：旧代码下"升级必然失败"的定性
+
+在 0.8.9 的代码上直接跑 `update apply`，走的是旧的自校验逻辑（从 CLI 自身 sed 版本号，永远匹配到
+`\([^` 这个垃圾串），因此任何升级都被判"校验失败"并自动回滚。
+**结论：0.8.9 及更早的版本无法自我升级，必须手动装一次新包。**
+
+### acc13：手动装 0.8.10（不带 --force-reinstall）保住配置
+
+```
+版本: 0.8.10   节点数: 1   enabled=1   配置字节=1471
+起引擎 -> pid 15763，监听 7890，出网 103.151.173.95，日志 outbound/shadowsocks[日本Z01]
+doctor: version/engine/binary/config/ruleset/runtime 六项全 ok
+update check -> already up to date (rc=0)
+```
+
+### acc14：新代码的真实升级成功，但暴露第二个致命缺陷
+
+把真机 `common.sh` 的 `EP_VERSION` 临时改回 0.8.9，用 **0.8.10 的新代码** 跑 `update apply`：
+
+```
+update: checksum verified
+update: current 0.8.9 archived as rollback-0.8.9.tar.gz
+update: installed version reports 0.8.10
+update: now running 0.8.10 (was 0.8.9). Reload the page.
+apply rc=0
+```
+
+- **自校验缺陷确认修复**：不再误判、不再自动回滚，`rollback` 也能正常回退到 0.8.9。
+- **但同时发现升级后配置被清空**：`节点数 0`、`配置字节 4176`（= `easyproxy.default` 默认模板）、`enabled=0`。
+- 根因：CI 产出的 `easyproxy-<ver>-rootfs.tar.gz` 是整棵文件树，内含出厂默认 `/etc/config/easyproxy`；
+  `update apply` 整包解到根目录，把用户配置覆盖了。
+
+### acc15：0.8.11 修复后，真机装包 + 配置保住 + 出网全通
+
+```
+sha256: a3b3b801db475a1607eff83aca5d204bac965c01605107d24db619bf1fe4f1f7（与本地一致）
+opkg install --force-reinstall -> Installing easyproxy (0.8.11-1) / 版本: 0.8.11 / exclude 生效数: 4
+恢复配置 -> 字节=1471  节点=1
+node list -> 日本Z01  shadowsocks  ...:475  日本  auto-jp
+config generate -> Enabled nodes: 1 / Default route: proxy
+start -> pid 19679，监听=1，出网=103.151.173.95
+日志 -> outbound/direct[direct]  outbound/shadowsocks[日本Z01]
+doctor -> 六项全 ok（EasyProxy 0.8.11 (Stage 7)）
+```
+
+### 修复的测试证据（TDD 闭环）
+
+- 先删掉 `--exclude` 单跑 `tests/test-cli.sh` → `FAIL 升级不覆盖用户配置（节点/开关保住）`、95 通过 1 失败；
+- 恢复后 → `PASS`、96 通过 0 失败；
+- 全量 `tests/run-all.sh` → **866 通过 0 失败**，SKIP 4（test-engine/test-routing/test-runtime/test-transparent）。
+
 ## 已撤销的误判（如实记录）
 
 - **"坏配置下 start 假成功"**：早前用 `ps w | grep` 判定进程数得到 0，原因是 busybox ps 截断长命令行。改用 /proc/*/cmdline 精确统计后：坏配置被 `config generate` 覆盖为合法配置，sing-box 实际启动（pid 62802）、7890 监听、出网正常。不是缺陷。
