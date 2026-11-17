@@ -46,17 +46,21 @@ wget -qO- https://raw.githubusercontent.com/bnm188/EasyProxy/main/scripts/easypr
   0) 退出
 ```
 
-**不想进菜单，直接点名执行**（同样一条命令，换最后两个字）：
+**不想进菜单，直接点名执行**（同一行命令，最后两个字换成动作）：
 
-| 要做什么 | 命令 |
-|---|---|
-| 安装 | `wget -qO- …/scripts/easyproxy.sh \| sh -s install` |
-| 升级 | `wget -qO- …/scripts/easyproxy.sh \| sh -s upgrade` |
-| 看状态 | `wget -qO- …/scripts/easyproxy.sh \| sh -s status` |
-| 检查环境 | `wget -qO- …/scripts/easyproxy.sh \| sh -s check` |
-| 卸载 | `wget -qO- …/scripts/easyproxy.sh \| sh -s uninstall` |
+```sh
+# 进菜单（不带参数）
+wget -qO- https://raw.githubusercontent.com/bnm188/EasyProxy/main/scripts/easyproxy.sh | sh
 
-（`…` 是 `https://raw.githubusercontent.com/bnm188/EasyProxy/main`，完整地址复制上一段即可。）
+# 直接装
+wget -qO- https://raw.githubusercontent.com/bnm188/EasyProxy/main/scripts/easyproxy.sh | sh -s install
+
+# 升级 / 看状态 / 检查环境 / 卸载
+wget -qO- https://raw.githubusercontent.com/bnm188/EasyProxy/main/scripts/easyproxy.sh | sh -s upgrade
+wget -qO- https://raw.githubusercontent.com/bnm188/EasyProxy/main/scripts/easyproxy.sh | sh -s status
+wget -qO- https://raw.githubusercontent.com/bnm188/EasyProxy/main/scripts/easyproxy.sh | sh -s check
+wget -qO- https://raw.githubusercontent.com/bnm188/EasyProxy/main/scripts/easyproxy.sh | sh -s uninstall
+```
 
 **「检查环境」查什么**：固件类型、包管理器（opkg / apk）、CPU 架构能否对上发布包、`sha256sum` `tar` `nft` `wget`、nftables 能否建表、根分区剩余空间、是否已装过。只读，不改任何系统状态，最后给一句「能装 / 有阻塞项」。
 
