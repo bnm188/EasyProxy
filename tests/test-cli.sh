@@ -139,6 +139,76 @@ out="$("$EP" start 2>&1)"; rc=$?
 printf '%s' "$out" | grep -qi 'disabled' && ok "拒绝原因明确（disabled）" || no "拒绝原因明确（disabled）"
 sed -i 's/^easyproxy.main.enabled=.*/easyproxy.main.enabled=1/' "$SB/etc/uci.db"
 
+# --- diagnostics bundle -----------------------------------------------------
+# A secret in a log must never reach GitHub. These cases feed the collector a
+# log full of credentials and then grep the bundle for the originals.
+mkdir -p "$SB/diag"
+cat > "$SB/bin/logread" <<'STUB'
+#!/bin/sh
+cat "$SB_DIAG_LOG"
+STUB
+chmod +x "$SB/bin/logread"
+cat > "$SB/diag/secret.log" <<'LOG'
+2026-11-17 easyproxy: node ss://YWVzLTI1Ni1nY206c2VjcmV0MTIz@10.0.0.1:8388#JP
+2026-11-17 easyproxy: subscribe https://sub.example.test/api/v1/client/subscribe?token=abcdef123456
+2026-11-17 easyproxy: node vmess://eyJhZGQiOiIxMC4wLjAuMSIsInBvcnQiOiI4ODg4IiwiaWQiOiIxMjM0NTY3OC0xMjM0LTEyMzQtMTIzNC0xMjM0NTY3ODkwYWIifQ==
+2026-11-17 easyproxy: config {"password":"hunter2","uuid":"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"}
+LOG
+
+out="$(SB_DIAG_LOG="$SB/diag/secret.log" EP_DIAG_OUT="$SB/diag/out.txt" "$EP" diag 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && ok "diag 退出码 0" || no "diag 退出码 0" "rc=$rc $out"
+[ -f "$SB/diag/out.txt" ] && ok "diag 产出了采集包" || no "diag 产出了采集包" "$out"
+printf '%s' "$out" | grep -q 'upload skipped' && ok "默认不上传，并提示加 --upload" || no "默认不上传" "$out"
+grep -q -- '--- status ---' "$SB/diag/out.txt" && grep -q -- '--- logs ---' "$SB/diag/out.txt" \
+	&& ok "采集包含 status 与 logs 段" || no "采集包分段" "$(head -20 "$SB/diag/out.txt")"
+
+grep -q 'ss://YWVzLTI1Ni1nY206c2VjcmV0MTIz' "$SB/diag/out.txt" && no "分享链接未脱敏" "" || ok "分享链接已脱敏"
+grep -q 'token=abcdef123456' "$SB/diag/out.txt" && no "订阅 token 未脱敏" "" || ok "订阅 token 已脱敏"
+grep -q 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee' "$SB/diag/out.txt" && no "uuid 未脱敏" "" || ok "uuid 已脱敏"
+grep -q 'hunter2' "$SB/diag/out.txt" && no "密码未脱敏" "" || ok "JSON 密码已脱敏"
+
+# --- diag --upload without a token -----------------------------------------
+out="$(EP_DIAG_TOKEN_FILE="$SB/diag/no-token" EP_DIAG_OUT="$SB/diag/out2.txt" "$EP" diag --upload 2>&1)"; rc=$?
+[ "$rc" -eq 3 ] && ok "无 token 时 --upload 返回 3" || no "无 token 时 --upload 返回 3" "rc=$rc $out"
+[ -f "$SB/diag/out2.txt" ] && ok "上传失败仍保留本地采集包" || no "上传失败仍保留本地采集包" ""
+printf '%s' "$out" | grep -q 'no token at' && ok "提示 token 应放在哪里" || no "提示 token 位置" "$out"
+
+# --- diag --upload with a token (wget PUT stub) ----------------------------
+cat > "$SB/bin/wget" <<'STUB'
+#!/bin/sh
+for a in "$@"; do
+	case "$a" in
+		--spider) exit 0 ;;
+		--method=PUT) printf 'put %s\n' "$*" >> "$EP_TEST_LOG_GH"; exit 0 ;;
+	esac
+done
+exit 1
+STUB
+chmod +x "$SB/bin/wget"
+cat > "$SB/bin/curl" <<'STUB'
+#!/bin/sh
+for a in "$@"; do
+	case "$a" in
+		PUT) printf 'put %s\n' "$*" >> "$EP_TEST_LOG_GH" ;;
+		%{http_code}) true ;;
+	esac
+done
+# -w '%{http_code}' is the last argument in the upload call
+printf '201'
+exit 0
+STUB
+chmod +x "$SB/bin/curl"
+printf 'dummy-token\n' > "$SB/diag/token"
+chmod 600 "$SB/diag/token"
+: > "$SB/diag/gh.log"
+out="$(EP_TEST_LOG_GH="$SB/diag/gh.log" EP_DIAG_TOKEN_FILE="$SB/diag/token" \
+	EP_DIAG_REPO="bnm188/EasyProxy" EP_DIAG_BRANCH="diag" EP_DIAG_OUT="$SB/diag/out3.txt" \
+	"$EP" diag --upload 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && ok "有 token 时上传成功返回 0" || no "有 token 时上传成功返回 0" "rc=$rc $out"
+printf '%s' "$out" | grep -q 'raw: https://raw.githubusercontent.com/bnm188/EasyProxy/diag/' \
+	&& ok "打印可直接读取的 raw 链接" || no "打印 raw 链接" "$out"
+grep -qE 'method=PUT|-X PUT' "$SB/diag/gh.log" 2>/dev/null && ok "确实发出了 PUT 请求" || no "确实发出了 PUT 请求" "$(cat "$SB/diag/gh.log")"
+
 # --- 7. engine subcommand --------------------------------------------------
 out="$("$EP" engine 2>&1)"
 printf '%s' "$out" | grep -q 'sing-box' && ok "engine 打印所选内核" || no "engine 打印所选内核"
