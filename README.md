@@ -94,7 +94,7 @@ LuCI「服务 → EasyProxy」共 10 个中文页面：总览、节点、订阅�
 
 ## 测试
 
-14 套 **672 项**，`tests/run-all.sh` 是唯一计数来源；CI 会下载并校验 pinned sing-box，用真实内核跑 `check`，失败即停、不会发布。
+15 套 **812 项**，`tests/run-all.sh` 是唯一计数来源；CI 会下载并校验 pinned sing-box，用真实内核跑 `check`，失败即停、不会发布。
 
 ```sh
 EP_SING_BOX_BIN=/usr/bin/sing-box sh tests/run-all.sh
