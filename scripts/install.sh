@@ -480,6 +480,98 @@ kernel_configure() {
 	info "$1: uci points at $bin"
 }
 
+# Paths other proxy packages leave a static sing-box/dae in. Open-Box ships
+# /opt/open-box/bin/sing-box; KoolShare-style bundles and hand drops land in the
+# other entries. The official upstream build is glibc-linked and cannot exec on
+# a musl firmware at all, so a binary already on the box is worth more than a
+# download: adopting it is the difference between "installed" and "runs".
+kernel_external_paths() {
+	case "$1" in
+		sing-box) printf '%s\n' \
+			"$ROOT/opt/open-box/bin/sing-box" \
+			"$ROOT/usr/local/bin/sing-box" \
+			"$ROOT/etc/sing-box/sing-box" \
+			"$ROOT/koolshare/bin/sing-box" \
+			"$ROOT/opt/sing-box/sing-box" ;;
+		dae) printf '%s\n' \
+			"$ROOT/usr/local/bin/dae" \
+			"$ROOT/etc/dae/dae" \
+			"$ROOT/opt/dae/dae" ;;
+	esac
+}
+
+# Adopt an existing static binary instead of downloading one. Returns 0 and
+# leaves the path in KERNEL_ADOPTED when it found something that actually runs.
+# Nothing is copied and nothing is recorded as installer-owned: uninstall must
+# never delete a kernel that belongs to another package.
+kernel_adopt_external() {
+	local name path ver
+	name="$1"
+	KERNEL_ADOPTED=""
+	for path in $(kernel_external_paths "$name"); do
+		[ -x "$path" ] || continue
+		case "$name" in
+			sing-box) ver="$("$path" version 2>/dev/null | head -1)" ;;
+			dae) ver="$("$path" --version 2>/dev/null | head -1)" ;;
+			*) ver="" ;;
+		esac
+		[ -n "$ver" ] || continue
+		info "$name: found a working static binary at $path ($ver)"
+		info "$name: adopting it instead of downloading (it keeps belonging to whatever installed it)"
+		KERNEL_ADOPTED="$path"
+		return 0
+	done
+	return 1
+}
+
+# Point UCI at an adopted binary. Separate from kernel_configure() because that
+# one derives the path from kernel_bin() - here the binary lives outside our tree.
+kernel_configure_adopted() {
+	local name path
+	name="$1"
+	path="$2"
+	command -v uci >/dev/null 2>&1 || return 0
+	case "$name" in
+		sing-box)
+			uci -q set easyproxy.sing_box.binary="$path" 2>/dev/null || true
+			if [ -z "$(uci -q get easyproxy.main.engine 2>/dev/null || true)" ] \
+				|| [ "$(uci -q get easyproxy.main.engine 2>/dev/null || true)" = none ]; then
+				uci -q set easyproxy.main.engine='sing-box' 2>/dev/null || true
+			fi ;;
+		dae) uci -q set easyproxy.dae.binary="$path" 2>/dev/null || true ;;
+	esac
+	uci -q commit easyproxy 2>/dev/null || true
+	info "$name: uci points at $path"
+}
+
+# Another proxy manager on the same box means two owners of nft tables and of
+# the 7890-family ports. Installing next to one is fine; starting both is not.
+# Say it out loud instead of letting the user discover it as "my proxy stopped
+# working after I installed this".
+coexistence_notice() {
+	local hit svc
+	hit=""
+	if command -v nft >/dev/null 2>&1; then
+		hit="$(nft list tables 2>/dev/null \
+			| sed -n 's/^table \(inet\|ip\|ip6\) \{1,\}\([A-Za-z0-9_-]*\)/\2/p' \
+			| grep -E '^(openbox|sing-box|passwall|passwall2|clash|mihomo|shellcrash|ssrplus|ssr)$' \
+			| sort -u | tr '\n' ' ')"
+	fi
+	if [ -z "$hit" ]; then
+		for svc in openbox sing-box mihomo passwall passwall2 shellcrash; do
+			[ -x "$ROOT/etc/init.d/$svc" ] || continue
+			case "$( "$ROOT/etc/init.d/$svc" status 2>/dev/null | head -1)" in
+				running*) hit="$hit $svc" ;;
+			esac
+		done
+	fi
+	[ -n "$(printf '%s' "$hit" | tr -d ' ')" ] || return 0
+	info "another proxy is already active:$hit"
+	info "  both build nft tables and bind the same ports, so run only one at a time:"
+	info "  /etc/init.d/<name> stop    # e.g. openbox, passwall"
+	info "  installing next to it is fine; starting EasyProxy while it runs is not."
+}
+
 # --- kernel sources -------------------------------------------------------
 kernel_sha() {
 	local name arch target
@@ -701,6 +793,12 @@ ensure_kernel() {
 		ver="$(kernel_probe "$name")"
 		info "$name: already present ($(kernel_bin "$name") $ver)"
 		kernel_configure "$name"
+		return 0
+	fi
+	# A static binary another package already installed beats a download: the
+	# upstream builds are glibc and will not exec on musl firmware.
+	if kernel_adopt_external "$name"; then
+		kernel_configure_adopted "$name" "$KERNEL_ADOPTED"
 		return 0
 	fi
 	install_kernel "$name" || return 1
@@ -1019,6 +1117,7 @@ do_install() {
 	post_install
 
 	KERNEL_FAILED=""
+	coexistence_notice
 	if [ "$NO_SING_BOX" = 0 ]; then
 		ensure_kernel sing-box || KERNEL_FAILED="$KERNEL_FAILED sing-box"
 	else

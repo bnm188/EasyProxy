@@ -699,6 +699,40 @@ grep -q 'checksum mismatch' "$SB/out" && ok "报错写明 checksum mismatch" || 
 grep -q 'attempt 3 of 3' "$SB/out" && ok "最多重试到第 3 次" || no "最多重试到第 3 次" "$(cat "$SB/out")"
 grep -q 'extracting at' "$SB/out" && no "坏包不得解包" "" || ok "坏包没有解包（什么都没装）"
 
+# --- kernel: adopt a static binary another package installed ---------------
+# The upstream sing-box build is glibc and cannot exec on musl firmware, so a
+# working binary already on the box is worth more than a download. This is the
+# Open-Box case: /opt/open-box/bin/sing-box running 1.14.4.
+reset
+mkdir -p "$EP_ROOT/opt/open-box/bin"
+cat > "$EP_ROOT/opt/open-box/bin/sing-box" <<'STUB'
+#!/bin/sh
+echo "sing-box version 1.14.4-openbox-45"
+STUB
+chmod +x "$EP_ROOT/opt/open-box/bin/sing-box"
+sh "$INSTALL" > "$SB/out" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && ok "已有静态内核：安装退出码 0" || no "已有静态内核：安装退出码 0" "rc=$rc $(cat "$SB/out")"
+grep -q 'found a working static binary' "$SB/out" && ok "探测到已有静态内核并报告路径" || no "探测到已有静态内核" "$(cat "$SB/out")"
+grep -q 'adopting it instead of downloading' "$SB/out" && ok "改为采用而不是下载" || no "改为采用而不是下载" "$(cat "$SB/out")"
+grep -q 'SagerNet/sing-box' "$EP_TEST_LOG/curl.urls" 2>/dev/null && no "采用后不应再下载 sing-box" "$(cat "$EP_TEST_LOG/curl.urls")" || ok "采用后没有下载 sing-box"
+grep -q 'easyproxy.sing_box.binary.*opt/open-box/bin/sing-box' "$EP_TEST_LOG/uci.log" 2>/dev/null 	&& ok "uci 指向被采用的内核" || no "uci 指向被采用的内核" "$(cat "$EP_TEST_LOG/uci.log" 2>/dev/null)"
+grep -q 'opt/open-box/bin/sing-box' "$EP_STATE_DIR/owned/sing-box" 2>/dev/null 	&& no "被采用的内核不得记为安装器所有（卸载会误删）" "" || ok "被采用的内核不记为安装器所有"
+
+# --- coexistence: another proxy already owns nft tables --------------------
+reset
+mkdir -p "$SB/bin2"
+cat > "$SB/bin2/nft" <<'STUB'
+#!/bin/sh
+printf 'table inet openbox\n'
+printf 'table inet dnsmasq\n'
+STUB
+chmod +x "$SB/bin2/nft"
+PATH="$SB/bin2:$PATH" sh "$INSTALL" > "$SB/out" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && ok "已有其他代理时仍能安装" || no "已有其他代理时仍能安装" "rc=$rc $(cat "$SB/out")"
+grep -q 'another proxy is already active' "$SB/out" && ok "提示已有其他代理在运行" || no "提示已有其他代理在运行" "$(cat "$SB/out")"
+grep -q 'openbox' "$SB/out" && ok "提示里指出具体的冲突服务名" || no "提示里指出具体的冲突服务名" "$(cat "$SB/out")"
+rm -rf "$SB/bin2"
+
 say ""
 say "结果：$PASS 通过，$FAIL 失败"
 [ "$FAIL" -eq 0 ] || exit 1
