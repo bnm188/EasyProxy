@@ -14,7 +14,7 @@ on:
         default: ""
   schedule:
     # 每天 03:00 UTC（北京时间 11:00）跑一次体检构建：编译、跑全套测试、上传 artifact，
-    # 不发版（定时运行没有 .release-request）。GitHub 的定时任务可能延迟 5~20 分钟。
+    # 不发版（定时运行不触发版本号判定）。GitHub 的定时任务可能延迟 5~20 分钟。
     - cron: '0 3 * * *'
 
 permissions:
@@ -44,36 +44,51 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
-      # Three ways can ask for a release, resolved once here so every later
-      # step uses the same tag:
+      # Release intent, resolved once here so every later step uses the same tag:
       #   1. a v* tag the maintainer pushed by hand;
       #   2. a manual run that passes inputs.version;
-      #   3. a committed .release-request file, which is how an automation
-      #      publishes: GITHUB_TOKEN cannot dispatch a run, but a real push
-      #      by the maintainer does start this workflow.
+      #   3. the version number itself: on main, when PKG_VERSION is higher than
+      #      the newest published release, this build publishes that version
+      #      without anyone clicking Run workflow or committing a request file.
+      # A commit whose message carries [no-release] is exempt, for work that must
+      # land on main without producing a release.
       - name: Resolve the release intent
         id: intent
         env:
           INPUT_VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           TAG=""
+          VER="$(sed -n 's/^PKG_VERSION:=//p' package/easyproxy/Makefile | head -1)"
+          [ -n "$VER" ] || { echo "::error title=no version::cannot read PKG_VERSION"; exit 1; }
           if [ "${GITHUB_REF_TYPE}" = "tag" ] && [ "${GITHUB_REF_NAME#v}" != "${GITHUB_REF_NAME}" ]; then
             TAG="${GITHUB_REF_NAME}"
           elif [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ] && [ -n "${INPUT_VERSION}" ]; then
             TAG="v${INPUT_VERSION}"
-          elif [ -f .release-request ]; then
-            REQ="$(tr -d '[:space:]' < .release-request)"
-            REQ="${REQ#v}"
-            # A leftover request from an earlier or aborted release must not fire
-            # again: it is only honoured when it names the version this tree
-            # actually builds. Anything else is reported and ignored.
-            VER="$(sed -n 's/^PKG_VERSION:=//p' package/easyproxy/Makefile | head -1)"
-            if [ -n "$REQ" ] && [ "$REQ" = "$VER" ]; then
-              TAG="v$REQ"
-            elif [ -n "$REQ" ]; then
-              echo "::warning title=stale release request::.release-request asks for $REQ but PKG_VERSION is $VER; building only, and the stale file will be removed"
-            fi
+          elif [ "${GITHUB_EVENT_NAME}" = "push" ] && [ "${GITHUB_REF}" = "refs/heads/main" ]; then
+            MSG="$(git log -1 --pretty=%B)"
+            case "$MSG" in
+              *"[no-release]"*)
+                echo "::notice title=no-release::the commit asks for no release; building only"
+                ;;
+              *)
+                PREV="$(gh release list --repo "$GITHUB_REPOSITORY" --limit 1 --json tagName --jq '.[0].tagName // empty' 2>/dev/null || true)"
+                PREV="${PREV#v}"
+                if [ -z "$PREV" ]; then
+                  TAG="v$VER"
+                elif [ "$VER" = "$PREV" ]; then
+                  echo "::notice title=already released::$VER is already published; building only"
+                else
+                  HIGHEST="$(printf '%s\n%s\n' "$PREV" "$VER" | sort -V | tail -n 1)"
+                  if [ "$HIGHEST" = "$VER" ]; then
+                    TAG="v$VER"
+                  else
+                    echo "::warning title=version not newer::PKG_VERSION $VER is not higher than the newest release $PREV; building only"
+                  fi
+                fi
+                ;;
+            esac
           fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "release intent: ${TAG:-none (build only)}"
@@ -267,12 +282,12 @@ jobs:
       #   * existing assets are never overwritten: a second build of the same
       #     version fails instead.
       # Publishing is reachable three ways on purpose, all behind the same tag
-      # check above. GITHUB_TOKEN pushes never start another workflow run, and
-      # an automation token cannot add a workflow input either, so a tag created
-      # inside Actions published nothing: the work used to stop at job
-      # artifacts, which is exactly what kept releases from happening. A real
-      # push by the maintainer does start the build, so a committed
-      # .release-request file is the path an automation uses to publish.
+      # check above. The everyday path is the version number: a push to main
+      # whose PKG_VERSION is higher than the newest release publishes by itself,
+      # so a release needs no manual click. Two things stay deliberately narrow:
+      # a commit that carries [no-release] lands without a release, and the
+      # version must rise - the checks below refuse to publish the same version
+      # twice or to go backwards.
       # Release immutability is a repository-level GitHub switch this workflow
       # cannot turn on with its own token. It is read here and reported as it
       # really is, so nobody can claim platform protection that is not on. The
@@ -442,30 +457,3 @@ jobs:
               || echo "::warning title=tag delete::tag $tag was already gone"
           done < to-delete.txt
           echo "pruned $(grep -c . to-delete.txt 2>/dev/null || echo 0) release(s)"
-
-      # The request file is a one-shot trigger, so it is consumed here instead of
-      # being left for the next ordinary commit to fire again. It is kept when
-      # the release did not actually appear, so a failed publish can be retried
-      # by re-running the workflow without editing the repo again. A push made
-      # with GITHUB_TOKEN does not start another workflow run, which is why this
-      # cleanup commit cannot re-trigger the build.
-      - name: Clear the release request
-        if: always()
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ steps.intent.outputs.tag }}
-        run: |
-          set -uo pipefail
-          [ -f .release-request ] || { echo "no .release-request to clear"; exit 0; }
-          if [ -n "${TAG:-}" ]; then
-            if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-              echo "release $TAG is not published; keeping .release-request so the run can be retried"
-              exit 0
-            fi
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git rm -q .release-request
-          git commit -q -m "chore(release): consume .release-request${TAG:+ for $TAG}"
-          git push origin "HEAD:main" || { echo "::error title=cleanup push failed::cannot remove .release-request from main"; exit 1; }
-          echo "removed .release-request from main"
