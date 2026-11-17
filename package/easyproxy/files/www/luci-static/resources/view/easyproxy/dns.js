@@ -4,9 +4,17 @@
 
 return view.extend({
 	load: function () {
-		return app.loadCfg();
+		return Promise.all([
+			app.loadCfg(),
+			app.cliJson(['rule', 'list'])
+		]).then(function (r) {
+			return { cfg: r[0], rules: (r[1] && r[1].rules) || [] };
+		});
 	},
-	render: function (cfg) {
-		return app.pageDns({ cfg: cfg });
+	render: function (d) {
+		return E('div', { class: 'ep-stack' }, [
+			app.pageDns({ cfg: d.cfg }),
+			app.pageRules({ rules: d.rules })
+		]);
 	}
 });

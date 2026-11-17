@@ -86,16 +86,10 @@ define Package/easyproxy/install
 	$(INSTALL_DATA) ./files/www/luci-static/resources/easyproxy/ubus.js $(1)/www/luci-static/resources/easyproxy/ubus.js
 	$(INSTALL_DIR) $(1)/www/luci-static/resources/view/easyproxy
 	$(INSTALL_DATA) ./files/www/luci-static/resources/view/easyproxy/overview.js $(1)/www/luci-static/resources/view/easyproxy/overview.js
-	$(INSTALL_DATA) ./files/www/luci-static/resources/view/easyproxy/nodes.js $(1)/www/luci-static/resources/view/easyproxy/nodes.js
-	$(INSTALL_DATA) ./files/www/luci-static/resources/view/easyproxy/subscription.js $(1)/www/luci-static/resources/view/easyproxy/subscription.js
-	$(INSTALL_DATA) ./files/www/luci-static/resources/view/easyproxy/split.js $(1)/www/luci-static/resources/view/easyproxy/split.js
-	$(INSTALL_DATA) ./files/www/luci-static/resources/view/easyproxy/engines.js $(1)/www/luci-static/resources/view/easyproxy/engines.js
+	$(INSTALL_DATA) ./files/www/luci-static/resources/view/easyproxy/proxy.js $(1)/www/luci-static/resources/view/easyproxy/proxy.js
+	$(INSTALL_DATA) ./files/www/luci-static/resources/view/easyproxy/connect.js $(1)/www/luci-static/resources/view/easyproxy/connect.js
 	$(INSTALL_DATA) ./files/www/luci-static/resources/view/easyproxy/dns.js $(1)/www/luci-static/resources/view/easyproxy/dns.js
-	$(INSTALL_DATA) ./files/www/luci-static/resources/view/easyproxy/rules.js $(1)/www/luci-static/resources/view/easyproxy/rules.js
-	$(INSTALL_DATA) ./files/www/luci-static/resources/view/easyproxy/logs.js $(1)/www/luci-static/resources/view/easyproxy/logs.js
-	$(INSTALL_DATA) ./files/www/luci-static/resources/view/easyproxy/backup.js $(1)/www/luci-static/resources/view/easyproxy/backup.js
 	$(INSTALL_DATA) ./files/www/luci-static/resources/view/easyproxy/settings.js $(1)/www/luci-static/resources/view/easyproxy/settings.js
-	$(INSTALL_DATA) ./files/www/luci-static/resources/view/easyproxy/update.js $(1)/www/luci-static/resources/view/easyproxy/update.js
 	$(INSTALL_DIR) $(1)/usr/share/luci/menu.d
 	$(INSTALL_DATA) ./files/usr/share/luci/menu.d/luci-app-easyproxy.json $(1)/usr/share/luci/menu.d/luci-app-easyproxy.json
 	$(INSTALL_DIR) $(1)/usr/share/rpcd/acl.d

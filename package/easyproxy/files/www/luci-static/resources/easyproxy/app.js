@@ -18,50 +18,66 @@
 var BIN = '/usr/sbin/easyproxy';
 
 var CSS = [
-'.ep-wrap{font-family:"Noto Sans SC","Segoe UI",system-ui,sans-serif;color:#c9d6e8}',
-'.ep-hero{position:relative;padding:16px 20px;border-radius:14px;background:linear-gradient(135deg,#0c1424,#10203a 55%,#0a1a2c);border:1px solid #1d2f4d;box-shadow:0 0 22px rgba(34,211,238,.08);margin-bottom:14px}',
-'.ep-hero h2{margin:0 0 4px;font-size:19px;letter-spacing:.5px;color:#e8f1ff}',
-'.ep-hero .ep-sub{font-size:12px;color:#7f93ad}',
-'.ep-hero-line{height:2px;margin-top:12px;background:linear-gradient(90deg,#22d3ee,#6366f1,transparent)}',
-'.ep-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(168px,1fr));gap:10px;margin-bottom:14px}',
-'.ep-tile{background:#0e1727;border:1px solid #1b2a44;border-radius:11px;padding:11px 13px;transition:border-color .2s,box-shadow .2s}',
-'.ep-tile:hover{border-color:#2b6c8f;box-shadow:0 0 14px rgba(34,211,238,.14)}',
-'.ep-tile .ep-lab{font-size:11px;color:#7f93ad;letter-spacing:.4px;margin-bottom:6px}',
-'.ep-tile .ep-val{font-size:15px;color:#e8f1ff;font-family:ui-monospace,Menlo,Consolas,monospace;word-break:break-all}',
-'.ep-card{background:#0e1727;border:1px solid #1b2a44;border-radius:12px;padding:14px 16px;margin-bottom:14px}',
-'.ep-card h3{margin:0 0 10px;font-size:14px;color:#cfe6ff;font-weight:600;letter-spacing:.4px}',
-'.ep-card .ep-hint{font-size:12px;color:#7f93ad;line-height:1.6;margin-top:8px}',
-'.ep-dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:7px;vertical-align:middle;box-shadow:0 0 9px currentColor}',
-'.ep-ok{color:#22c55e}.ep-warn{color:#f59e0b}.ep-bad{color:#ef4444}.ep-off{color:#64748b}',
-'.ep-ok .ep-dot,.ep-warn .ep-dot{animation:epPulse 2s ease-in-out infinite}',
-'@keyframes epPulse{0%,100%{opacity:.55}50%{opacity:1}}',
-'.ep-tbl{width:100%;border-collapse:collapse;font-size:13px}',
-'.ep-tbl th{text-align:left;color:#7f93ad;font-weight:500;font-size:11px;letter-spacing:.4px;padding:6px 8px;border-bottom:1px solid #1b2a44}',
-'.ep-tbl td{padding:7px 8px;border-bottom:1px solid #14213a;color:#c9d6e8;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px}',
-'.ep-tbl tr:hover td{background:#101c30}',
-'.ep-btn{background:#132038;border:1px solid #24395a;color:#cfe6ff;border-radius:8px;padding:6px 12px;font-size:12px;cursor:pointer;margin:0 6px 6px 0;transition:all .18s}',
-'.ep-btn:hover{border-color:#22d3ee;color:#e8f1ff;box-shadow:0 0 10px rgba(34,211,238,.2)}',
-'.ep-btn.ep-primary{background:linear-gradient(135deg,#0e7490,#1d4ed8);border-color:#22d3ee}',
-'.ep-btn.ep-danger{background:#3b1220;border-color:#7f1d3a;color:#fecdd3}',
-'.ep-in{background:#0a1322;border:1px solid #22344f;color:#d6e2f3;border-radius:8px;padding:6px 9px;font-size:12px;font-family:ui-monospace,Menlo,Consolas,monospace;min-width:120px}',
-'.ep-in:focus{outline:none;border-color:#22d3ee;box-shadow:0 0 8px rgba(34,211,238,.25)}',
-'.ep-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:9px;font-size:13px}',
-'.ep-row label{min-width:170px;color:#9db0c9}',
-'.ep-pre{background:#0a1322;border:1px solid #1b2a44;border-radius:10px;padding:10px 12px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;color:#a9c0da;white-space:pre-wrap;max-height:320px;overflow:auto;line-height:1.6}',
-'.ep-tag{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;margin:2px 4px 2px 0;border:1px solid #24395a;color:#9db0c9}',
-'.ep-tag.ep-hit{border-color:#22d3ee;color:#a5f3fc}',
-'.ep-chart{width:100%;height:150px;display:block;background:#0a1322;border:1px solid #1b2a44;border-radius:11px}',
-'.ep-err{background:#2b1220;border:1px solid #7f1d3a;color:#fecdd3;border-radius:10px;padding:12px 14px;font-size:13px;margin-bottom:14px}',
-'.ep-switch{appearance:none;-webkit-appearance:none;width:38px;height:20px;background:#1b2a44;border-radius:999px;position:relative;cursor:pointer;transition:background .2s;border:none}',
-'.ep-switch:checked{background:#0e7490}',
-'.ep-switch:after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#c9d6e8;transition:left .2s}',
-'.ep-switch:checked:after{left:20px;background:#e8f1ff}'
+'.ep-wrap{position:relative;isolation:isolate;font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Noto Sans SC","Segoe UI",system-ui,sans-serif;color:#1b2229;padding:16px 16px 28px;border-radius:18px;background:linear-gradient(155deg,rgba(230,240,251,.96) 0%,rgba(234,242,247,.96) 30%,rgba(242,240,251,.96) 62%,rgba(248,243,236,.96) 100%)}',
+'.ep-wrap::before{content:"";position:absolute;inset:0;border-radius:18px;pointer-events:none;background:radial-gradient(720px 460px at 4% 0%,rgba(56,132,232,.16),transparent 66%),radial-gradient(680px 420px at 100% 6%,rgba(38,196,214,.14),transparent 66%),radial-gradient(720px 460px at 96% 100%,rgba(255,168,124,.11),transparent 66%)}',
+'.ep-wrap>*{position:relative;z-index:1}',
+'.ep-hero{padding:16px 20px;border-radius:20px;border:1px solid rgba(255,255,255,.72);box-shadow:0 14px 38px rgba(22,60,110,.10),inset 0 1px 0 rgba(255,255,255,.9);background:rgba(255,255,255,.52);-webkit-backdrop-filter:blur(32px) saturate(180%);backdrop-filter:blur(32px) saturate(180%);margin-bottom:14px}',
+'.ep-hero h2{margin:0 0 5px;font-size:22px;font-weight:650;letter-spacing:-.3px;color:#141c24}',
+'.ep-hero .ep-sub{font-size:12.5px;color:#63727f;line-height:1.6}',
+'.ep-hero-line{height:0;margin:0}',
+'.ep-grid{display:grid;grid-template-columns:1fr;gap:1px;margin:0;background:rgba(120,150,190,.14);border-top:1px solid rgba(255,255,255,.5)}',
+'@media(min-width:560px){.ep-grid{grid-template-columns:repeat(2,1fr)}}',
+'@media(min-width:960px){.ep-grid{grid-template-columns:repeat(4,1fr)}}',
+'.ep-tile{background:rgba(255,255,255,.44);padding:15px 17px;min-width:0;transition:background .2s}',
+'.ep-tile:hover{background:rgba(255,255,255,.62)}',
+'.ep-tile .ep-lab{font-size:11.5px;color:#5e6d7d;letter-spacing:.02em;margin-bottom:7px}',
+'.ep-tile .ep-val{font-size:22px;font-weight:600;letter-spacing:-.4px;color:#16202a;line-height:1.3;word-break:break-all}',
+'.ep-card{background:rgba(255,255,255,.46);-webkit-backdrop-filter:blur(36px) saturate(180%);backdrop-filter:blur(36px) saturate(180%);border:1px solid rgba(255,255,255,.72);border-radius:20px;box-shadow:0 14px 38px rgba(22,60,110,.10),inset 0 1px 0 rgba(255,255,255,.9);padding:0;margin-bottom:14px;overflow:hidden}',
+'.ep-card h3{margin:0;padding:13px 17px;font-size:13px;font-weight:600;letter-spacing:.01em;color:#2b3846;border-bottom:1px solid rgba(255,255,255,.52);background:rgba(255,255,255,.20)}',
+'.ep-card>*:not(h3){margin-left:16px;margin-right:16px}',
+'.ep-card>*:not(h3):first-child{margin-top:16px}',
+'.ep-card>*:not(h3):last-child{margin-bottom:16px}',
+'.ep-card .ep-hint{font-size:12px;color:#66737f;line-height:1.62}',
+'.ep-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:7px;vertical-align:middle;box-shadow:0 0 0 3px rgba(255,255,255,.55)}',
+'.ep-ok{color:#0b7a44}.ep-warn{color:#a86500}.ep-bad{color:#b0362d}.ep-off{color:#7e8c9b}',
+'.ep-ok .ep-dot,.ep-warn .ep-dot{animation:epPulse 2.4s ease-in-out infinite}',
+'@keyframes epPulse{0%,100%{opacity:.5}50%{opacity:1}}',
+'@media (prefers-reduced-motion: reduce){.ep-ok .ep-dot,.ep-warn .ep-dot{animation:none}}',
+'.ep-tbl{width:100%;border-collapse:collapse;font-size:13px;table-layout:fixed}',
+'.ep-tbl th{text-align:left;color:#5e6d7d;font-weight:500;font-size:11.5px;padding:9px 17px;border-bottom:1px solid rgba(255,255,255,.55);background:rgba(255,255,255,.20)}',
+'.ep-tbl td{padding:10px 17px;border-bottom:1px solid rgba(255,255,255,.5);color:#2b3846;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;word-break:break-all}',
+'.ep-tbl tr:hover td{background:rgba(255,255,255,.42)}',
+'.ep-btn{background:rgba(255,255,255,.86);border:1px solid rgba(255,255,255,.94);color:#22303d;border-radius:999px;padding:6px 15px;font-size:13px;cursor:pointer;margin:0 8px 8px 0;box-shadow:0 2px 10px rgba(22,60,110,.09);transition:background .18s,box-shadow .18s}',
+'.ep-btn:hover{background:#fff;box-shadow:0 4px 16px rgba(22,60,110,.14)}',
+'.ep-btn.ep-primary{background:linear-gradient(180deg,#0f8bff,#0a6ee0);border-color:transparent;color:#fff;box-shadow:0 6px 18px rgba(10,132,255,.30)}',
+'.ep-btn.ep-primary:hover{filter:brightness(1.05)}',
+'.ep-btn.ep-danger{background:rgba(255,255,255,.9);color:#c0342b;border-color:rgba(255,255,255,.94)}',
+'.ep-in{background:rgba(255,255,255,.8);border:1px solid rgba(255,255,255,.95);color:#16202a;border-radius:12px;padding:7px 11px;font-size:13px;font-family:ui-monospace,Menlo,Consolas,monospace;min-width:130px;box-shadow:inset 0 1px 2px rgba(22,60,110,.06)}',
+'.ep-in:focus{outline:none;border-color:#0f8bff;box-shadow:0 0 0 3px rgba(15,139,255,.16)}',
+'.ep-row{display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:10px 0;font-size:13px;border-bottom:1px solid rgba(255,255,255,.42)}',
+'.ep-row:last-child{border-bottom:0}',
+'.ep-row label{min-width:180px;color:#4c5b6a}',
+'.ep-pre{background:rgba(255,255,255,.62);border:1px solid rgba(255,255,255,.9);border-radius:14px;padding:12px 14px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;color:#2b3846;white-space:pre-wrap;max-height:320px;overflow:auto;line-height:1.62}',
+'.ep-tag{display:inline-block;padding:3px 10px;border-radius:999px;font-size:11.5px;margin:2px 5px 2px 0;border:1px solid rgba(255,255,255,.9);background:rgba(255,255,255,.6);color:#4c5b6a}',
+'.ep-tag.ep-hit{border-color:#0f8bff;color:#0b63c5;background:rgba(15,139,255,.10)}',
+'.ep-chart{width:100%;height:150px;display:block;background:rgba(255,255,255,.6);border:1px solid rgba(255,255,255,.9);border-radius:14px}',
+'.ep-err{background:rgba(255,243,242,.66);border:1px solid rgba(255,255,255,.8);border-left:3px solid #c0342b;color:#8d2b23;border-radius:14px;padding:13px 16px;font-size:13px;margin-bottom:14px;-webkit-backdrop-filter:blur(24px);backdrop-filter:blur(24px);box-shadow:0 8px 24px rgba(150,40,30,.08)}',
+'.ep-switch{appearance:none;-webkit-appearance:none;width:44px;height:26px;background:rgba(120,140,165,.32);border-radius:999px;position:relative;cursor:pointer;transition:background .2s;border:none;flex:0 0 44px}',
+'.ep-switch:checked{background:#0a84ff}',
+'.ep-switch:after{content:"";position:absolute;top:2px;left:2px;width:22px;height:22px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.18);transition:left .2s}',
+'.ep-switch:checked:after{left:20px}',
+'.ep-stack>.ep-wrap{padding:0;background:none;border-radius:0}',
+'.ep-stack>.ep-wrap::before{display:none}',
+'.ep-stack>.ep-wrap>.ep-hero{padding:6px 4px 10px;background:none;border:0;box-shadow:none;-webkit-backdrop-filter:none;backdrop-filter:none}',
+'.ep-stack>.ep-wrap>.ep-hero h2{font-size:16px;color:#2b3846}',
+'.ep-stack>.ep-wrap>*{margin-bottom:12px}',
+'@media (prefers-reduced-transparency: reduce){.ep-card,.ep-hero,.ep-tile{background:#fff;-webkit-backdrop-filter:none;backdrop-filter:none}}'
 ].join('\n');
 
 function injectStyle() {
-	if (typeof document === 'undefined' || document.getElementById('ep-dark-style'))
+	if (typeof document === 'undefined' || document.getElementById('ep-glass-style'))
 		return;
-	document.head.appendChild(E('style', { id: 'ep-dark-style', type: 'text/css' }, CSS));
+	document.head.appendChild(E('style', { id: 'ep-glass-style', type: 'text/css' }, CSS));
 }
 
 function notify(text, level) {
@@ -975,6 +991,61 @@ function pageBackup(data) {
 	]);
 }
 
+function pageConn(data) {
+	injectStyle();
+	var cfg = (data && data.cfg) || {};
+
+	function collect() {
+		return {
+			'main.enabled': valOf('ep-enabled'),
+			'main.listen': valOf('ep-listen'),
+			'main.listen_port': valOf('ep-listen-port'),
+			'transparent.enabled': valOf('ep-transparent'),
+			'transparent.lan_interfaces': valOf('ep-lan-ifaces'),
+			'transparent.tproxy_port': valOf('ep-tproxy-port'),
+			'transparent.ipv6_policy': valOf('ep-ipv6')
+		};
+	}
+
+	return E('div', { class: 'ep-wrap' }, [
+		hero('连接', '总开关、监听入口、透明代理与 IPv6 策略；保存会 uci commit，重启后仍生效。'),
+		card('入口', [
+			row('总开关', switchInput('ep-enabled', cfg.enabled == '1'), '0=停用，1=启用'),
+			row('监听地址', textInput('ep-listen', cfg.listen || '127.0.0.1'), '默认只监听回环，由 tproxy 接 LAN'),
+			row('监听端口', textInput('ep-listen-port', cfg.listen_port || '7890'), 'HTTP/SOCKS 混合入站')
+		], '面板的启停按钮走 /etc/init.d/easyproxy，这里的总开关只控制开机自启时的状态。'),
+		card('透明代理', [
+			row('开启透明代理', switchInput('ep-transparent', cfg.transparent == '1'), '关闭时路由器不做任何 nftables 改写'),
+			row('LAN 接口', textInput('ep-lan-ifaces', cfg.lan_ifaces || 'br-lan'), '多个用空格分隔'),
+			row('tproxy 端口', textInput('ep-tproxy-port', cfg.tproxy_port || '7891')),
+			row('内网流量', E('span', { class: 'ep-hint', style: 'margin:0' }, '始终 DIRECT（不可改）'), '内网、回环、路由器自身地址永不进内核')
+		]),
+		card('IPv6', [
+			row('IPv6 策略', E('select', { id: 'ep-ipv6', class: 'ep-in' }, [
+				E('option', { value: 'direct', selected: (cfg.ipv6_policy || 'direct') === 'direct' ? 'selected' : null }, 'direct（IPv6 不接管，直连）'),
+				E('option', { value: 'block', selected: cfg.ipv6_policy === 'block' ? 'selected' : null }, 'block（阻断内网 IPv6，防绕过）')
+			]))
+		], 'block 会丢弃不属于 fc00::/7、fe80::/10、::1/128、ff00::/8 与 LAN 链路上地址的 IPv6 流量；direct 完全不干预 IPv6。'),
+		card('保存', E('div', {}, [
+			button('保存', 'ep-primary', function () {
+				return saveUci(collect()).then(function () {
+					notify('连接设置已保存（uci commit 完成）', 'success');
+				}).catch(function (e) {
+					notify('保存失败：' + e, 'error');
+				});
+			}),
+			button('保存并重启服务', '', function () {
+				return saveUci(collect()).then(function () { return run(['restart']); }).then(function (r) {
+					notify((r.stdout || r.stderr || '').trim(), r.code === 0 ? 'success' : 'error');
+					if (r.code === 0) reload();
+				}).catch(function (e) {
+					notify('失败：' + e, 'error');
+				});
+			})
+		]), '保存只写 /etc/config/easyproxy，不碰 network、firewall、dhcp。')
+	]);
+}
+
 function pageSettings(data) {
 	injectStyle();
 	var cfg = (data && data.cfg) || {};
@@ -989,43 +1060,20 @@ function pageSettings(data) {
 
 	function collect() {
 		return {
-			'main.enabled': valOf('ep-enabled'),
-			'main.listen': valOf('ep-listen'),
-			'main.listen_port': valOf('ep-listen-port'),
 			'main.log_level': valOf('ep-log-level'),
 			'routing.probe_timeout': valOf('ep-probe'),
-			'routing.rule_set_update_days': valOf('ep-update-days'),
-			'transparent.enabled': valOf('ep-transparent'),
-			'transparent.lan_interfaces': valOf('ep-lan-ifaces'),
-			'transparent.tproxy_port': valOf('ep-tproxy-port'),
-			'transparent.ipv6_policy': valOf('ep-ipv6')
+			'routing.rule_set_update_days': valOf('ep-update-days')
 		};
 	}
 
 	return E('div', { class: 'ep-wrap' }, [
-		hero('系统设置', '开关、监听、透明代理与 IPv6 策略；保存会 uci commit，重启后仍生效。'),
-		card('基本', [
-			row('总开关', switchInput('ep-enabled', cfg.enabled == '1'), '0=停用，1=启用'),
-			row('监听地址', textInput('ep-listen', cfg.listen || '127.0.0.1'), '默认只监听回环，由 tproxy 接 LAN'),
-			row('监听端口', textInput('ep-listen-port', cfg.listen_port || '7890')),
+		hero('设置', '日志级别、规则集更新周期、系统自检与卸载清理；入口开关与透明代理在「连接」页。'),
+		card('日志与规则集', [
 			row('日志级别', E('select', { id: 'ep-log-level', class: 'ep-in' }, ['trace', 'debug', 'info', 'notice', 'warn', 'error'].map(function (l) {
 				return E('option', { value: l, selected: (cfg.log_level || 'notice') === l ? 'selected' : null }, l);
 			}))),
 			row('探测超时（秒）', textInput('ep-probe', cfg.probe_timeout || '3')),
 			row('规则集更新周期（天）', textInput('ep-update-days', cfg.rule_set_update_days || '7'))
-		]),
-		card('透明代理', [
-			row('开启透明代理', switchInput('ep-transparent', cfg.transparent == '1'), '关闭时路由器不做任何 nftables 改写'),
-			row('LAN 接口', textInput('ep-lan-ifaces', cfg.lan_ifaces || 'br-lan'), '多个用空格分隔'),
-			row('tproxy 端口', textInput('ep-tproxy-port', cfg.tproxy_port || '7891')),
-			row('内网流量', E('span', { class: 'ep-hint', style: 'margin:0' }, '始终 DIRECT（不可改）'), '内网、回环、路由器自身地址永不进内核')
-		]),
-		card('IPv6', [
-			row('IPv6 策略', E('select', { id: 'ep-ipv6', class: 'ep-in' }, [
-				E('option', { value: 'direct', selected: (cfg.ipv6_policy || 'direct') === 'direct' ? 'selected' : null }, 'direct（IPv6 不接管，直连）'),
-				E('option', { value: 'block', selected: cfg.ipv6_policy === 'block' ? 'selected' : null }, 'block（阻断内网 IPv6，防绕过）')
-			])),
-			E('div', { class: 'ep-hint', style: 'margin:0' }, 'block 会丢弃不属于 fc00::/7、fe80::/10、::1/128、ff00::/8 与 LAN 链路上地址的 IPv6 流量；direct 完全不干预 IPv6。')
 		]),
 		card('保存', E('div', {}, [
 			button('保存设置', 'ep-primary', function () {
@@ -1102,5 +1150,6 @@ return baseclass.extend({
 	pageLogs: pageLogs,
 	pageUpdate: pageUpdate,
 	pageBackup: pageBackup,
+	pageConn: pageConn,
 	pageSettings: pageSettings
 });

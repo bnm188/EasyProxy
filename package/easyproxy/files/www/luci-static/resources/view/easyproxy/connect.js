@@ -4,9 +4,9 @@
 
 return view.extend({
 	load: function () {
-		return Promise.resolve(true);
+		return app.loadCfg();
 	},
-	render: function () {
-		return app.pageSubscription();
+	render: function (cfg) {
+		return app.pageConn({ cfg: cfg });
 	}
 });
