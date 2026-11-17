@@ -153,6 +153,19 @@ EasyProxy 统一入口
 EOF
 }
 
+prompt_choice() {
+	# 管道执行时 stdin 已到 EOF，此时从 /dev/tty 读；连 tty 都没有就不假装能交互。
+	if [ -t 0 ]; then
+		read -r choice || choice=""
+		return 0
+	fi
+	if ( : </dev/tty ) 2>/dev/null; then
+		read -r choice </dev/tty || choice=""
+		return 0
+	fi
+	return 1
+}
+
 menu() {
 	cat <<'EOF'
 
@@ -167,7 +180,11 @@ menu() {
 
 EOF
 	printf '请选择 [0-5]: '
-	read -r choice || choice=""
+	if ! prompt_choice; then
+		printf '\n检测到非交互环境（管道执行）。请带参数直接执行，例如：\n'
+		printf '  wget -qO- https://raw.githubusercontent.com/%s/%s/scripts/easyproxy.sh | sh -s install\n' "$REPO" "$BRANCH"
+		return 1
+	fi
 	case "$choice" in
 		1) need_root; run_sub install.sh install ;;
 		2) need_root; run_sub install.sh upgrade ;;
@@ -185,7 +202,7 @@ main() {
 		upgrade)   need_root; run_sub install.sh upgrade ;;
 		status)    run_sub install.sh status ;;
 		check)     check_env ;;
-		uninstall) need_root; run_sub uninstall.sh "$@" ;;
+		uninstall) need_root; shift; run_sub uninstall.sh "$@" ;;
 		-h|--help|help) usage ;;
 		"")        menu ;;
 		*)         usage; exit 2 ;;
