@@ -9,12 +9,13 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "要发布的版本号（必须与 package/easyproxy/Makefile 的 PKG_VERSION 相同，例如 0.8.0）；留空则只构建不发布"
+        description: "要发布的版本号（必须与 package/easyproxy/Makefile 的 PKG_VERSION 相同，例如 0.8.0）；留空则按版本号自动判定"
         required: false
         default: ""
   schedule:
     # 每天 03:00 UTC（北京时间 11:00）跑一次体检构建：编译、跑全套测试、上传 artifact，
-    # 不发版（定时运行不触发版本号判定）。GitHub 的定时任务可能延迟 5~20 分钟。
+    # 定时运行也按版本号判断：PKG_VERSION 比最新 Release 新就发版，所以一次推送
+    # 即使没启动构建，最晚到这次定时运行也会自动出包发版。可能延迟 5~20 分钟。
     - cron: '0 3 * * *'
 
 permissions:
@@ -47,9 +48,11 @@ jobs:
       # Release intent, resolved once here so every later step uses the same tag:
       #   1. a v* tag the maintainer pushed by hand;
       #   2. a manual run that passes inputs.version;
-      #   3. the version number itself: on main, when PKG_VERSION is higher than
-      #      the newest published release, this build publishes that version
-      #      without anyone clicking Run workflow or committing a request file.
+      #   3. the version number itself: on main, on the daily scheduled run, and
+      #      on a manual run without an input, PKG_VERSION is compared with the
+      #      newest published release and a higher version publishes by itself.
+      #      The scheduled run is what makes an automation push land: commits
+      #      made with a token do not start a workflow, the 11:00 build does.
       # A commit whose message carries [no-release] is exempt, for work that must
       # land on main without producing a release.
       - name: Resolve the release intent
@@ -66,7 +69,7 @@ jobs:
             TAG="${GITHUB_REF_NAME}"
           elif [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ] && [ -n "${INPUT_VERSION}" ]; then
             TAG="v${INPUT_VERSION}"
-          elif [ "${GITHUB_EVENT_NAME}" = "push" ] && [ "${GITHUB_REF}" = "refs/heads/main" ]; then
+          elif [ "${GITHUB_EVENT_NAME}" = "push" ] || [ "${GITHUB_EVENT_NAME}" = "schedule" ] || [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
             MSG="$(git log -1 --pretty=%B)"
             case "$MSG" in
               *"[no-release]"*)
@@ -282,10 +285,10 @@ jobs:
       #   * existing assets are never overwritten: a second build of the same
       #     version fails instead.
       # Publishing is reachable three ways on purpose, all behind the same tag
-      # check above. The everyday path is the version number: a push to main
-      # whose PKG_VERSION is higher than the newest release publishes by itself,
-      # so a release needs no manual click. Two things stay deliberately narrow:
-      # a commit that carries [no-release] lands without a release, and the
+      # check above. The everyday path is the version number: a build whose
+      # PKG_VERSION is higher than the newest release publishes by itself, so a
+      # release needs no manual click. Two things stay deliberately narrow: a
+      # commit that carries [no-release] lands without a release, and the
       # version must rise - the checks below refuse to publish the same version
       # twice or to go backwards.
       # Release immutability is a repository-level GitHub switch this workflow
