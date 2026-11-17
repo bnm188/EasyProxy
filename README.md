@@ -2,8 +2,8 @@
 
 **OpenWrt / ImmortalWrt 上的中文代理管理系统。装一次，导入订阅就能用。**
 
-![version](https://img.shields.io/badge/version-0.8.10-blue)
-![tests](https://img.shields.io/badge/tests-865%20passed-brightgreen)
+![version](https://img.shields.io/badge/version-0.8.11-blue)
+![tests](https://img.shields.io/badge/tests-866%20passed-brightgreen)
 ![firmware](https://img.shields.io/badge/firmware-OpenWrt%20%7C%20ImmortalWrt%20%7C%20Kwrt-informational)
 ![license](https://img.shields.io/badge/license-MIT-green)
 
@@ -106,7 +106,8 @@ EP_SING_BOX_BIN=/usr/bin/sing-box sh tests/run-all.sh
 | 0.8.7 | 生态第一步：profile 导出 + 扫码导入 |
 | 0.8.8 | 真机验收 + 面板升级 |
 | 0.8.9 | dae 真正启动 |
-| 0.8.10 | 修掉阻断升级的自校验缺陷（真机实测：0.8.7→0.8.8 曾自动回滚）＋全部 24 项真机验收取证 |
+| 0.8.10 | 修掉阻断升级的自校验缺陷（真机实测：0.8.7→0.8.8 曾自动回滚）＋全部 24 项真机验收取证 ｜ ⚠️ 升级会覆盖用户配置，请直接装 0.8.11 |
+| 0.8.11 | 升级不再覆盖 `/etc/config/easyproxy`（真机实测：0.8.9→0.8.10 曾清空节点表、开关被关） |
 
 进度见 [`docs/PROJECT-STATUS.md`](docs/PROJECT-STATUS.md)，细项见 [`docs/DEVELOPMENT-PLAN.md`](docs/DEVELOPMENT-PLAN.md)，历次报告见 [`docs/reports/`](docs/reports/)。
 

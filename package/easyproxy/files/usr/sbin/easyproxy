@@ -1586,9 +1586,13 @@ cmd_update_apply() {
 	echo "update: checksum verified"
 
 	update_backup || { rm -rf "$tmp"; return 1; }
-	if ! tar -xzf "$archive" -C "$EP_UPDATE_ROOT" 2>/dev/null; then
+	# The payload is a whole file tree, so it also carries the shipped default
+	# /etc/config/easyproxy. Unpacking that over the user's own config silently
+# wipes nodes, groups and the enabled flag (seen on a real router: a 0.8.9 ->
+	# 0.8.10 upgrade left an empty node table). Config is the user's, never ours.
+	if ! tar -xzf "$archive" -C "$EP_UPDATE_ROOT" --exclude='*etc/config/*' 2>/dev/null; then
 		echo "update: extraction failed; rolling back" >&2
-		tar -xzf "$EP_UPDATE_ARCHIVE" -C "$EP_UPDATE_ROOT" 2>/dev/null
+		tar -xzf "$EP_UPDATE_ARCHIVE" -C "$EP_UPDATE_ROOT" --exclude='*etc/config/*' 2>/dev/null
 		update_restart_panel
 		rm -rf "$tmp"
 		return 6
@@ -1597,7 +1601,7 @@ cmd_update_apply() {
 	update_restart_panel
 	if ! update_verify_install "$ver"; then
 		echo "update: the new version did not verify; rolling back to $cur" >&2
-		tar -xzf "$EP_UPDATE_ARCHIVE" -C "$EP_UPDATE_ROOT" 2>/dev/null
+		tar -xzf "$EP_UPDATE_ARCHIVE" -C "$EP_UPDATE_ROOT" --exclude='*etc/config/*' 2>/dev/null
 		chmod 755 "$EP_UPDATE_ROOT/usr/sbin/easyproxy" "$EP_UPDATE_ROOT/etc/init.d/easyproxy" 2>/dev/null || true
 		update_restart_panel
 		rm -rf "$tmp"
@@ -1621,7 +1625,7 @@ cmd_update_rollback() {
 	last="$(ls -1 "$EP_UPDATE_BACKUP_DIR"/rollback-*.tar.gz 2>/dev/null | tail -n 1)"
 	[ -n "$last" ] || { echo "update: no rollback archive in $EP_UPDATE_BACKUP_DIR" >&2; return 3; }
 	echo "update: restoring $(basename "$last")"
-	tar -xzf "$last" -C "$EP_UPDATE_ROOT" 2>/dev/null || { echo "update: cannot extract $last" >&2; return 1; }
+	tar -xzf "$last" -C "$EP_UPDATE_ROOT" --exclude='*etc/config/*' 2>/dev/null || { echo "update: cannot extract $last" >&2; return 1; }
 	chmod 755 "$EP_UPDATE_ROOT/usr/sbin/easyproxy" "$EP_UPDATE_ROOT/etc/init.d/easyproxy" 2>/dev/null || true
 	update_restart_panel
 	echo "update: rolled back; reload the page"

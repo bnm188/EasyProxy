@@ -375,6 +375,10 @@ printf '#!/sh\n' > "$UP/pack/usr/sbin/easyproxy"
 # that version lives in common.sh (reading the CLI itself made the sed match
 # its own source line). A payload without common.sh is an invalid tree.
 printf 'EP_VERSION="0.9.9"\n' > "$UP/pack/usr/lib/easyproxy/common.sh"
+# The payload is a full rootfs tree and therefore ships the default config.
+# A user config must survive the upgrade untouched.
+mkdir -p "$UP/pack/etc/config"
+printf 'config main\n\toption enabled 1\n\toption shipped_default_marker 1\n' > "$UP/pack/etc/config/easyproxy"
 printf '#!/bin/sh\n' > "$UP/pack/etc/init.d/easyproxy"
 printf "'require baseclass'\nreturn baseclass.extend({});\n" > "$UP/pack/www/luci-static/resources/easyproxy/app.js"
 ( cd "$UP/pack" && tar -czf "$UP/repo/easyproxy-0.9.9-rootfs.tar.gz" . )
@@ -416,6 +420,8 @@ chmod +x "$SB/bin/wget"
 # a pre-existing install: the backup must be able to archive it
 printf "'require baseclass'\nreturn baseclass.extend({ original: true });\n" \
 	> "$UP/root/www/luci-static/resources/easyproxy/app.js"
+mkdir -p "$UP/root/etc/config"
+printf 'config main\n\toption enabled 1\n\toption user_marker keepme\n' > "$UP/root/etc/config/easyproxy"
 printf '#!/bin/sh\nEP_VERSION="0.8.8"\n' > "$UP/root/usr/sbin/easyproxy"
 printf '#!/bin/sh\n' > "$UP/root/etc/init.d/easyproxy"
 
@@ -461,6 +467,7 @@ printf '%s' "$out" | grep -q 'checksum verified' && ok "动手前先校验 sha25
 ls "$UP/backups"/rollback-*.tar.gz >/dev/null 2>&1 && ok "升级前备份当前版本" || no "升级前备份当前版本" "$(ls -l "$UP/backups" 2>/dev/null)"
 [ -f "$UP/root/www/luci-static/resources/easyproxy/app.js" ] && ok "解包后面板文件就位" || no "解包后面板文件就位" "$out"
 printf '%s' "$out" | grep -q 'now running 0.9.9' && ok "报告新版本已生效" || no "报告新版本已生效" "$out"
+grep -q 'user_marker keepme' "$UP/root/etc/config/easyproxy" 2>/dev/null && ok "升级不覆盖用户配置（节点/开关保住）" || no "升级不覆盖用户配置（节点/开关保住）" "$(cat "$UP/root/etc/config/easyproxy" 2>/dev/null)"
 
 # a bad SHA256SUMS entry must stop the install
 cp "$UP/repo/SHA256SUMS" "$UP/repo/SHA256SUMS.ok"; cp "$UP/repo/SHA256SUMS.bad" "$UP/repo/SHA256SUMS"
