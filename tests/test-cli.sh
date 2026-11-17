@@ -91,7 +91,9 @@ else
 	no "status --json 是合法 JSON" "$out"
 fi
 [ "$(printf '%s' "$out" | json_get "['ok']")" = "True" ] && ok "status ok=true" || no "status ok=true"
-[ "$(printf '%s' "$out" | json_get "['version']")" = "0.8.0" ] && ok "version=0.8.0" || no "version=0.8.0"
+PKG_VER="$(sed -n 's/^PKG_VERSION:=//p' "$SRC/package/easyproxy/Makefile" | head -1)"
+[ -n "$PKG_VER" ] || no "version=<PKG_VERSION unreadable>"
+[ "$(printf '%s' "$out" | json_get "['version']")" = "$PKG_VER" ] && ok "version=$PKG_VER" || no "version=$PKG_VER"
 [ "$(printf '%s' "$out" | json_get "['engine']")" = "sing-box" ] && ok "engine 来自 UCI" || no "engine 来自 UCI"
 [ "$(printf '%s' "$out" | json_get "['nodes']")" = "2" ] && ok "nodes 统计出 2 个节点" || no "nodes 统计出 2 个节点"
 [ "$(printf '%s' "$out" | json_get "['binary_ok']")" = "1" ] && ok "binary_ok=1（二进制可执行）" || no "binary_ok=1"
