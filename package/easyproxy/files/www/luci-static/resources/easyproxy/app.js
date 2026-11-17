@@ -887,12 +887,21 @@ function pageSettings(data) {
 	]);
 }
 
-return {
-	injectStyle: injectStyle,
-	run: run,
-	cliJson: cliJson,
-	loadStatus: loadStatus,
-	loadCfg: function () {
+// LuCI's loader instantiates a module it receives, and refuses anything that is
+// not a constructor ("factory yields invalid constructor"). Returning a plain
+// object breaks the panel on that loader while working on the older one. A
+// function with the same members, aliased as its own prototype, satisfies both:
+// `new App()` yields an instance carrying every member, and `app.loadStatus()`
+// keeps working for views that use the module directly.
+var App = function App() {};
+
+App.prototype = App;
+
+App.injectStyle = injectStyle;
+App.run = run;
+App.cliJson = cliJson;
+App.loadStatus = loadStatus;
+App.loadCfg = function () {
 		uci.unload('easyproxy');
 		return uci.load('easyproxy').then(function () {
 			return {
@@ -913,16 +922,18 @@ return {
 				ipv6_policy: uci.get('easyproxy', 'transparent', 'ipv6_policy')
 			};
 		});
-	},
-	pageOverview: pageOverview,
-	pageNodes: pageNodes,
-	pageSubscription: pageSubscription,
-	pageSplit: pageSplit,
-	pageEngines: pageEngines,
-	pageDns: pageDns,
-	pageRules: pageRules,
-	pageLogs: pageLogs,
-	pageBackup: pageBackup,
-	pageSettings: pageSettings
-};
+	};
+
+App.pageOverview = pageOverview;
+App.pageNodes = pageNodes;
+App.pageSubscription = pageSubscription;
+App.pageSplit = pageSplit;
+App.pageEngines = pageEngines;
+App.pageDns = pageDns;
+App.pageRules = pageRules;
+App.pageLogs = pageLogs;
+App.pageBackup = pageBackup;
+App.pageSettings = pageSettings;
+
+return App;
 
