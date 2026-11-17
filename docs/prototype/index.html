@@ -173,6 +173,49 @@ textarea{font-family:var(--mono);font-size:12px;resize:vertical;line-height:1.6}
 .bc-fill{height:100%;background:var(--brand)}
 .bc-fill.g{background:var(--ok)}
 @media(max-width:520px){.bc-row{grid-template-columns:74px 1fr 58px;font-size:11.5px}}
+
+/* ============ 概览页 · Liquid Glass ============ */
+.ov-page{position:relative;isolation:isolate}
+.ov-bg{position:absolute;inset:-24px -16px 0;overflow:hidden;z-index:-1;pointer-events:none}
+.ov-bg .b{position:absolute;border-radius:50%;filter:blur(72px);mix-blend-mode:normal}
+.b1{width:640px;height:520px;left:-40px;top:-120px;background:radial-gradient(circle,rgba(40,132,232,.78),rgba(40,132,232,0) 68%)}
+.b2{width:600px;height:480px;right:-120px;top:-30px;background:radial-gradient(circle,rgba(38,196,214,.66),rgba(38,196,214,0) 68%)}
+.b3{width:620px;height:500px;left:80px;top:560px;background:radial-gradient(circle,rgba(126,142,255,.55),rgba(126,142,255,0) 68%)}
+.b4{width:580px;height:460px;right:-80px;top:760px;background:radial-gradient(circle,rgba(255,168,120,.42),rgba(255,168,120,0) 68%)}
+.ov-page .card{
+  background:rgba(255,255,255,.52);
+  -webkit-backdrop-filter:blur(30px) saturate(180%);
+  backdrop-filter:blur(28px) saturate(180%);
+  border:1px solid rgba(255,255,255,.66);
+  border-radius:20px;
+  box-shadow:0 14px 38px rgba(22,60,110,.10),inset 0 1px 0 rgba(255,255,255,.9);
+  overflow:hidden;margin-bottom:14px;
+}
+.ov-page .card-hd{padding:13px 17px;border-bottom:1px solid rgba(255,255,255,.52);background:rgba(255,255,255,.16)}
+.ov-page .card-bd{padding:0}
+.ov-page .grid{gap:1px;background:rgba(120,150,190,.14)}
+.ov-page .cell{background:rgba(255,255,255,.55);padding:15px 17px}
+.ov-page .cell-k{font-size:11.5px;color:#5e6d7d;letter-spacing:.02em}
+.ov-page .cell-v{font-size:24px;font-weight:600;letter-spacing:-.4px;margin-top:7px;line-height:1.25}
+.ov-page .cell-x{margin-top:4px;font-size:11.5px;color:#7e8c9b}
+.ov-page .bar{padding:13px 17px;display:flex;gap:8px;flex-wrap:wrap;border-top:1px solid rgba(255,255,255,.5)}
+.ov-page .btn{border-radius:999px;background:rgba(255,255,255,.86);border:1px solid rgba(255,255,255,.94);
+  box-shadow:0 2px 10px rgba(22,60,110,.09);padding:6px 14px;font-size:13px}
+.ov-page .btn:hover{background:#fff}
+.ov-page .btn.primary{background:linear-gradient(180deg,#0f8bff,#0a6ee0);border-color:transparent;color:#fff;
+  box-shadow:0 6px 18px rgba(10,132,255,.30)}
+.ov-page .btn.primary:hover{filter:brightness(1.05)}
+.ov-page .btn.danger{background:rgba(255,255,255,.88);color:#c8342b;border-color:rgba(255,255,255,.94)}
+.ov-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:4px 2px 16px}
+.ov-head h1{font-size:22px;font-weight:650;letter-spacing:-.3px;margin:0}
+.ov-good,.ov-bad{display:inline-flex;align-items:center;gap:7px;padding:6px 13px;border-radius:999px;font-size:12.5px;
+  background:rgba(255,255,255,.62);border:1px solid rgba(255,255,255,.8);
+  -webkit-backdrop-filter:blur(18px) saturate(170%);backdrop-filter:blur(18px) saturate(170%);
+  box-shadow:0 4px 14px rgba(22,60,110,.08)}
+.ov-good{color:#0b7a44}.ov-bad{color:#b0362d}
+.ov-head .mono{font-size:12px;color:#66788a}
+.ov-head .sp{margin-left:auto}
+@media (prefers-reduced-transparency: reduce){.ov-page .card{background:#fff;backdrop-filter:none;-webkit-backdrop-filter:none}}
 </style>
 </head>
 <body>
@@ -286,21 +329,21 @@ function act(btn, busyLabel, done){
 function pageOverview(){
   const s = DATA.status, run = STATE.running;
   const kpi = [
-    ['运行状态', run ? '运行中' : '已停止', run ? 'uptime '+s.uptime : '无进程', run ? 'ok' : 'bad'],
-    ['当前节点', DATA.nodes.length ? DATA.nodes[0].name : '—', DATA.nodes.length ? DATA.nodes[0].group : '无节点', 'n'],
-    ['规则集', STATE.rulesetReady ? '2 就绪' : '缺失', 'geosite + geoip', STATE.rulesetReady ? 'ok' : 'bad'],
-    ['累计流量', bytes(s.rx + s.tx), '↑'+bytes(s.tx)+' ↓'+bytes(s.rx), 'n']
+    ['运行状态', run ? '运行中' : '已停止', run ? 'uptime '+s.uptime : '无进程'],
+    ['当前节点', DATA.nodes.length ? DATA.nodes[0].name : '—', DATA.nodes.length ? DATA.nodes[0].group : '无节点'],
+    ['规则集', STATE.rulesetReady ? '2 就绪' : '缺失', 'geosite + geoip'],
+    ['累计流量', bytes(s.rx + s.tx), '↑'+bytes(s.tx)+' ↓'+bytes(s.rx)]
   ].map(function(k){
     return '<div class="cell"><div class="cell-k">'+k[0]+'</div>'+
-      '<div class="cell-v" style="font-size:19px;margin-top:5px">'+k[1]+'</div>'+
+      '<div class="cell-v">'+k[1]+'</div>'+
       '<div class="cell-x">'+k[2]+'</div></div>';
   }).join('');
 
-  /* 借鉴 Open-Box 概览页的站点延时小卡片 */
   const sites = DATA.flow.slice(0,4).map(function(f){
     const dir = f.path === 'direct';
-    return '<div class="cell"><div class="cell-k">'+esc(f.host)+' <span class="tag '+(dir?'n':'ok')+'" style="margin-left:auto">'+(dir?'直连':'节点')+'</span></div>'+
-      '<div class="cell-v mono" style="font-size:15px;margin-top:4px">'+f.t+'</div>'+
+    return '<div class="cell"><div class="cell-k">'+esc(f.host)+
+      ' <span class="tag '+(dir?'n':'ok')+'" style="margin-left:auto">'+(dir?'直连':'节点')+'</span></div>'+
+      '<div class="cell-v mono" style="font-size:16px;font-weight:500">'+f.t+'</div>'+
       '<div class="cell-x">HTTP '+f.code+' · '+esc(f.path)+'</div></div>';
   }).join('');
 
@@ -319,33 +362,33 @@ function pageOverview(){
     cell('系统存储', '37%', '875.1 MB')
   ].join('');
 
-  return '<div class="page-head"><h1 class="page-title">概览</h1>'+
-    '<p class="page-desc">网络状态与硬件负载，打开即自动刷新</p></div>'+
+  return '<div class="ov-page">'+
+    '<div class="ov-bg" aria-hidden="true"><span class="b b1"></span><span class="b b2"></span><span class="b b3"></span><span class="b b4"></span></div>'+
 
-    '<div class="card"><div class="card-bd" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:11px 12px">'+
-      '<span class="tag '+(run?'ok':'bad')+'" style="font-size:12px;padding:3px 8px">'+(run?'● 运行中':'● 已停止')+'</span>'+
-      '<span class="mono" style="color:var(--muted)">'+(run?'pid '+s.pid+' · '+s.uptime+' · 7890 listening':'无进程')+'</span>'+
-      '<span style="margin-left:auto;font-size:11.5px;color:var(--muted2)">最近刷新 '+nowStr()+'</span>'+
-    '</div><div class="grid">'+
-      '<div class="cell" style="padding:12px"><div class="cell-k">运行状态</div><div class="cell-v" style="font-size:19px;margin-top:5px">'+(run?'运行中':'已停止')+'</div><div class="cell-x">uptime '+(run?s.uptime:'—')+'</div></div>'+
-      '<div class="cell" style="padding:12px"><div class="cell-k">当前节点</div><div class="cell-v" style="font-size:19px;margin-top:5px">'+(DATA.nodes.length?esc(DATA.nodes[0].name):'—')+'</div><div class="cell-x">'+(DATA.nodes.length?esc(DATA.nodes[0].group):'无节点')+'</div></div>'+
-      '<div class="cell" style="padding:12px"><div class="cell-k">规则集</div><div class="cell-v" style="font-size:19px;margin-top:5px">'+(STATE.rulesetReady?'2 就绪':'缺失')+'</div><div class="cell-x">geosite + geoip</div></div>'+
-      '<div class="cell" style="padding:12px"><div class="cell-k">累计流量</div><div class="cell-v" style="font-size:19px;margin-top:5px">'+bytes(s.rx+s.tx)+'</div><div class="cell-x">↑'+bytes(s.tx)+' ↓'+bytes(s.rx)+'</div></div>'+
-    '</div></div>'+
+    '<div class="ov-head"><h1>概览</h1>'+
+      '<span class="'+(run?'ov-good':'ov-bad')+'">'+(run?'● 运行中':'● 已停止')+'</span>'+
+      '<span class="mono">'+(run?'pid '+s.pid+' · '+s.uptime+' · 7890 listening':'无进程')+'</span>'+
+      '<span class="mono sp">最近刷新 '+nowStr()+'</span></div>'+
 
-    '<div class="card"><div class="card-hd"><h3>站点延时</h3><span class="hd-note">打开概览自动测一次</span></div><div class="grid">'+sites+'</div>'+
+    '<div class="card"><div class="grid">'+kpi+'</div></div>'+
+
+    '<div class="card"><div class="card-hd"><h3>站点延时</h3><span class="hd-note">打开概览自动测一次</span></div>'+
+      '<div class="grid">'+sites+'</div>'+
       '<div class="bar"><button class="btn" data-act="site-test">重测这些站点</button></div></div>'+
 
-    '<div class="card"><div class="card-hd"><h3>运行细节</h3><span class="hd-note">doctor 全部通过</span></div><div class="grid">'+grid+'</div></div>'+
+    '<div class="card"><div class="card-hd"><h3>运行细节</h3><span class="hd-note">doctor 全部通过</span></div>'+
+      '<div class="grid">'+grid+'</div></div>'+
 
     '<div class="card"><div class="card-hd"><h3>快捷操作</h3><span class="hd-note">点击即置灰，直到拿到返回</span></div>'+
       '<div class="bar">'+
         '<button class="btn '+(run?'danger':'primary')+'" data-act="toggle">'+(run?'停止 EasyProxy':'启动 EasyProxy')+'</button>'+
         '<button class="btn" data-act="restart">重启内核</button>'+
         '<button class="btn" data-act="regen">重新生成配置</button>'+
-        '<button class="btn ghost" data-act="doctor">一键自检</button>'+
+        '<button class="btn" data-act="doctor">一键自检</button>'+
       '</div><div class="legend"><span>启停走 <span class="mono">/etc/init.d/easyproxy</span></span><span>失败原因直接写进操作记录</span></div></div>'+
-    resultBox('r-ov');
+
+    resultBox('r-ov')+
+    '</div>';
 }
 
 /* ================= 页 2：代理 ================= */
