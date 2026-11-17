@@ -149,6 +149,7 @@ EasyProxy 统一入口
   sh easyproxy.sh status       已装组件与版本
   sh easyproxy.sh check        检查系统环境（只读）
   sh easyproxy.sh uninstall    卸载（保留配置并先备份；加 --purge 连配置删）
+  sh easyproxy.sh diag         采集诊断包（脱敏）；加 --upload 传到 GitHub
 
 一条命令（不下载到本地）：
   wget -qO- https://raw.githubusercontent.com/bnm188/EasyProxy/main/scripts/easyproxy.sh | sh
@@ -168,6 +169,21 @@ prompt_choice() {
 	return 1
 }
 
+# Support bundle: collect locally, upload only when asked. The installed CLI
+# does the masking; this wrapper only finds it and forwards the flag.
+diagnose() {
+	local bin=""
+	for p in /usr/sbin/easyproxy /usr/bin/easyproxy; do
+		[ -x "$p" ] && { bin="$p"; break; }
+	done
+	if [ -z "$bin" ]; then
+		say "EasyProxy 尚未安装，没有可采集的状态。先执行安装："
+		say "  sh easyproxy.sh install"
+		return 1
+	fi
+	exec "$bin" diag "$@"
+}
+
 menu() {
 	cat <<'EOF'
 
@@ -178,10 +194,11 @@ menu() {
   3) 状态       已装组件与版本
   4) 检查环境   只读诊断，不改系统
   5) 卸载       保留配置并先备份
+  6) 诊断上报   采集日志与状态（可选上传 GitHub）
   0) 退出
 
 EOF
-	printf '请选择 [0-5]: '
+	printf '请选择 [0-6]: '
 	if ! prompt_choice; then
 		printf '\n检测到非交互环境（管道执行）。请带参数直接执行，例如：\n'
 		printf '  wget -qO- https://raw.githubusercontent.com/%s/%s/scripts/easyproxy.sh | sh -s install\n' "$REPO" "$BRANCH"
@@ -193,6 +210,7 @@ EOF
 		3) run_sub install.sh status ;;
 		4) check_env ;;
 		5) need_root; run_sub uninstall.sh ;;
+		6) need_root; diagnose ;;
 		0|"") say "已退出"; ;;
 		*) say "无效选项：$choice"; ;;
 	esac
@@ -205,6 +223,7 @@ main() {
 		status)    run_sub install.sh status ;;
 		check)     check_env ;;
 		uninstall) need_root; shift; run_sub uninstall.sh "$@" ;;
+		diag)      need_root; shift; diagnose "$@" ;;
 		-h|--help|help) usage ;;
 		"")        menu ;;
 		*)         usage; exit 2 ;;

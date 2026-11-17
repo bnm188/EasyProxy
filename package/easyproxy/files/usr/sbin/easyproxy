@@ -45,6 +45,7 @@ Usage:
   easyproxy ruleset update         Re-download both CN rule sets
   easyproxy ruleset verify         Check both CN rule sets are real .srs files
   easyproxy doctor [--json]        One-shot diagnosis of everything that can fail
+  easyproxy diag [--upload]        Write a redacted support bundle (--upload sends it to GitHub)
   easyproxy start                  Start the managed runtime
   easyproxy stop                   Stop the managed runtime
   easyproxy restart                Restart the managed runtime
@@ -1016,6 +1017,155 @@ cmd_log() {
 }
 
 
+# --- diagnostics -------------------------------------------------------------
+# A bundle a human can read on GitHub. Everything that carries a credential is
+# masked before the file leaves the router: share links put the secret in the
+# URL, subscriptions put a token in the query string, node configs put the
+# password in JSON. Uploading is always opt-in (--upload), never automatic.
+diag_redact() {
+	sed -E \
+		-e 's#(ssr?|vmess|vless|trojan|hysteria2?|tuic|wireguard)://[^ "'"'"'<>\\]+#\1://***#g' \
+		-e 's#([?&](token|key|auth|password|passwd|uuid|user|pwd)=)[^& "'"'"'<>]+#\1***#g' \
+		-e 's#([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})#***uuid***#g' \
+		-e 's#("(password|uuid|token|api_key|psk|private_key)"[[:space:]]*:[[:space:]]*")[^"]*"#\1***"#g'
+}
+
+diag_add() { diag_redact >> "$DIAG_OUT"; }
+
+diag_section() { printf '\n--- %s ---\n' "$1" >> "$DIAG_OUT"; }
+
+diag_collect() {
+	DIAG_OUT="$1"
+	{
+		printf '# EasyProxy diagnostic bundle\n'
+		printf '# generated: %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null)"
+		printf '# version: %s  stage: %s\n' "${EP_VERSION:-?}" "${EP_STAGE:-?}"
+		printf '# host: %s\n' "$(uname -n 2>/dev/null)"
+	} >> "$DIAG_OUT"
+
+	diag_section host
+	{ uname -a; uptime; free -m 2>/dev/null; cat /etc/openwrt_release 2>/dev/null; } | diag_add
+
+	diag_section config
+	{ uci show easyproxy 2>/dev/null; } | diag_add
+
+	diag_section status
+	{ "$SELF" status 2>&1; echo; "$SELF" engine health 2>&1; echo; "$SELF" bypass status 2>&1; echo; "$SELF" transparent audit 2>&1; } | diag_add
+
+	diag_section packages
+	{
+		if command -v opkg >/dev/null 2>&1; then
+			opkg list-installed 2>/dev/null | grep -E '^(easyproxy|sing-box|dae|luci-base|rpcd|nftables)' 
+		fi
+		if command -v apk >/dev/null 2>&1; then
+			apk info -e easyproxy 2>/dev/null
+			apk list --installed 2>/dev/null | grep -E '^(easyproxy|sing-box|dae|luci-base)' 
+		fi
+	} | diag_add
+
+	diag_section files
+	{
+		ls -l /usr/sbin/easyproxy /etc/init.d/easyproxy 2>&1
+		ls -l /usr/share/luci/menu.d/luci-app-easyproxy.json /usr/share/rpcd/acl.d/luci-app-easyproxy.json 2>&1
+		ls -l /www/luci-static/resources/easyproxy/app.js 2>&1
+		ls -ld /www/luci-static/resources/view/easyproxy 2>&1
+		ls -l /usr/bin/sing-box /usr/bin/dae 2>&1
+		# a static kernel another package installed is worth seeing explicitly
+		for p in /opt/open-box/bin/sing-box /usr/local/bin/sing-box; do
+			[ -e "$p" ] && ls -l "$p" 2>&1
+		done
+	} | diag_add
+
+	diag_section listen
+	{ netstat -ltnp 2>/dev/null | head -20; ss -ltnp 2>/dev/null | head -20; } | diag_add
+
+	diag_section nft
+	{ nft list tables 2>&1 | head -30; } | diag_add
+
+	diag_section logs
+	{ logread -e easyproxy 2>/dev/null | tail -200; tail -n 200 /var/log/easyproxy.log 2>/dev/null; } | diag_add
+
+	diag_section dmesg
+	{ dmesg 2>/dev/null | tail -60; } | diag_add
+
+	printf '%s' "$DIAG_OUT"
+}
+
+# PUT one file into the repository through the Contents API. curl cannot be
+# assumed on a router, so busybox wget is the fallback. A token is required and
+# is kept in a 0600 file - never in UCI, where it would land in the bundle.
+diag_upload() {
+	local file token token_file repo branch name api payload tmp rc
+	file="$1"
+	token_file="${EP_DIAG_TOKEN_FILE:-/etc/easyproxy/diag.token}"
+	repo="${EP_DIAG_REPO:-bnm188/EasyProxy}"
+	branch="${EP_DIAG_BRANCH:-diag}"
+
+	if [ ! -r "$token_file" ]; then
+		echo "diag: no token at $token_file" >&2
+		echo "diag: create one with Contents:write on $repo and save it: chmod 600 $token_file" >&2
+		return 3
+	fi
+	token="$(tr -d ' \r\n' < "$token_file")"
+	[ -n "$token" ] || { echo "diag: token file is empty" >&2; return 3; }
+
+	if ! wget -q --spider -T 10 https://api.github.com 2>/dev/null; then
+		echo "diag: api.github.com is unreachable from this router; bundle kept locally: $file" >&2
+		return 4
+	fi
+
+	name="diagnostics/$(date -u '+%Y%m%dT%H%M%SZ')-$(uname -n 2>/dev/null | tr -c 'A-Za-z0-9_.-' '_').txt"
+	api="https://api.github.com/repos/$repo/contents/$name"
+	tmp="$(mktemp 2>/dev/null || echo /tmp/easyproxy-diag.json)"
+	payload="$(printf '{"message":"diag %s","branch":"%s","content":"%s"}' \
+		"$(uname -n 2>/dev/null || printf router)" "$branch" \
+		"$(base64 "$file" 2>/dev/null | tr -d '\n')")"
+	printf '%s' "$payload" > "$tmp"
+
+	if command -v curl >/dev/null 2>&1; then
+		rc="$(curl -s -o /dev/null -w '%{http_code}' -X PUT \
+			-H "Authorization: token $token" \
+			-H 'Accept: application/vnd.github+json' \
+			-H 'Content-Type: application/json' \
+			--data-binary @"$tmp" "$api" 2>/dev/null)"
+	else
+		rc="$(wget -q -O - --method=PUT \
+			--header="Authorization: token $token" \
+			--header='Accept: application/vnd.github+json' \
+			--header='Content-Type: application/json' \
+			--body-file="$tmp" "$api" 2>&1 >/dev/null && printf '201' || printf '000')"
+	fi
+	rm -f "$tmp"
+
+	case "$rc" in
+		200|201)
+			echo "diag: uploaded $(basename "$name")"
+			echo "raw: https://raw.githubusercontent.com/$repo/$branch/$name"
+			return 0 ;;
+		401|403)
+			echo "diag: GitHub rejected the token (HTTP $rc); bundle kept locally: $file" >&2
+			return 5 ;;
+		*)
+			echo "diag: upload failed (HTTP $rc); bundle kept locally: $file" >&2
+			return 4 ;;
+	esac
+}
+
+cmd_diag() {
+	local upload path rc
+	upload=0
+	[ "$SUB" = "--upload" ] && upload=1
+	path="${EP_DIAG_OUT:-/tmp/easyproxy-diag-$(date -u '+%Y%m%dT%H%M%SZ').txt}"
+	diag_collect "$path" >/dev/null 2>&1
+	echo "diagnostic bundle: $path ($(wc -c < "$path" 2>/dev/null | tr -d ' ') bytes)"
+	if [ "$upload" = 1 ]; then
+		diag_upload "$path" || return $?
+		return 0
+	fi
+	echo "upload skipped: pass --upload to send it to GitHub (token in /etc/easyproxy/diag.token)"
+	return 0
+}
+
 # --- panel entry points -------------------------------------------------------
 # The panel's rpcd ACL grants exec on this CLI and nothing else, so the two
 # helpers the panel needs are exposed as fixed verbs instead of `sh <script>`.
@@ -1121,7 +1271,8 @@ case "$CMD" in
 	ruleset|rulesets)
 		cmd_ruleset "$SUB"
 		;;
-	doctor|diag) cmd_doctor ;;
+	doctor) cmd_doctor ;;
+	diag) cmd_diag ;;
 	uninstall-clean|clean) cmd_uninstall_clean ;;
 	start) cmd_start ;;
 	bypass)
