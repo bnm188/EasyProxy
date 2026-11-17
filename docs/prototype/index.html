@@ -383,7 +383,7 @@ function pageOverview(){
     ['up','实时上行','0.4 MB/s','经节点 · 峰 1.1 MB/s',36,true],
     ['today','今日节点流量','86.4 MB','↑21.3 / ↓65.1 · 不含直连',43,true],
     ['uptime','运行时间', run ? s.uptime : '—','自上次启动',0,false],
-    ['state','代理状态', run ? '运行中' : '已停止','7890 监听',0,false],
+    ['state','代理状态', run ? '运行中' : '已停止','内核 7890 · 面板 8090',0,false],
     ['health','节点健康', DATA.nodes.length ? '1 / 1' : '0 / 0','可用 · 待测速',0,false]
   ].map(function(k){
     var bar = k[5] ? '<div class="kpi-bar'+(k[0]==='cpu'?' cpu':'')+'"><i id="b-'+k[0]+'" style="width:'+k[4]+'%"></i></div>' : '';
@@ -404,7 +404,8 @@ function pageOverview(){
   const grid = [
     cell('版本', s.version + ' <span class="tag n">'+s.stage+'</span>', 'package/easyproxy'),
     cell('内核', s.engine + ' <span class="tag ok">可用</span>', s.binaryVer),
-    cell('监听端口', run ? '7890 <span class="tag ok">listening</span>' : '<span class="tag bad">未监听</span>', 'mixed-in'),
+    cell('内核入站', run ? '7890 <span class="tag ok">listening</span>' : '<span class="tag bad">未监听</span>', 'mixed-in · 客户端代理')+
+    cell('面板访问', '8090 <span class="tag ok">listening</span>', 'uhttpd · 浏览器进 LuCI'),
     cell('透明代理', STATE.transparent ? '<span class="tag ok">已开启</span>' : '<span class="tag n">未开启</span>', 'tproxy '+STATE.tproxy),
     cell('规则集', STATE.rulesetReady ? '<span class="tag ok">2 就绪</span>' : '<span class="tag bad">缺失</span>', 'geosite + geoip'),
     cell('累计节点流量', bytes(s.rx + s.tx), '仅经节点 · ↑'+bytes(s.tx)+' ↓'+bytes(s.rx)),
@@ -415,7 +416,7 @@ function pageOverview(){
   const now = fmtClock();
   return '<div class="ov-head"><h1 class="page-title">概览</h1>'+
       '<span class="'+(run?'ov-good':'ov-bad')+'">'+(run?'● 运行中':'● 已停止')+'</span>'+
-      '<span class="mono">'+(run?'pid '+s.pid+' · '+s.uptime+' · 7890 listening':'无进程')+'</span>'+
+      '<span class="mono">'+(run?'pid '+s.pid+' · '+s.uptime+' · 内核 7890 · 面板 8090':'无进程')+'</span>'+
       '<span class="ov-clock" id="ep-clock">'+now+'</span></div>'+
 
     '<div class="card"><div class="card-hd"><h3>实时状态</h3><span class="hd-note">硬件与节点流量 · 每 1.5 秒刷新（演示数据）</span></div><div class="grid">'+kpi+'</div></div>'+
@@ -693,7 +694,7 @@ function pageKernel(){
     sec('state',
     '<div class="card"><div class="card-hd"><h3>内核状态</h3><span class="hd-note">'+(STATE.running?'running':'stopped')+'</span></div><div class="grid">'+
       cell('运行状态', STATE.running?'<span class="tag ok">运行中</span>':'<span class="tag bad">已停止</span>', STATE.running?'pid '+st.pid:'无进程')+
-      cell('监听端口', STATE.running?'7890 <span class="tag ok">listening</span>':'<span class="tag bad">未监听</span>','mixed-in')+
+      cell('内核入站', STATE.running?'7890 <span class="tag ok">listening</span>':'<span class="tag bad">未监听</span>','mixed-in · 面板 8090')+
       cell('透明代理', STATE.transparent?'<span class="tag ok">已开启</span>':'<span class="tag n">未开启</span>','tproxy '+STATE.tproxy)+
       cell('子进程','2 个','wrapper + sing-box')+
     '</div><div class="bar"><button class="btn" data-act="doctor">一键自检</button><button class="btn" data-act="restart">重启内核</button></div></div>'+
@@ -885,7 +886,7 @@ function pageUpdate(){
     '<div class="card"><div class="card-hd"><h3>网络诊断</h3><span class="hd-note">逐项可单独重跑</span></div><div class="grid">'+
       cell('外网连通','正常','ping 1.1.1.1')+
       cell('DNS 解析','正常','baidu → 110.242.68.3')+
-      cell('代理端口','正常','7890 listening')+
+      cell('内核端口','正常','7890 listening')+
       cell('规则集','正常','2 个 ready')+
     '</div><div class="bar"><button class="btn" data-act="diag-net">运行完整诊断</button><button class="btn" data-act="doctor">doctor 自检</button></div>'+
     '<div class="legend"><span>诊断只读，不改任何配置</span><span>结果可一键打包上报</span></div></div>'+
