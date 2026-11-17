@@ -1,14 +1,26 @@
 # EasyProxy
 
-EasyProxy 是给 ImmortalWrt 用的模块化代理管理包：一条 SSH 命令装好「面板 + sing-box + dae」三件套，装完在 LuCI 的「服务 → EasyProxy」里用中文面板管理节点、分流、透明代理和维护。
+**面向 OpenWrt / ImmortalWrt 的中文代理管理系统——装一次，导入订阅就能用。**
 
-- 当前版本：**0.8.0**（Release `v0.8.0`）
-- 适用固件：ImmortalWrt、OpenWrt（`opkg` 与 `apk` 两种都支持，也支持 rootfs 直接展开），以及 Kwrt（`dl.openwrt.ai` 构建，需 OpenWrt 21.02 及以上基线）
-- 内核架构：`x86_64`、`aarch64_cortex-a53`、`arm_cortex-a7_neon-vfpv4`
-- 面板：10 个中文页面
-- 测试：12 套 **602** 项（`tests/run-all.sh` 是唯一计数来源），CI 会下载并校验 pinned **sing-box 1.14.4** 后跑真实内核 `check`
+![version](https://img.shields.io/badge/version-0.8.2-blue)
+![tests](https://img.shields.io/badge/tests-672%20passed-brightgreen)
+![firmware](https://img.shields.io/badge/firmware-OpenWrt%20%7C%20ImmortalWrt%20%7C%20Kwrt-informational)
+![arch](https://img.shields.io/badge/arch-x86__64%20%7C%20aarch64%20%7C%20armv7-lightgrey)
+![license](https://img.shields.io/badge/license-MIT-green)
 
----
+一条 SSH 命令装好「面板 + sing-box + dae」三件套，之后在 LuCI 的 **服务 → EasyProxy** 里，用全中文面板管节点、分流、透明代理、内核和维护；不想开网页时，SSH 里还有 `easyproxy-manager.sh` 的十项菜单，包括上不了网时的「紧急恢复直连」。
+
+| 项目 | 现状 |
+|---|---|
+| 当前版本 | **0.8.2**（Release `v0.8.2`，12 个资产，全部通过 SHA256 校验） |
+| 适用固件 | ImmortalWrt、OpenWrt（`opkg` 与 `apk` 都支持，也可 rootfs 直接展开）、Kwrt（`dl.openwrt.ai` 构建，OpenWrt 21.02 及以上基线） |
+| 内核 | sing-box **1.14.4** + dae **2.1.2**，按架构分包，可分别升级、分别卸载 |
+| 架构 | `x86_64`、`aarch64_cortex-a53`、`arm_cortex-a7_neon-vfpv4` |
+| 面板 | 10 个中文页面，含总览状态卡与「入口旁路」一键恢复 |
+| 测试 | **14 套 672 项**，CI 下载并校验 pinned sing-box 后用真实内核跑 `check` |
+| 发版 | 版本号涨了自动构建、自动发 Release、自动回查资产，不需要手工点按钮 |
+
+三条设计原则贯穿全部代码：**国外走代理要流畅、国内流量不进内核、内网设备完全不受影响**。
 
 ## 一、现在能做什么 / 还不能做什么
 
@@ -24,21 +36,22 @@ EasyProxy 是给 ImmortalWrt 用的模块化代理管理包：一条 SSH 命令�
 | 透明代理 | 整个 LAN 无感走代理；nft 对象全在自有命名空间，一条命令回滚，不碰 fw4 |
 | 维护 | 配置备份/恢复/重置、规则集更新/校验、`doctor` 11 项自检、日志轮转、干净卸载 |
 | 升级 | 三组件各自独立升级；内核升级后不能运行会自动回滚旧二进制 |
+| 入口旁路（国内不进内核） | 下发 `set cn_ipv4`（interval 集合），命中即在 tproxy 之前 `return`；表下载走 tmp→校验→mv，失败不覆盖旧表；面板与菜单都能一键「恢复直连」 |
+| 统一管理入口 | `easyproxy-manager.sh` 十项菜单：安装/升级/启停/体检/日志/节点/订阅/备份/卸载/紧急恢复直连 |
 | 内核切换基础 | 已装 dae，适配器接口在（但见下方“还不能”） |
 
 ### 还不能的（0.7.0 明确不支持）
 
 | 缺什么 | 现状 | 计划 |
 |---|---|---|
-| 无缝切换 | 换节点 = 改配置 + 重载，连接会断；没有 clash API，也没有 `node select` | Stage 11 |
-| 10 个平台分流 | 只有 YouTube / Netflix / TikTok 三个开关，且共用同一个 `proxy` 组 | Stage 12 |
-| 唯一管理入口 `easyproxy-manager.sh` | 还没有这个脚本，现在是 4 条独立命令 | Stage 10 |
-| 10 个固定分组 | 是按节点名关键词自动分地区桶（hk/tw/jp/sg/us/uk/de/kr/ru/other），不能手动归组、不能选组 | Stage 13 |
-| dae 真正可用 | 只装不用：适配器标记“开发中”，`easyproxy start` 会拒绝它；面板仍允许选中，选中后服务起不来 | Stage 16 决策 |
+| 无缝切换 | 换节点 = 改配置 + 重载，连接会断；还没有 clash API 热切换 | 0.8.3（M2） |
+| 10 个平台分流 | 只有 YouTube / Netflix / TikTok 三个开关，且共用同一个 `proxy` 组 | 0.8.5（M4） |
+| 10 个固定分组 | 是按节点名关键词自动分地区桶（hk/tw/jp/sg/us/uk/de/kr/ru/other），不能手动归组、不能选组 | 0.8.3~0.8.5（M2~M4） |
+| dae 真正可用 | 只装不用：适配器标记“开发中”，`easyproxy start` 会拒绝它 | 0.8.9（M8） |
 | `ssr://` 链接 | **不支持**，会返回 `unsupported share link scheme: ssr` | — |
-| 带宽/丢包测速 | `node test` 只做一次 TCP 握手，QUIC 协议（hysteria2/tuic）会误报不可达 | Stage 13 |
-| 真机验收记录 | 透明代理、tproxy 转发、LuCI 渲染只在沙箱验证过，仓库里没有真机验收记录 | Stage 15 |
-| 发布不可变 | **已实现**：发布只走 `v*` tag 或一次性受控发布，`v0.7.0` 是一次构建一次性写入，未覆盖任何旧资产 | 完成（Stage 9） |
+| 带宽/丢包测速 | `node test` 只做一次 TCP 握手，QUIC 协议（hysteria2/tuic）会误报不可达 | 0.8.3~0.8.5（M2~M4） |
+| 真机验收记录 | 透明代理、tproxy 转发、LuCI 渲染、`cn_ipv4` 集合的加载时间与内存占用只在沙箱验证过 | 0.8.8（M7） |
+| 发布不可变 | **脚本层已实现**：同版本重复发布直接失败、不覆盖旧资产、发布后回查并校验 SHA256；平台级 Immutable releases 开关需在仓库 Settings 手动打开 | 脚本完成，开关待确认 |
 
 进度与证据见 [`docs/PROJECT-STATUS.md`](docs/PROJECT-STATUS.md)，路线见 [`docs/DEVELOPMENT-PLAN.md`](docs/DEVELOPMENT-PLAN.md)，历次工作报告见 [`docs/reports/`](docs/reports/)。
 
@@ -363,7 +376,7 @@ scripts/
 ├── make-kernel-ipk.sh   # 打 sing-box_<ver>_<arch>.ipk / dae_<ver>_<arch>.ipk
 ├── install.sh           # 一键安装：面板 + 两内核，含 upgrade / status
 └── uninstall.sh         # 一键卸载：备份、--purge、--keep-kernels
-tests/                   # 12 套 578 项
+tests/                   # 14 套 672 项
 docs/
 ├── PROJECT-STATUS.md    # 真实完成度
 ├── DEVELOPMENT-PLAN.md  # 阶段路线
@@ -375,59 +388,52 @@ docs/
 
 ## 十二、测试与 CI
 
-9 套测试都能在任意 Linux 上跑，不需要 OpenWrt，也不需要真内核（沙箱里生成 stub 版 `sing-box`）：
+全部套件都能在任意 Linux 上跑，不需要 OpenWrt、不需要真内核（沙箱里生成 stub 版 `sing-box`）；`tests/run-all.sh` 是唯一计数来源：
 
 ```sh
-for t in tests/test-*.sh; do sh "$t" || break; done
+EP_SING_BOX_BIN=/usr/bin/sing-box sh tests/run-all.sh
 ```
 
 | 套件 | 项数 |
 |---|---|
-| `test-routing.sh` | 32 |
-| `test-transparent.sh` | 84 |
-| `test-nodes.sh` | 61 |
-| `test-engine.sh` | 44 |
-| `test-maintenance.sh` | 44 |
 | `test-install-scripts.sh` | 126 |
+| `test-transparent.sh` | 87 |
+| `test-nodes.sh` | 61 |
+| `test-regressions.sh` | 47 |
+| `test-engine.sh` | 45 |
+| `test-release.sh` | 45 |
+| `test-maintenance.sh` | 44 |
+| `test-bypass.sh` | 41 |
 | `test-ipk-layout.sh` | 40 |
+| `test-security.sh` | 33 |
+| `test-routing.sh` | 32 |
+| `test-manager.sh` | 30 |
 | `test-cli.sh` | 21 |
-| `test-runtime.sh` | 19 |
-| **合计** | **471** |
+| `test-runtime.sh` | 20 |
+| **合计** | **672** |
 
-补上真实内核校验（会多跑几条用真二进制的用例）：
+CI（`.github/workflows/build.yml`）的顺序是：下载并校验 pinned `sing-box 1.14.4` → 用真实内核跑整套测试（失败即停，绝不发布）→ 下载官方 ImmortalWrt SDK（25.12.2，x86-64，pin sha256）→ 编译原生包 → 打 opkg / apk 三形态 → 用上游归档打三架构 sing-box 与 dae 内核包 → 写 `KERNEL-VERSIONS` → `SHA256SUMS` → 发布 → 回查 Release。
 
-```sh
-EP_SING_BOX_BIN=/usr/bin/sing-box sh tests/test-routing.sh
-EP_SING_BOX_BIN=/usr/bin/sing-box sh tests/test-transparent.sh
-EP_SING_BOX_BIN=/usr/bin/sing-box sh tests/test-runtime.sh
-```
-
-CI 用 `.github/workflows/build.yml`：下载官方 ImmortalWrt SDK（25.12.2，x86-64）→ 跑仓库测试套件（失败即停，不会发布）→ 编译原生包 → 用上游归档打三架构的 sing-box / dae 内核包（各自校验固定 sha256）→ 写 `KERNEL-VERSIONS` → 上传 `easyproxy-immortalwrt-25.12.2` artifact → 发布。
-
-**CI 的内核校验（如实写）**：CI 会下载官方 `sing-box 1.14.4` amd64 归档并**先校验 pinned SHA256**，再把二进制路径只注入 routing/runtime/transparent/engine 四套，所以那 578 项里的真实 `check` 是真跑过的；下载或校验失败会让整次构建红，不会降级成「跳过」。
-
----
+**CI 的真内核校验（如实写）**：`EP_SING_BOX_BIN` 只注入四个配置相关套件，不通过 `$GITHUB_ENV` 全局下发；归档先过 pinned SHA256，下载或校验失败整次构建变红，不会降级成「跳过」。完整结果：**672 通过 / 0 失败 / 0 跳过**。
 
 ## 十三、发布资产
 
 | 资产 | 用途 |
 |---|---|
-| `easyproxy_0.8.0-1_all.ipk` | 任意 opkg 固件，架构无关 |
-| `easyproxy_0.8.0-1_x86_64.ipk` | 拒绝 `Architecture: all` 的 opkg 固件（x86_64） |
-| `easyproxy-0.8.0-r1.apk` | 用 `apk` 的 ImmortalWrt 25.x 镜像 |
-| `easyproxy-0.8.0-rootfs.tar.gz` | 没有匹配包管理器时直接解到 `/` |
-| `sing-box_1.14.4_<arch>.ipk` | sing-box 内核（1.14.4），按架构分包 |
+| `easyproxy_0.8.2-1_all.ipk` | 任意 opkg 固件，架构无关 |
+| `easyproxy_0.8.2-1_x86_64.ipk` | 拒绝 `Architecture: all` 的 opkg 固件（x86_64） |
+| `easyproxy-0.8.2-r1.apk` | 用 `apk` 的 ImmortalWrt 25.x 镜像 |
+| `easyproxy-0.8.2-rootfs.tar.gz` | 没有匹配包管理器时直接解到 `/` |
+| `sing-box_1.14.4_<arch>.ipk` | sing-box 内核，按架构分包 |
 | `dae_2.1.2_<arch>.ipk` | dae 内核（二进制 + `/usr/share/dae` 路由数据） |
 | `SHA256SUMS` | 上面的 sha256，安装器逐项校验 |
 | `KERNEL-VERSIONS` | 本版本固定了哪些内核版本与架构 |
 
-内核不能塞进 `_all.ipk`：那个包架构无关，塞了 amd64 二进制就会装到 ARM 路由器上。三个包也意味着三者可以分别升级、分别卸载，安装器就是按这个设计的。
+内核不能塞进 `_all.ipk`：那个包架构无关，塞了 amd64 二进制就会装到 ARM 路由器上。三个包也意味着三者可以分别升级、分别卸载。
 
-**发布方式（0.8.0 起，报告 009）**：`build.yml` 先在 `Resolve the release intent` 里把"这次要不要发布、发布哪个 tag"定下来，来源只有三处——手工 push 的 `v*` tag、手动 `workflow_dispatch` 给的 `inputs.version`、提交进仓库的 `.release-request` 文件。普通 `main` push 只构建、不发布；同版本重复发布直接失败、不 `--clobber`。发布步骤跑完还会**回查 Release 并自检**：`gh release view` 校验 tag/非 draft/资产数/必需资产，`gh release download` 把资产实下后 `sha256sum -c SHA256SUMS`，再对每个资产 `curl -fIL` 断言下载地址 200；任一条不过，这次构建就是红的，不算发布成功。
+**发布机制（版本号即发版命令）**：`build.yml` 先把「这次发不发、发哪个 tag」定下来——手工 push 的 `v*` tag、手动运行填的版本号、或者**版本号判定**：`PKG_VERSION` 比最新 Release 新就自己发版，相等或更低只构建。提交说明里带 `[no-release]` 可以豁免一次。并发用 job 级 `concurrency` 串行，同一 ref 不会两个构建同时发版；已存在同名 Release 直接失败、不 `--clobber`；发布后回查 tag / 非 draft / 资产数 / 必需资产，把资产实下后 `sha256sum -c SHA256SUMS`，再对每个下载链接断言 200，任一条不过这次构建就是红的。
 
-为什么要有 `.release-request`：`GITHUB_TOKEN` 既不能派发带输入的工作流（`HTTP 422 Unexpected inputs provided: ["version"]`），也不能推送修改 `.github/workflows/*` 的提交（`refusing to allow a GitHub App to create or update workflow … without workflows permission`）。所以自动化发布走"以维护者身份 push 一个标记文件"这条真实 push 路径。
-
-`v0.8.0` 是这个制度下第一次端到端发布：run #165 绿，12 项资产，本地把 11 个文件按 `SHA256SUMS` 逐个复核全部通过。
+`v0.8.2` 是这套机制下的一次完整发布：12 项资产，下载后 12/12 通过 `sha256sum -c`。
 
 本地构建：
 
@@ -453,28 +459,22 @@ sh scripts/make-kernel-ipk.sh dae x86_64 dist
 
 ---
 
-## 十五、路线图
+## 十五、路线图（版本即里程碑）
 
-| 阶段 | 内容 | 状态 |
+版本号由维护者策划、连续递增，每一档只做一件事：
+
+| 版本 | 里程碑 | 状态 |
 |---|---|---|
-| 1 | 打包修复，让面板出现在 LuCI | 完成 |
-| 2 | 面板读到真实状态与校验数据 | 完成 |
-| 3 | sing-box 配置生成 + procd 托管运行时 | 完成 |
-| 4 | 分流 + DNS（大陆直连、其余代理），本地规则集 | 完成 |
-| 5 | 透明抓包：自有 nft 表 + 策略路由，一条命令回滚 | 完成（沙箱验证） |
-| 6 | 内核注册表、节点/订阅导入、维护 CLI、10 页面板 | 完成（0.6.0） |
-| 7 | 编译/安装/卸载验证：双 ipk、CI 门禁、架构感知安装器、真机清单 | 部分完成（安装与内核回滚已验；面板回滚、升级前备份、磁盘/兼容检查、统一入口未做） |
-| 8 | 文档与报告制度 | 完成 |
-| 9 | 发布合规：不可变发布、CI 真内核校验、测试报告产物、真 Release | 完成（0.7.0 首次真实发布；`build.yml` 的 tag 原生路径尚未实跑） |
-| 10 | 唯一入口 `easyproxy-manager.sh`（9 项菜单） | 未开始 |
-| 11 | 无缝切换（clash API，不重启内核） | 未开始 |
-| 12 | 10 个平台分流 + 可绑定地区组 | 未开始 |
-| 13 | 测速升级 + 多订阅/定时/到期 | 未开始 |
-| 14 | P1/P2 缺陷修复 | 未开始 |
-| 15 | 真机验收与稳定化 | 未开始 |
-| 16 | dae：真正可用或正式下线 | 未开始 |
+| 0.8.2 | M1 入口旁路：国内流量不进内核（`cn_ipv4` 集合 + tproxy 之前 `return`） | 已发布（沙箱验证，待真机验收） |
+| 0.8.3 | M2 无缝热切换：clash API，换节点不断连 | 未开始 |
+| 0.8.4 | M3 引擎接口 v2 + dae 条件化加载 | 未开始 |
+| 0.8.5 | M4 十个平台分流 + 可绑定地区组 | 未开始 |
+| 0.8.6 | M5 架构矩阵扩展 | 未开始 |
+| 0.8.7 | M6 生态第一步：profile 导出 + 扫码导入 | 未开始 |
+| 0.8.8 | M7 真机验收 + 面板升级 | 未开始 |
+| 0.8.9 | M8 dae 真正启动 | 未开始 |
 
----
+已完成的底座：0.5.x 打包与面板、0.6.0 十页面板与维护 CLI、0.7.0 发布合规、0.8.0/0.8.1 安装器与安全锁、0.8.2 入口旁路。进度与证据见 [`docs/PROJECT-STATUS.md`](docs/PROJECT-STATUS.md)，路线细项见 [`docs/DEVELOPMENT-PLAN.md`](docs/DEVELOPMENT-PLAN.md)。
 
 ## 十六、许可证
 
