@@ -1520,6 +1520,19 @@ update_backup() {
 
 # Panel files are plain JS: if a half-written file were served, LuCI would show
 # the factory error instead of this page. Check the markers a real file has.
+# Unpack a release payload (a whole rootfs tree, so it also carries the factory
+# /etc/config/easyproxy) WITHOUT touching the user's config. Busybox tar has no
+# --exclude; it only takes a pattern file via -X, and the patterns must carry the
+# "./" prefix the archive members use ("*etc/config/*" silently matches nothing).
+ep_extract_payload() {
+	_ex="$(mktemp 2>/dev/null)" || _ex="/tmp/.ep_ex.$$"
+	printf './etc/config/*\n' > "$_ex" 2>/dev/null
+	tar -xzf "$1" -C "$2" -X "$_ex" 2>/dev/null
+	_rc=$?
+	rm -f "$_ex"
+	return $_rc
+}
+
 update_verify_install() {
 	local app menu v
 	app="$EP_UPDATE_APP_JS"
@@ -1590,9 +1603,9 @@ cmd_update_apply() {
 	# /etc/config/easyproxy. Unpacking that over the user's own config silently
 # wipes nodes, groups and the enabled flag (seen on a real router: a 0.8.9 ->
 	# 0.8.10 upgrade left an empty node table). Config is the user's, never ours.
-	if ! tar -xzf "$archive" -C "$EP_UPDATE_ROOT" --exclude='*etc/config/*' 2>/dev/null; then
+	if ! ep_extract_payload "$archive" "$EP_UPDATE_ROOT"; then
 		echo "update: extraction failed; rolling back" >&2
-		tar -xzf "$EP_UPDATE_ARCHIVE" -C "$EP_UPDATE_ROOT" --exclude='*etc/config/*' 2>/dev/null
+		ep_extract_payload "$EP_UPDATE_ARCHIVE" "$EP_UPDATE_ROOT"
 		update_restart_panel
 		rm -rf "$tmp"
 		return 6
@@ -1601,7 +1614,7 @@ cmd_update_apply() {
 	update_restart_panel
 	if ! update_verify_install "$ver"; then
 		echo "update: the new version did not verify; rolling back to $cur" >&2
-		tar -xzf "$EP_UPDATE_ARCHIVE" -C "$EP_UPDATE_ROOT" --exclude='*etc/config/*' 2>/dev/null
+		ep_extract_payload "$EP_UPDATE_ARCHIVE" "$EP_UPDATE_ROOT"
 		chmod 755 "$EP_UPDATE_ROOT/usr/sbin/easyproxy" "$EP_UPDATE_ROOT/etc/init.d/easyproxy" 2>/dev/null || true
 		update_restart_panel
 		rm -rf "$tmp"
@@ -1625,7 +1638,7 @@ cmd_update_rollback() {
 	last="$(ls -1 "$EP_UPDATE_BACKUP_DIR"/rollback-*.tar.gz 2>/dev/null | tail -n 1)"
 	[ -n "$last" ] || { echo "update: no rollback archive in $EP_UPDATE_BACKUP_DIR" >&2; return 3; }
 	echo "update: restoring $(basename "$last")"
-	tar -xzf "$last" -C "$EP_UPDATE_ROOT" --exclude='*etc/config/*' 2>/dev/null || { echo "update: cannot extract $last" >&2; return 1; }
+	ep_extract_payload "$last" "$EP_UPDATE_ROOT" || { echo "update: cannot extract $last" >&2; return 1; }
 	chmod 755 "$EP_UPDATE_ROOT/usr/sbin/easyproxy" "$EP_UPDATE_ROOT/etc/init.d/easyproxy" 2>/dev/null || true
 	update_restart_panel
 	echo "update: rolled back; reload the page"
