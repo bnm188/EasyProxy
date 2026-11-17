@@ -121,4 +121,6 @@
 | 007 | 2026-11-17 | [007-2026-11-17-post-release-verification.md](007-2026-11-17-post-release-verification.md) | 0.7.0 发布后独立复核：12 项资产从 Release 重下并 `sha256sum -c` **11/11 OK**、干净树复跑 **578 通过 / 0 失败 / 0 SKIP**、清理误入 `main` 的 `runlog.txt`、对 006 出具勘误（删除当时未生效） | `a8e5c4e` |
 | 008 | 2026-11-17 | [008-2026-11-17-kwrt-firmware-compat.md](008-2026-11-17-kwrt-firmware-compat.md) | Kwrt 固件识别修复：实下 Kwrt rootfs 取证（`DISTRIB_ID='Kwrt'`、无 `VERSION_ID`、仍用 opkg），Kwrt 按 `DISTRIB_RELEASE` 判 21.02 基线（低于/无法解析均明确拒绝）、补 LuCI 与架构提示；新增 13 项 Kwrt 断言，全量 **591 通过 / 0 失败** | `5b84c2b` |
 | 009 | 2026-11-17 | [009-2026-11-17-release-pipeline-fix.md](009-2026-11-17-release-pipeline-fix.md) | 发布流程修复：定位“只跑 Actions 不发 Release”的三层原因（tag-only gate / `GITHUB_TOKEN` 不能派发带输入工作流 422 / 令牌不能改工作流文件），改为 tag + 手动版本 + `.release-request` 三路统一意图；新增发布后自检（回查+实下+SHA256+逐资产 200）；版本 0.8.0 真实发布（12 资产、11/11 SHA256 OK、run #165 绿）；全量 **602 通过 / 0 失败** | `83493fe` `8bcec5d` `e7840ab` |
+| 010 | 2026-11-17 | [010-2026-11-17-kwrt-opkg-install-fallback.md](010-2026-11-17-kwrt-opkg-install-fallback.md) | Kwrt 安装失败修复：opkg 拒绝 `all` 且无该架构 ipk 时改走 `--force-architecture`（仅面板）+ rootfs 归档兜底，内核永不强装；修 `bypass.sh` 的 `printf "%%s"` 转义；全量 **679 通过 / 0 失败 / 0 SKIP**（真实 sing-box 1.14.4）；`0.8.2` 真实发布（12 资产、11/11 SHA256 OK、run #199 绿） | `30c0b0a` |
+
 新增报告时，在提交该报告的同一个 commit 里把索引行补上。
