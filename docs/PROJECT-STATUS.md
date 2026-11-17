@@ -127,3 +127,10 @@
   `tar -xzf ... -X <file>`，四处解包点（升级包、两处自动回滚、`update rollback`）统一走它。
 - **模式前缀是实测出来的**：成员名是 `./etc/config/easyproxy`，`*etc/config/*` 匹配不到（仍覆盖），
   只有 `./etc/config/*` 才能排除。这一点只有真机能测出来，单测里 GNU tar 两种都能过。
+
+### 0.8.12 的真机结论
+
+`0.8.11 → 0.8.12` 真实升级：升级前 1471 字节 / 1 节点 / enabled=1，升级后完全一致，
+`installed version reports 0.8.12`、`now running 0.8.12 (was 0.8.11)`、rc=0，
+起引擎后监听 7890、出网走 `outbound/shadowsocks[日本Z01]`、doctor 六项全 ok。
+**这是"升级不丢配置"第一次在真机上被证明。**

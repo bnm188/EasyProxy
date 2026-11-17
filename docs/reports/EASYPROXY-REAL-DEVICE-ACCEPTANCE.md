@@ -98,6 +98,62 @@ doctor -> 六项全 ok（EasyProxy 0.8.11 (Stage 7)）
 - 恢复后 → `PASS`、96 通过 0 失败；
 - 全量 `tests/run-all.sh` → **866 通过 0 失败**，SKIP 4（test-engine/test-routing/test-runtime/test-transparent）。
 
+
+## acc16 ~ acc19：升级覆盖配置这件事，修了三轮才对（0.8.11 是空转，0.8.12 才真的修好）
+
+### acc16：0.8.11 的 `--exclude` 在真机上是死代码
+
+0.8.11 给四处解包加了 `--exclude='*etc/config/*'`。真机 0.8.10 → 0.8.11 升级后：
+
+```
+update: installed version reports 0.8.11 / now running 0.8.11 (was 0.8.10)   rc=0
+升级后：字节=4176  节点=0  enabled=0        <- 仍然是出厂默认模板
+```
+
+真机现场验证 BusyBox 版本与行为：
+
+```
+$ tar -xzf a.tgz -C root --exclude='*etc/config/*'
+tar: unrecognized option: exclude=*etc/config/*
+BusyBox v1.37.0 (2026-11-03 14:46:40 UTC) multi-call binary.
+Usage: tar c|x|t [-zahvokO] [-f TARFILE] [-C DIR] [-T FILE] [-X FILE] [FILE]...
+```
+
+**结论：这台固件的 tar 不认 `--exclude`，选项被忽略，解包照旧执行。0.8.11 的修复等于没修。**
+
+### acc17 / acc18：改用 `-X` 模式文件，并实测出正确的模式前缀
+
+`tar -X FILE` 是 busybox 支持的排除方式。用同一份测试包实测两种模式：
+
+```
+成员：./ etc/ ./etc/config/ ./etc/config/easyproxy
+模式 *etc/config/*   -> shipped   （没排除，仍被覆盖）
+模式 ./etc/config/*  -> u2        （排除成功，用户配置保住）
+```
+
+**只有带 `./` 前缀的模式才匹配**，这一点单测测不出来（GNU tar 两种都过），必须真机验证。
+
+### 0.8.12：`ep_extract_payload()` 统一走 `-X`，四处解包点全改
+
+- 升级包、两处自动回滚、`update rollback` 统一调用该函数；
+- 单测：先删 `-X` 逻辑 → `FAIL 升级不覆盖用户配置`、95 通过 1 失败；恢复后 → 96 通过 0 失败；全量 866 通过 0 失败。
+
+### acc19：0.8.11 → 0.8.12 端到端真实升级，配置完整保住
+
+```
+升级前: 字节=1471  节点=1  enabled=1
+update: checksum verified
+update: current 0.8.11 archived as rollback-0.8.11.tar.gz
+update: installed version reports 0.8.12
+update: now running 0.8.12 (was 0.8.11)          apply rc=0
+升级后: 字节=1471  节点=1  enabled=1             <- 一个字节都没变
+node list: 日本Z01  shadowsocks  ...:475  日本  auto-jp
+config generate -> Enabled nodes: 1 / Default route: proxy
+start -> pid 18505，监听=1，出网=103.151.173.95
+日志 -> outbound/shadowsocks[日本Z01]
+doctor -> 六项全 ok（EasyProxy 0.8.12 (Stage 7)）
+```
+
 ## 已撤销的误判（如实记录）
 
 - **"坏配置下 start 假成功"**：早前用 `ps w | grep` 判定进程数得到 0，原因是 busybox ps 截断长命令行。改用 /proc/*/cmdline 精确统计后：坏配置被 `config generate` 覆盖为合法配置，sing-box 实际启动（pid 62802）、7890 监听、出网正常。不是缺陷。
