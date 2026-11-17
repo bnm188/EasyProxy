@@ -29,23 +29,38 @@
 
 ## 快速开始（路由器 SSH 里执行）
 
+**一条命令进菜单**：安装 / 升级 / 状态 / 检查环境 / 卸载，都在里面。
+
 ```sh
-# 安装
-wget -qO- https://raw.githubusercontent.com/bnm188/EasyProxy/main/scripts/install.sh | sh
-
-# 看看装了什么
-wget -qO- https://raw.githubusercontent.com/bnm188/EasyProxy/main/scripts/install.sh | sh -s status
-
-# 升级
-wget -qO- https://raw.githubusercontent.com/bnm188/EasyProxy/main/scripts/install.sh | sh -s upgrade
-
-# 卸载（默认保留配置并先备份，加 --purge 连配置一起删）
-wget -qO- https://raw.githubusercontent.com/bnm188/EasyProxy/main/scripts/uninstall.sh | sh
+wget -qO- https://raw.githubusercontent.com/bnm188/EasyProxy/main/scripts/easyproxy.sh | sh
 ```
 
-常用参数：`upgrade --only dae` 只升某件；`--ipk` / `--apk` / `--rootfs` 指定包形式；`--no-dae` 跳过 dae；`--help` 离线看用法。命令可重复执行。
+```
+  EasyProxy 一键入口
+  ─────────────────────────────
+  1) 安装       面板 + sing-box + dae
+  2) 升级       三组件各自升级
+  3) 状态       已装组件与版本
+  4) 检查环境   只读诊断，不改系统
+  5) 卸载       保留配置并先备份
+  0) 退出
+```
 
----
+**不想进菜单，直接点名执行**（同样一条命令，换最后两个字）：
+
+| 要做什么 | 命令 |
+|---|---|
+| 安装 | `wget -qO- …/scripts/easyproxy.sh \| sh -s install` |
+| 升级 | `wget -qO- …/scripts/easyproxy.sh \| sh -s upgrade` |
+| 看状态 | `wget -qO- …/scripts/easyproxy.sh \| sh -s status` |
+| 检查环境 | `wget -qO- …/scripts/easyproxy.sh \| sh -s check` |
+| 卸载 | `wget -qO- …/scripts/easyproxy.sh \| sh -s uninstall` |
+
+（`…` 是 `https://raw.githubusercontent.com/bnm188/EasyProxy/main`，完整地址复制上一段即可。）
+
+**「检查环境」查什么**：固件类型、包管理器（opkg / apk）、CPU 架构能否对上发布包、`sha256sum` `tar` `nft` `wget`、nftables 能否建表、根分区剩余空间、是否已装过。只读，不改任何系统状态，最后给一句「能装 / 有阻塞项」。
+
+**进阶参数**（直接调用底层安装器时用）：`--ipk` / `--apk` / `--rootfs` 指定包形式，`--no-dae` 跳过 dae，`upgrade --only dae` 只升一个组件，`--help` 离线看用法。
 
 ## 面板
 
