@@ -1,0 +1,29 @@
+{
+	"luci-app-easyproxy": {
+		"description": "EasyProxy panel: only the fixed easyproxy CLI may be executed; everything else is read-only",
+		"read": {
+			"ubus": {
+				"file": [ "read" ]
+			},
+			"uci": [ "easyproxy" ],
+			"file": {
+				"/usr/sbin/easyproxy": [ "read" ],
+				"/usr/lib/easyproxy/traffic.sh": [ "read" ],
+				"/usr/lib/easyproxy/subscribe.sh": [ "read" ],
+				"/etc/config/easyproxy": [ "read" ],
+				"/etc/easyproxy/*": [ "read" ],
+				"/var/log/easyproxy.log": [ "read" ],
+				"/proc/net/dev": [ "read" ]
+			}
+		},
+		"write": {
+			"ubus": {
+				"file": [ "exec" ]
+			},
+			"uci": [ "easyproxy" ],
+			"file": {
+				"/usr/sbin/easyproxy": [ "exec" ]
+			}
+		}
+	}
+}

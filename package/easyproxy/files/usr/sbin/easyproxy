@@ -1,0 +1,1076 @@
+#!/bin/sh
+
+. /usr/lib/easyproxy/common.sh
+. /usr/lib/easyproxy/config.sh
+. /usr/lib/easyproxy/transparent.sh
+# Share-link parsing is only needed by the node commands; a missing file must
+# not break status/start, so the source is best-effort.
+EP_NODE_LIB="${EP_NODE_LIB:-/usr/lib/easyproxy/node.sh}"
+[ -r "$EP_NODE_LIB" ] && . "$EP_NODE_LIB"
+# Maintenance (backup / restore / reset, rule-set update, doctor, log rotate)
+EP_MAINT_LIB="${EP_MAINT_LIB:-/usr/lib/easyproxy/maint.sh}"
+[ -r "$EP_MAINT_LIB" ] && . "$EP_MAINT_LIB"
+
+PROG="easyproxy"
+SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+
+usage() {
+	cat <<EOF
+EasyProxy ${EP_VERSION} — Stage ${EP_STAGE} (runtime + split routing + transparent capture)
+Usage:
+  easyproxy status [--json]        Show configuration and runtime status
+  easyproxy validate [--json]      Validate configuration values
+  easyproxy engine                 Show selected engine and binary availability
+  easyproxy engine list            List available engines and their stability
+  easyproxy engine health [--json] Diagnose binary, config, runtime and listen port
+  easyproxy engine version         Print the engine binary's own version line
+  easyproxy node list [--json]     List nodes with their auto group
+  easyproxy node add <link> [name] Import one share link as a node
+  easyproxy node import <file>     Import a file of share links, one per line
+  easyproxy node export [name]     Print share links back out
+  easyproxy node del <name>        Delete a node
+  easyproxy node test [--json]     TCP-probe every enabled node (latency)
+  easyproxy rule list [--json]     List custom split rules
+  easyproxy rule add <type:value:outbound>
+  easyproxy rule del <index>
+  easyproxy config generate        Generate the engine config from UCI nodes
+  easyproxy config backup [file]   Archive the config and the CN rule sets
+  easyproxy config restore <file>  Restore a backup (keeps .before-restore)
+  easyproxy config reset           Put the shipped default config back
+  easyproxy ruleset update         Re-download both CN rule sets
+  easyproxy ruleset verify         Check both CN rule sets are real .srs files
+  easyproxy doctor [--json]        One-shot diagnosis of everything that can fail
+  easyproxy start                  Start the managed runtime
+  easyproxy stop                   Stop the managed runtime
+  easyproxy restart                Restart the managed runtime
+  easyproxy run                    Run in the foreground (used by procd)
+  easyproxy transparent status     Show transparent capture state
+  easyproxy transparent apply      Capture LAN traffic (nftables + policy routing)
+  easyproxy transparent remove     Roll the capture back
+  easyproxy transparent audit      Check the live rules, marks and IPv6 policy against UCI
+  easyproxy log                    Show recent log lines
+  easyproxy log rotate             Rotate the log when it exceeds main.log_max_bytes
+  easyproxy traffic [iface]        Sample /proc/net/dev as JSON (panel chart)
+  easyproxy subscribe <url> [prefix]  Import a subscription over http(s)
+  easyproxy uninstall-clean        Remove only EasyProxy's own nft/policy rules
+  easyproxy help                   Show this help
+EOF
+}
+
+runtime_pid() {
+	local pid
+	pid="$(ep_pid)"
+	printf '%s' "${pid:-0}"
+}
+
+cmd_status_text() {
+	local enabled engine binary bstate china proxy fail_closed nodes
+	local runtime pid up config_state config_path
+	enabled="$(ep_bool "$(ep_get main enabled 0)")"
+	engine="$(ep_get main engine none)"
+	binary="$(ep_engine_binary "$engine")"
+	bstate="$(ep_binary_state "$binary")"
+	# china_policy and fail_closed are locked on their safe values; the UCI
+	# values are only read to warn about them, never to change the route.
+	proxy="$(ep_get routing proxy_policy proxy)"
+	china="direct"
+	fail_closed=1
+	nodes="$(ep_node_count)"
+	runtime="$(ep_runtime_state)"
+	pid="$(runtime_pid)"
+	up="$(ep_runtime_uptime)"
+	config_path="$(ep_engine_config_path "$engine")"
+	config_state="$(ep_config_state)"
+
+	printf 'EasyProxy %s (Stage %s)\n' "$EP_VERSION" "$EP_STAGE"
+	printf 'Enabled: %s\n' "$enabled"
+	printf 'Engine: %s\n' "$(ep_engine_label "$engine")"
+	if [ -n "$binary" ]; then
+		printf 'Binary: %s (%s)\n' "$binary" "$bstate"
+	else
+		printf 'Binary: n/a\n'
+	fi
+	printf 'China policy: %s\n' "$china"
+	printf 'Proxy policy: %s\n' "$proxy"
+	printf 'Fail closed: %s\n' "$fail_closed"
+	printf 'Nodes: %s\n' "$nodes"
+	if [ "$(ep_rule_set_state)" = "ready" ]; then
+		printf 'Rule sets: ready (%s)\n' "$(ep_rule_set_dir)"
+	else
+		printf 'Rule sets: missing (%s)\n' "$(ep_rule_set_dir)"
+	fi
+	case "$(ep_route_mode "$nodes")" in
+		split)
+			printf 'Routing: split (China direct, others proxied)\n' ;;
+		*)
+			if [ "$nodes" -gt 0 ]; then
+				printf 'Routing: direct only (rule sets missing: nothing is proxied, foreign sites unreachable)\n'
+			else
+				printf 'Routing: direct only (no enabled nodes)\n'
+			fi ;;
+	esac
+	printf 'LAN: always direct (private ranges, router addresses, local domains excluded)\n'
+	[ -z "$(ep_locked_warn)" ] || printf 'Lock: %s\n' "$(ep_locked_warn)"
+	case "$(ep_transparent_state)" in
+		active)
+			printf 'Transparent: active (%s, tproxy 0.0.0.0:%s)\n' \
+				"$(ep_transparent_ifaces)" "$(ep_tproxy_port)" ;;
+		unsupported)
+			printf 'Transparent: unsupported (nft not available)\n' ;;
+		*)
+			if ep_transparent_enabled; then
+				printf 'Transparent: configured but not applied (%s)\n' "$(ep_transparent_ifaces)"
+			else
+				printf 'Transparent: disabled\n'
+			fi
+			;;
+	esac
+	case "$(ep_ipv6_policy):$(ep_ipv6_state)" in
+		direct:off) printf 'IPv6: not captured, direct (ipv6_policy=direct)\n' ;;
+		block:active) printf 'IPv6: blocked for LAN clients outside the bypass set (ip6 table loaded)\n' ;;
+		block:*) printf 'IPv6: policy=block but the ip6 table is %s\n' "$(ep_ipv6_state)" ;;
+		*) printf 'IPv6: %s (%s)\n' "$(ep_ipv6_policy)" "$(ep_ipv6_state)" ;;
+	esac
+	printf 'Runtime: %s' "$runtime"
+	[ "$runtime" = "running" ] && printf ' (pid %s, up %ss)' "$pid" "$up"
+	printf '\n'
+	printf 'Config: %s (%s)\n' "$config_path" "$config_state"
+	printf 'Config file: %s\n' "$EP_CONFIG_FILE"
+}
+
+cmd_status_json() {
+	local enabled engine binary bstate china proxy fail_closed nodes
+	local runtime pid up config_state config_path nodes_enabled china_rule route_rules dns_mode rule_set_state route_mode
+	local transparent tproxy_port tproxy_state ipv6_policy ipv6_state
+	local engine_stability engine_dev listen_port listen_open
+	enabled="$(ep_bool "$(ep_get main enabled 0)")"
+	engine="$(ep_get main engine none)"
+	binary="$(ep_engine_binary "$engine")"
+	bstate="$(ep_binary_state "$binary")"
+	proxy="$(ep_get routing proxy_policy proxy)"
+	# locked values: reported as what the router really does, not as what UCI says
+	china="direct"
+	fail_closed=1
+	nodes="$(ep_node_count)"
+	nodes_enabled="$(ep_node_count_enabled)"
+	[ -n "$nodes" ] || nodes="0"
+	[ -n "$nodes_enabled" ] || nodes_enabled="0"
+	rule_set_state="$(ep_rule_set_state)"
+	transparent="$(ep_bool "$(ep_get transparent enabled 0)")"
+	tproxy_port="$(ep_tproxy_port)"
+	tproxy_state="$(ep_transparent_state)"
+	ipv6_policy="$(ep_ipv6_policy)"
+	ipv6_state="$(ep_ipv6_state)"
+	engine_stability="$(ep_engine_stability "$engine")"
+	engine_dev="$(ep_engine_is_dev "$engine")"
+	listen_port="$(ep_get main listen_port 7890)"
+	listen_open="$(ep_port_listening "$listen_port")"
+
+	route_mode="$(ep_route_mode "$nodes_enabled")"
+	if [ "$route_mode" = "split" ]; then
+		china_rule=1
+		route_rules=2
+		dns_mode="split"
+	else
+		china_rule=0
+		route_rules=1
+		dns_mode="local"
+	fi
+
+	runtime="$(ep_runtime_state)"
+	pid="$(runtime_pid)"
+	up="$(ep_runtime_uptime)"
+	config_path="$(ep_engine_config_path "$engine")"
+	config_state="$(ep_config_state)"
+
+	printf '{"ok":true,"package":"%s","version":"%s","stage":%s,"enabled":%s,"engine":"%s","engine_stability":"%s","engine_dev":%s,"binary":"%s","binary_ok":%s,"china_policy":"%s","proxy_policy":"%s","fail_closed":%s,"nodes":%s,"nodes_enabled":%s,"runtime":"%s","runtime_pid":%s,"runtime_uptime":%s,"listen_port":%s,"listen_open":%s,"china_rule":%s,"route_rules":%s,"dns_mode":"%s","rule_set_state":"%s","route_mode":"%s","transparent":%s,"tproxy_port":%s,"tproxy_state":"%s","ipv6_policy":"%s","ipv6_state":"%s","config_state":"%s","config_path":"%s","config_file":"%s","generated":"%s"}\n' \
+		"$(ep_json_escape "$PROG")" \
+		"$(ep_json_escape "$EP_VERSION")" \
+		"$EP_STAGE" \
+		"$enabled" \
+		"$(ep_json_escape "$engine")" \
+		"$(ep_json_escape "$engine_stability")" \
+		"$engine_dev" \
+		"$(ep_json_escape "$binary")" \
+		"$([ "$bstate" = "available" ] && printf '1' || printf '0')" \
+		"$(ep_json_escape "$china")" \
+		"$(ep_json_escape "$proxy")" \
+		"$fail_closed" \
+		"$nodes" \
+		"$nodes_enabled" \
+		"$(ep_json_escape "$runtime")" \
+		"$pid" \
+		"$up" \
+		"$listen_port" \
+		"$listen_open" \
+		"$china_rule" \
+		"$route_rules" \
+		"$dns_mode" \
+		"$(ep_json_escape "$rule_set_state")" \
+		"$(ep_json_escape "$route_mode")" \
+		"$transparent" \
+		"$tproxy_port" \
+		"$(ep_json_escape "$tproxy_state")" \
+		"$(ep_json_escape "$ipv6_policy")" \
+		"$(ep_json_escape "$ipv6_state")" \
+		"$(ep_json_escape "$config_state")" \
+		"$(ep_json_escape "$config_path")" \
+		"$(ep_json_escape "$EP_CONFIG_FILE")" \
+		"$(ep_utc_now)"
+}
+
+cmd_validate_text() {
+	local enabled engine china fail_closed config_state
+	enabled="$(ep_get main enabled 0)"
+	engine="$(ep_get main engine none)"
+	china="$(ep_get routing china_policy direct)"
+	fail_closed="$(ep_get routing fail_closed 1)"
+
+	case "$enabled" in 0|1) ;; *) echo "Invalid main.enabled: expected 0 or 1" >&2; return 1 ;; esac
+	ep_valid_engine "$engine" || { echo "Invalid main.engine: $engine" >&2; return 1; }
+	case "$china" in
+		direct) ;;
+		*) echo "Invalid routing.china_policy: $china (locked to direct: proxying China mainland traffic is not allowed)" >&2; return 1 ;;
+	esac
+	case "$fail_closed" in
+		1) ;;
+		*) echo "Invalid routing.fail_closed: $fail_closed (locked to 1: missing China rule sets must never degrade to a full proxy)" >&2; return 1 ;;
+	esac
+
+	echo "Configuration values are valid."
+	echo "Safety check: China policy is DIRECT (locked)."
+	echo "Safety check: fail_closed is 1 (locked): without the China rule sets only direct routing is generated."
+	config_state="$(ep_config_state)"
+	case "$config_state" in
+		ok) echo "Generated engine config: present and valid." ;;
+		invalid) echo "Warning: generated engine config failed validation; run 'easyproxy config generate'." ;;
+		missing) echo "Note: no generated engine config yet; run 'easyproxy config generate'." ;;
+	esac
+}
+
+cmd_validate_json() {
+	local enabled engine china fail_closed messages code config_state
+	enabled="$(ep_get main enabled 0)"
+	engine="$(ep_get main engine none)"
+	china="$(ep_get routing china_policy direct)"
+	fail_closed="$(ep_get routing fail_closed 1)"
+	messages=""
+	code=0
+
+	case "$enabled" in 0|1) ;; *) messages="${messages}\"Invalid main.enabled: expected 0 or 1\","; code=1 ;; esac
+	if ! ep_valid_engine "$engine"; then
+		messages="${messages}\"Invalid main.engine: $(ep_json_escape "$engine")\","; code=1
+	fi
+	case "$china" in
+		direct) ;;
+		*) messages="${messages}\"Invalid routing.china_policy: $(ep_json_escape "$china") (locked to direct)\","
+			messages="${messages}\"china_policy=proxy would proxy mainland traffic; the lock keeps the CN direct rule.\","; code=1 ;;
+	esac
+	case "$fail_closed" in
+		1) ;;
+		*) messages="${messages}\"Invalid routing.fail_closed: $(ep_json_escape "$fail_closed") (locked to 1)\","
+			messages="${messages}\"fail_closed=0 would degrade to a full proxy when the CN rule sets are missing.\","; code=1 ;;
+	esac
+
+	config_state="$(ep_config_state)"
+	case "$config_state" in
+		invalid) messages="${messages}\"Generated config failed validation; regenerate it.\","; code=1 ;;
+		missing) messages="${messages}\"No generated config yet; run easyproxy config generate.\"," ;;
+	esac
+
+	[ "$code" = "0" ] && messages="${messages}\"Configuration values are valid.\",\"China policy: direct (locked)\",\"Fail closed: 1 (locked)\","
+	messages="$(printf '%s' "$messages" | sed -e 's/,$//')"
+
+	printf '{"ok":%s,"version":"%s","config_state":"%s","messages":[%s],"generated":"%s"}\n' \
+		"$([ "$code" = "0" ] && printf 'true' || printf 'false')" \
+		"$(ep_json_escape "$EP_VERSION")" \
+		"$(ep_json_escape "$config_state")" \
+		"$messages" \
+		"$(ep_utc_now)"
+	return "$code"
+}
+
+cmd_engine() {
+	local engine binary bstate adapter version
+	engine="$(ep_get main engine none)"
+	echo "Selected engine: $(ep_engine_label "$engine")"
+	case "$engine" in
+		none) echo "No engine selected."; return 0 ;;
+	esac
+	binary="$(ep_engine_binary "$engine")"
+	bstate="$(ep_binary_state "$binary")"
+	if [ "$bstate" = "available" ]; then
+		version="$(ep_engine_version "$binary")"
+		echo "Binary: available ($binary${version:+, $version})"
+	else
+		echo "Binary: missing ($binary)"
+	fi
+	adapter="$(ep_engine_adapter_file "$engine")"
+	if [ -n "$adapter" ] && [ -r "$adapter" ]; then
+		echo "Adapter: $adapter"
+	else
+		echo "Adapter: missing ($adapter)"
+	fi
+	if [ "$(ep_engine_is_dev "$engine")" = "1" ]; then
+		printf 'Status: 开发中 (dev) — %s\n' "$(ep_engine_dev_reason "$engine")"
+	else
+		echo "Status: stable"
+	fi
+	return 0
+}
+
+cmd_engine_list() {
+	local name stability
+	echo "Available engines:"
+	while IFS=: read -r name stability; do
+		[ -n "$name" ] || continue
+		printf '  %-10s %s\n' "$name" "$stability"
+	done <<EOF
+$(ep_engine_list)
+EOF
+	echo "stable = runtime implemented; dev = adapter frame only, start is refused."
+	return 0
+}
+
+cmd_engine_version() {
+	local engine binary version
+	engine="$(ep_get main engine none)"
+	[ "$engine" != "none" ] || { echo "No engine selected." >&2; return 1; }
+	binary="$(ep_engine_binary "$engine")"
+	[ "$(ep_binary_state "$binary")" = "available" ] || { echo "Engine binary is missing: $binary" >&2; return 1; }
+	version="$(ep_engine_version "$binary")"
+	[ -n "$version" ] || { echo "$binary did not answer 'version'" >&2; return 1; }
+	printf '%s\n' "$version"
+}
+
+cmd_engine_health() {
+	local report rc items ok st name detail tag
+	report="$(ep_engine_health)"
+	rc=$?
+	if [ "$JSON" = "1" ]; then
+		items=""
+		ok=true
+		while IFS="$(printf '\t')" read -r st name detail; do
+			[ -n "$st" ] || continue
+			[ "$st" = "fail" ] && ok=false
+			items="${items}${items:+,}{\"status\":\"$(ep_json_escape "$st")\",\"check\":\"$(ep_json_escape "$name")\",\"detail\":\"$(ep_json_escape "$detail")\"}"
+		done <<EOF
+$report
+EOF
+		printf '{"ok":%s,"checks":[%s]}\n' "$ok" "$items"
+	else
+		printf '%s\n' "$report" | while IFS="$(printf '\t')" read -r st name detail; do
+			[ -n "$st" ] || continue
+			case "$st" in
+				ok) tag="[ok]  " ;;
+				warn) tag="[warn]" ;;
+				*) tag="[FAIL]" ;;
+			esac
+			printf '%s %s: %s\n' "$tag" "$name" "$detail"
+		done
+	fi
+	[ "$rc" = "0" ] || return 1
+}
+
+cmd_node_test() {
+	local section tag probe state ms first=1 total=0 reach=0
+	if [ "$JSON" = "1" ]; then
+		printf '{"ok":true,"nodes":['
+		for section in $(ep_node_sections); do
+			[ "$(ep_get "$section" enabled 1)" = "1" ] || continue
+			probe="$(ep_node_probe "$section")"
+			state="${probe%% *}"
+			ms="${probe#* }"
+			total=$((total + 1))
+			[ "$state" = "reachable" ] && reach=$((reach + 1))
+			[ "$first" = "1" ] || printf ','
+			first=0
+			printf '{"section":"%s","name":"%s","server":"%s","port":"%s","state":"%s","latency_ms":%s}' \
+				"$(ep_json_escape "$section")" \
+				"$(ep_json_escape "$(ep_node_tag "$section")")" \
+				"$(ep_json_escape "$(ep_get "$section" server '')")" \
+				"$(ep_json_escape "$(ep_get "$section" port '')")" \
+				"$(ep_json_escape "$state")" \
+				"$([ "$ms" = "-" ] && printf 'null' || printf '%s' "$ms")"
+		done
+		printf '],"total":%s,"reachable":%s}\n' "$total" "$reach"
+		[ "$total" -gt 0 ] && [ "$reach" -eq 0 ] && return 1
+		return 0
+	fi
+	printf '%-24s %-22s %-8s %s\n' "NODE" "SERVER:PORT" "STATE" "LATENCY"
+	for section in $(ep_node_sections); do
+		[ "$(ep_get "$section" enabled 1)" = "1" ] || continue
+		probe="$(ep_node_probe "$section")"
+		state="${probe%% *}"
+		ms="${probe#* }"
+		total=$((total + 1))
+		[ "$state" = "reachable" ] && reach=$((reach + 1))
+		printf '%-24s %-22s %-8s %s\n' \
+			"$(ep_node_tag "$section")" \
+			"$(ep_get "$section" server ''):$(ep_get "$section" port '')" \
+			"$state" \
+			"$([ "$ms" = "-" ] && printf '-' || printf '%s ms' "$ms")"
+	done
+	printf 'Reachable: %s/%s\n' "$reach" "$total"
+	[ "$total" -gt 0 ] && [ "$reach" -eq 0 ] && return 1
+	return 0
+}
+
+
+cmd_node_list() {
+	local section first=1 region enabled
+	if [ "$JSON" = "1" ]; then
+		printf '{"ok":true,"nodes":['
+		for section in $(ep_node_sections); do
+			region="$(ep_node_region "$(ep_node_tag "$section")")"
+			[ "$first" = "1" ] || printf ','
+			first=0
+			printf '{"section":"%s","name":"%s","type":"%s","server":"%s","port":"%s","region":"%s","group":"auto-%s","enabled":%s}' \
+				"$(ep_json_escape "$section")" \
+				"$(ep_json_escape "$(ep_node_tag "$section")")" \
+				"$(ep_json_escape "$(ep_get "$section" type '')")" \
+				"$(ep_json_escape "$(ep_get "$section" server '')")" \
+				"$(ep_json_escape "$(ep_get "$section" port '')")" \
+				"$(ep_json_escape "$region")" \
+				"$region" \
+				"$([ "$(ep_get "$section" enabled 1)" = "1" ] && printf 'true' || printf 'false')"
+		done
+		printf '],"groups":['
+		first=1
+		for region in $(ep_node_regions); do
+			[ "$first" = "1" ] || printf ','
+			first=0
+			printf '{"tag":"auto-%s","region":"%s","label":"%s","nodes":%s}' \
+				"$region" "$region" "$(ep_region_label "$region")" \
+				"$(ep_node_sections_in_region "$region" | wc -l | tr -d ' ')"
+		done
+		printf ']}\n'
+		return 0
+	fi
+	printf '%-20s %-14s %-24s %-8s %s\n' "NODE" "TYPE" "SERVER:PORT" "REGION" "GROUP"
+	for section in $(ep_node_sections); do
+		region="$(ep_node_region "$(ep_node_tag "$section")")"
+		printf '%-20s %-14s %-24s %-8s %s\n' \
+			"$(ep_node_tag "$section")" \
+			"$(ep_get "$section" type '')" \
+			"$(ep_get "$section" server ''):$(ep_get "$section" port '')" \
+			"$(ep_region_label "$region")" \
+			"auto-$region"
+	done
+}
+
+cmd_node_add() {
+	local uri="$1" name="$2"
+	[ -n "$uri" ] || { echo "usage: easyproxy node add <share-link> [name]" >&2; return 2; }
+	case "$uri" in
+		*://*) ;;
+		*) echo "node add expects a share link (ss:// vmess:// vless:// trojan:// hysteria2:// tuic:// socks5:// http://)" >&2; return 2 ;;
+	esac
+	cmd_node_import_one "$uri" "$name"
+}
+
+cmd_node_import_one() {
+	local uri="$1" name="$2" section
+	section="$(ep_node_import "$uri" "$name")" || return 1
+	printf 'Imported %s as %s\n' "$section" "$(ep_node_tag "$section")"
+	return 0
+}
+
+cmd_node_import() {
+	local src="$1" uri section added=0 failed=0
+	[ -n "$src" ] || { echo "usage: easyproxy node import <file|share-link>" >&2; return 2; }
+	if [ -r "$src" ]; then
+		while IFS= read -r uri; do
+			uri="$(printf '%s' "$uri" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+			case "$uri" in
+				""|\#*) continue ;;
+			esac
+			if section="$(ep_node_import "$uri")"; then
+				added=$((added + 1))
+			else
+				failed=$((failed + 1))
+				printf 'Failed: %s\n' "$uri" >&2
+			fi
+		done < "$src"
+		printf 'Imported: %s, failed: %s\n' "$added" "$failed"
+		[ "$failed" -eq 0 ]
+		return $?
+	fi
+	cmd_node_import_one "$src" "$2"
+}
+
+cmd_node_export() {
+	local want="$1" section printed=0 uri
+	if [ -n "$want" ]; then
+		section="$(ep_node_resolve "$want")" || { echo "no such node: $want" >&2; return 1; }
+		ep_node_export_uri "$section"
+		return $?
+	fi
+	for section in $(ep_node_sections); do
+		uri="$(ep_node_export_uri "$section")" || continue
+		[ -n "$uri" ] || continue
+		printf '%s\n' "$uri"
+		printed=$((printed + 1))
+	done
+	[ "$printed" -gt 0 ] || { echo "no exportable node" >&2; return 1; }
+	return 0
+}
+
+cmd_node_del() {
+	local want="$1" section
+	[ -n "$want" ] || { echo "usage: easyproxy node del <name|server|section>" >&2; return 2; }
+	section="$(ep_node_delete "$want")" || return 1
+	printf 'Deleted %s\n' "$section"
+}
+
+cmd_rule_list() {
+	local entry idx=0
+	if [ "$JSON" = "1" ]; then
+		printf '{"ok":true,"rules":['
+		for entry in $(ep_rule_entries); do
+			[ -n "$entry" ] || continue
+			idx=$((idx + 1))
+			[ "$idx" = "1" ] || printf ','
+			printf '{"index":%s,"type":"%s","value":"%s","outbound":"%s"}' \
+				"$idx" \
+				"$(ep_json_escape "${entry%%:*}")" \
+				"$(ep_json_escape "$(printf '%s' "${entry#*:}" | sed 's/:.*//')")" \
+				"$(ep_json_escape "${entry##*:}")"
+		done
+		printf ']}\n'
+		return 0
+	fi
+	printf '%-4s %-16s %-40s %s\n' "#" "TYPE" "VALUE" "OUTBOUND"
+	for entry in $(ep_rule_entries); do
+		[ -n "$entry" ] || continue
+		idx=$((idx + 1))
+		printf '%-4s %-16s %-40s %s\n' "$idx" "${entry%%:*}" \
+			"$(printf '%s' "${entry#*:}" | sed 's/:.*//')" "${entry##*:}"
+	done
+	[ "$idx" -gt 0 ] || echo "No custom rules (add one with: easyproxy rule add domain-suffix:example.com:proxy)"
+}
+
+cmd_rule_add() {
+	local entry="$1"
+	[ -n "$entry" ] || { echo "usage: easyproxy rule add <type:value:outbound>" >&2; return 2; }
+	ep_rule_add "$entry" || return 1
+}
+
+cmd_rule_del() {
+	local idx="$1"
+	[ -n "$idx" ] || { echo "usage: easyproxy rule del <index>" >&2; return 2; }
+	case "$idx" in
+		*[!0-9]*) echo "rule index must be a number" >&2; return 2 ;;
+	esac
+	ep_rule_delete "$idx" || return 1
+	printf 'Deleted rule #%s\n' "$idx"
+}
+
+cmd_config_generate() {
+	local engine binary path nodes final checked
+	engine="$(ep_get main engine none)"
+	[ "$engine" != "none" ] || { echo "Config generation failed: no proxy engine selected" >&2; return 1; }
+	[ "$engine" = "sing-box" ] || { printf 'Config generation failed: config generation is only implemented for sing-box; %s is 开发中 (dev)\n' "$engine" >&2; return 1; }
+	path="$(ep_engine_config_path "$engine")"
+	binary="$(ep_engine_binary "$engine")"
+	if [ "$(ep_binary_state "$binary")" = "available" ]; then
+		checked=true
+	else
+		checked=false
+	fi
+
+	if ! ep_config_build "$path"; then
+		if [ "$JSON" = "1" ]; then
+			printf '{"ok":false,"error":"%s"}\n' "$(ep_json_escape "$EP_ERR")"
+		fi
+		echo "Config generation failed: $EP_ERR" >&2
+		return 1
+	fi
+	nodes="${EP_NODES:-0}"
+	final="${EP_FINAL:-direct}"
+
+	if [ "$JSON" = "1" ]; then
+		printf '{"ok":true,"path":"%s","outbounds":%s,"nodes":%s,"final":"%s","route_mode":"%s","rule_sets":%s,"checked":%s,"generated":"%s"}\n' \
+			"$(ep_json_escape "$path")" \
+			"$((nodes + 2))" \
+			"$nodes" \
+			"$(ep_json_escape "$final")" \
+			"$(ep_json_escape "${EP_ROUTE_MODE:-direct}")" \
+			"${EP_SPLIT:-0}" \
+			"$checked" \
+			"$(ep_utc_now)"
+	else
+		printf 'Config generated: %s\n' "$path"
+		printf 'Enabled nodes: %s\n' "$nodes"
+		printf 'Default route: %s\n' "$final"
+		case "${EP_ROUTE_MODE:-direct}" in
+			split)
+				echo "Routing mode: split (China direct, others proxied)" ;;
+			*)
+				echo "Routing mode: direct only (nothing is proxied; LAN stays direct)" ;;
+		esac
+		if [ "$checked" = "true" ]; then
+			echo "Engine validation: passed"
+		else
+			echo "Engine validation: skipped (binary missing)"
+		fi
+	fi
+	[ "$nodes" -gt 0 ] || echo "Warning: no enabled nodes; generated config only provides direct routing." >&2
+	[ -z "${EP_WARN:-}" ] || printf 'Warning: %s\n' "$EP_WARN" >&2
+	return 0
+}
+
+cmd_start() {
+	local enabled engine binary log i
+	enabled="$(ep_bool "$(ep_get main enabled 0)")"
+	[ "$enabled" = "1" ] || { echo "EasyProxy is disabled. Set easyproxy.main.enabled=1 to enable." >&2; return 1; }
+	engine="$(ep_get main engine none)"
+	[ "$engine" != "none" ] || { echo "No proxy engine selected." >&2; return 1; }
+	[ "$engine" = "sing-box" ] || { printf '%s is 开发中 (dev): %s\n' "$engine" "$(ep_engine_dev_reason "$engine")" >&2; return 2; }
+	binary="$(ep_engine_binary "$engine")"
+	[ "$(ep_binary_state "$binary")" = "available" ] || { echo "Engine binary is missing: $binary" >&2; return 1; }
+
+	if [ "$(ep_runtime_state)" = "running" ]; then
+		echo "EasyProxy is already running (pid $(ep_pid))."
+		return 0
+	fi
+
+	if ! ep_config_build "$(ep_engine_config_path "$engine")"; then
+		echo "Config generation failed: $EP_ERR" >&2
+		return 1
+	fi
+	[ -z "${EP_WARN:-}" ] || printf 'Warning: %s\n' "$EP_WARN" >&2
+
+	mkdir -p "$EP_RUNTIME_DIR" 2>/dev/null
+	log="$EP_LOG_FILE"
+	: >> "$log" 2>/dev/null || log="/dev/null"
+
+	if [ -x /etc/init.d/easyproxy ]; then
+		/etc/init.d/easyproxy start >/dev/null 2>&1
+	else
+		nohup "$SELF" run >> "$log" 2>&1 &
+	fi
+
+	# Wait for the wrapper to publish its pid file (engine startup is not instant)
+	i=0
+	while [ "$i" -lt 5 ]; do
+		if [ "$(ep_runtime_state)" = "running" ]; then
+			echo "EasyProxy started (pid $(ep_pid))."
+			if ep_transparent_enabled; then
+				if ep_transparent_apply; then
+					echo "Transparent capture applied ($(ep_transparent_ifaces) → tproxy 0.0.0.0:$(ep_tproxy_port))."
+				else
+					printf 'Warning: transparent capture not applied: %s\n' "$EP_ERR" >&2
+				fi
+			fi
+			return 0
+		fi
+		sleep 1
+		i=$((i + 1))
+	done
+	echo "EasyProxy failed to start; see $EP_LOG_FILE" >&2
+	if ep_transparent_enabled; then
+		echo "Hint: transparent capture is enabled. If the log shows 'configure tproxy TCP listener: operation not permitted', the kernel lacks nftables TPROXY support; install the tproxy kmod or set easyproxy.transparent.enabled=0." >&2
+	fi
+	return 1
+}
+
+cmd_stop() {
+	local pid i
+	# Drop the capture first: captured packets must not land on a closing port.
+	ep_transparent_remove
+	if [ -x /etc/init.d/easyproxy ]; then
+		/etc/init.d/easyproxy stop >/dev/null 2>&1
+	fi
+	pid="$(ep_pid)"
+	if [ -z "$pid" ]; then
+		rm -f "$EP_PID_FILE"
+		echo "EasyProxy is not running."
+		return 0
+	fi
+	kill "$pid" 2>/dev/null
+	i=0
+	while [ -d "/proc/$pid" ] && [ "$i" -lt 5 ]; do
+		kill -TERM "$pid" 2>/dev/null
+		sleep 1
+		i=$((i + 1))
+	done
+	[ -d "/proc/$pid" ] && kill -9 "$pid" 2>/dev/null
+	rm -f "$EP_PID_FILE"
+	echo "EasyProxy stopped."
+	return 0
+}
+
+cmd_restart() {
+	cmd_stop >/dev/null
+	cmd_start
+}
+
+cmd_transparent() {
+	local action state _report _rc _items _ok _st _name _detail _tag
+	action="${1:-status}"
+	state="$(ep_transparent_state)"
+	case "$action" in
+		status)
+			if [ "$JSON" = "1" ]; then
+				printf '{"ok":true,"enabled":%s,"state":"%s","port":%s,"fwmark":%s,"route_table":%s,"interfaces":"%s","ipv6_policy":"%s","ipv6_state":"%s","nft":"%s","nft_available":%s,"file":"%s","generated":"%s"}\n' \
+					"$(ep_bool "$(ep_get transparent enabled 0)")" \
+					"$(ep_json_escape "$state")" \
+					"$(ep_tproxy_port)" \
+					"$(ep_transparent_fwmark)" \
+					"$(ep_transparent_route_table)" \
+					"$(ep_json_escape "$(ep_transparent_ifaces)")" \
+					"$(ep_json_escape "$(ep_ipv6_policy)")" \
+					"$(ep_json_escape "$(ep_ipv6_state)")" \
+					"$(ep_json_escape "$EP_NFT_BIN")" \
+					"$([ "$state" = "unsupported" ] && printf 'false' || printf 'true')" \
+					"$(ep_json_escape "$EP_NFT_FILE")" \
+					"$(ep_utc_now)"
+			else
+				printf 'Enabled: %s\n' "$(ep_bool "$(ep_get transparent enabled 0)")"
+				printf 'State: %s\n' "$state"
+				printf 'Capture: %s → tproxy 0.0.0.0:%s\n' "$(ep_transparent_ifaces)" "$(ep_tproxy_port)"
+				printf 'Fwmark: %s (route table %s)\n' "$(ep_transparent_fwmark)" "$(ep_transparent_route_table)"
+				printf 'IPv6 policy: %s (%s)\n' "$(ep_ipv6_policy)" "$(ep_ipv6_state)"
+				printf 'Rule file: %s\n' "$EP_NFT_FILE"
+			fi
+			;;
+		audit)
+			_report="$(ep_transparent_audit)"
+			_rc=$?
+			if [ "$JSON" = "1" ]; then
+				_items=""
+				_ok=true
+				while IFS="$(printf '\t')" read -r _st _name _detail; do
+					[ -n "$_st" ] || continue
+					[ "$_st" = "fail" ] && _ok=false
+					_items="${_items}${_items:+,}{\"status\":\"$(ep_json_escape "$_st")\",\"check\":\"$(ep_json_escape "$_name")\",\"detail\":\"$(ep_json_escape "$_detail")\"}"
+				done <<EOF
+$_report
+EOF
+				printf '{"ok":%s,"checks":[%s]}\n' "$_ok" "$_items"
+			else
+				printf '%s\n' "$_report" | while IFS="$(printf '\t')" read -r _st _name _detail; do
+					[ -n "$_st" ] || continue
+					case "$_st" in
+						ok) _tag="[ok]  " ;;
+						warn) _tag="[warn]" ;;
+						*) _tag="[FAIL]" ;;
+					esac
+					printf '%s %s: %s\n' "$_tag" "$_name" "$_detail"
+				done
+			fi
+			[ "$_rc" = "0" ] || return 1
+			;;
+		apply)
+			if ep_transparent_apply; then
+				printf 'Transparent capture applied: %s → tproxy 0.0.0.0:%s (fwmark %s, table %s)\n' \
+					"$(ep_transparent_ifaces)" "$(ep_tproxy_port)" \
+					"$(ep_transparent_fwmark)" "$(ep_transparent_route_table)"
+				printf 'Rules: %s\n' "$EP_NFT_FILE"
+			else
+				if [ "$JSON" = "1" ]; then
+					printf '{"ok":false,"error":"%s"}\n' "$(ep_json_escape "$EP_ERR")"
+				fi
+				printf 'Transparent capture failed: %s\n' "$EP_ERR" >&2
+				return 1
+			fi
+			;;
+		remove)
+			ep_transparent_remove
+			echo "Transparent capture removed."
+			;;
+		*)
+			echo "Unknown transparent action: $action" >&2
+			return 2
+			;;
+	esac
+	return 0
+}
+
+cmd_run() {
+	local engine binary cfg child rc
+	# Rule sets are prepared by `config generate`; never block boot on a download
+	EP_RULE_SET_NO_FETCH=1
+	engine="$(ep_get main engine none)"
+	[ "$(ep_bool "$(ep_get main enabled 0)")" = "1" ] || { echo "EasyProxy is disabled." >&2; return 1; }
+	[ "$engine" != "none" ] || { echo "No proxy engine selected." >&2; return 1; }
+	[ "$engine" = "sing-box" ] || { printf '%s is 开发中 (dev): %s\n' "$engine" "$(ep_engine_dev_reason "$engine")" >&2; return 2; }
+	binary="$(ep_engine_binary "$engine")"
+	[ "$(ep_binary_state "$binary")" = "available" ] || { echo "Engine binary is missing: $binary" >&2; return 1; }
+	cfg="$(ep_engine_config_path "$engine")"
+	ep_config_build "$cfg" || { echo "Config generation failed: $EP_ERR" >&2; return 1; }
+
+	child=""
+	mkdir -p "$EP_RUNTIME_DIR" 2>/dev/null
+	printf '%s %s\n' "$$" "$(date +%s)" > "$EP_PID_FILE"
+
+	cleanup() {
+		[ -n "$child" ] && kill "$child" 2>/dev/null
+		rm -f "$EP_PID_FILE"
+	}
+	trap 'cleanup; exit 0' INT TERM
+
+	ep_log "starting $engine with $binary"
+	"$binary" run -c "$cfg" &
+	child=$!
+	wait "$child"
+	rc=$?
+	cleanup
+	ep_log "engine exited with code $rc"
+	return "$rc"
+}
+
+# Shared renderer for "<status>\t<name>\t<detail>" reports (doctor / health / audit)
+cmd_report() {
+	local report rc items ok st name detail tag
+	report="$1"
+	rc="$2"
+	if [ "$JSON" = "1" ]; then
+		items=""
+		ok=true
+		while IFS="$(printf '\t')" read -r st name detail; do
+			[ -n "$st" ] || continue
+			[ "$st" = "fail" ] && ok=false
+			items="${items}${items:+,}{\"status\":\"$(ep_json_escape "$st")\",\"check\":\"$(ep_json_escape "$name")\",\"detail\":\"$(ep_json_escape "$detail")\"}"
+		done <<EOF
+$report
+EOF
+		printf '{"ok":%s,"checks":[%s]}\n' "$ok" "$items"
+	else
+		printf '%s\n' "$report" | while IFS="$(printf '\t')" read -r st name detail; do
+			[ -n "$st" ] || continue
+			case "$st" in
+				ok) tag="[ok]  " ;;
+				warn) tag="[warn]" ;;
+				*) tag="[FAIL]" ;;
+			esac
+			printf '%s %-10s %s\n' "$tag" "$name" "$detail"
+		done
+	fi
+	return "$rc"
+}
+
+cmd_doctor() {
+	local report rc counts
+	report="$(ep_doctor)"
+	rc=$?
+	counts="$(printf '%s\n' "$report" | awk -F'\t' '
+		{ if ($1 == "ok") o++; else if ($1 == "warn") w++; else if ($1 == "fail") f++ }
+		END { printf "%d ok, %d warn, %d fail", o, w, f }')"
+	if [ "$JSON" = "0" ]; then
+		cmd_report "$report" "$rc"
+		printf 'doctor: %s\n' "$counts"
+	else
+		cmd_report "$report" "$rc"
+	fi
+	[ "$rc" -eq 0 ] || return 1
+	return 0
+}
+
+cmd_ruleset() {
+	local action="${1:-verify}" report rc
+	case "$action" in
+		update|update-all)
+			ep_ruleset_update || return 1
+			;;
+		verify|check|status)
+			report="$(ep_ruleset_verify)"
+			rc=$?
+			printf '%s\n' "$report"
+			[ "$rc" -eq 0 ] || return 1
+			;;
+		*)
+			echo "Unknown ruleset action: $action" >&2
+			return 2
+			;;
+	esac
+	return 0
+}
+
+cmd_config_backup() {
+	local path
+	path="$(ep_config_backup "$1")" || return 1
+	if [ "$JSON" = "1" ]; then
+		printf '{"ok":true,"path":"%s","size":%s}\n' "$(ep_json_escape "$path")" "$(ep_file_size "$path")"
+	else
+		printf 'Backup written: %s (%s bytes)\n' "$path" "$(ep_file_size "$path")"
+	fi
+	return 0
+}
+
+cmd_config_restore() {
+	local path
+	path="$(ep_config_restore "$1")" || return 1
+	if [ "$JSON" = "1" ]; then
+		printf '{"ok":true,"path":"%s"}\n' "$(ep_json_escape "$path")"
+	else
+		printf 'Configuration restored: %s\n' "$path"
+		printf 'Previous configuration kept as %s.before-restore\n' "$EP_CONFIG_FILE"
+	fi
+	return 0
+}
+
+cmd_config_reset() {
+	local path
+	path="$(ep_config_reset)" || return 1
+	if [ "$JSON" = "1" ]; then
+		printf '{"ok":true,"path":"%s"}\n' "$(ep_json_escape "$path")"
+	else
+		printf 'Configuration reset to defaults: %s\n' "$path"
+		printf 'Previous configuration kept as %s.before-reset\n' "$EP_CONFIG_FILE"
+	fi
+	return 0
+}
+
+cmd_uninstall_clean() {
+	ep_uninstall_clean
+	[ "$JSON" = "1" ] && printf '{"ok":true,"clean":"own-rules-only"}\n'
+	return 0
+}
+
+cmd_log() {
+	local action="${1:-show}"
+	case "$action" in
+		rotate)
+			ep_log_rotate || return 1
+			;;
+		*)
+			if [ -r "$EP_LOG_FILE" ]; then
+				tail -n 40 "$EP_LOG_FILE"
+			else
+				echo "No log at $EP_LOG_FILE yet."
+			fi
+			;;
+	esac
+	return 0
+}
+
+
+# --- panel entry points -------------------------------------------------------
+# The panel's rpcd ACL grants exec on this CLI and nothing else, so the two
+# helpers the panel needs are exposed as fixed verbs instead of `sh <script>`.
+# Each verb validates its own arguments: a verb must never become an
+# interpreter for arbitrary commands or an arbitrary URL fetcher.
+cmd_traffic() {
+	local iface="${1:-}"
+	local lib="${EP_TRAFFIC_LIB:-/usr/lib/easyproxy/traffic.sh}"
+	case "$iface" in
+		"") ;;
+		*[!A-Za-z0-9_.:-]*)
+			echo "invalid interface name: refusing '${iface}'" >&2
+			return 2
+			;;
+	esac
+	[ -r "$lib" ] || { echo "traffic sampler is missing: $lib" >&2; return 3; }
+	sh "$lib" "$iface"
+}
+
+cmd_subscribe() {
+	local url="${1:-}"
+	local prefix="${2:-}"
+	local lib="${EP_SUBSCRIBE_LIB:-/usr/lib/easyproxy/subscribe.sh}"
+	case "$url" in
+		http://*|https://*) ;;
+		*)
+			echo "refusing subscription URL: only http:// and https:// are accepted" >&2
+			return 2
+			;;
+	esac
+	case "$prefix" in
+		*[!A-Za-z0-9_.-]*)
+			echo "invalid name prefix: refusing '${prefix}'" >&2
+			return 2
+			;;
+	esac
+	[ -r "$lib" ] || { echo "subscription helper is missing: $lib" >&2; return 3; }
+	sh "$lib" "$url" "$prefix"
+}
+
+CMD="${1:-}"
+[ $# -gt 0 ] && shift
+
+JSON=0
+SUB=""
+SUB2=""
+SUB3=""
+for arg in "$@"; do
+	case "$arg" in
+		--json) JSON=1 ;;
+		*) if [ -z "$SUB" ]; then SUB="$arg"
+		   elif [ -z "$SUB2" ]; then SUB2="$arg"
+		   elif [ -z "$SUB3" ]; then SUB3="$arg"
+		   fi ;;
+	esac
+done
+
+case "$CMD" in
+	status)
+		if [ "$JSON" = "1" ]; then cmd_status_json; else cmd_status_text; fi
+		;;
+	validate)
+		if [ "$JSON" = "1" ]; then cmd_validate_json; else cmd_validate_text; fi
+		;;
+	engine)
+		case "$SUB" in
+			list) cmd_engine_list ;;
+			health|check) cmd_engine_health ;;
+			version) cmd_engine_version ;;
+			status|"") cmd_engine ;;
+			*) echo "Unknown engine action: $SUB" >&2; exit 2 ;;
+		esac
+		;;
+	node)
+		case "$SUB" in
+			list|"") cmd_node_list ;;
+			show) cmd_node_list ;;
+			add) cmd_node_add "$SUB2" "$SUB3" ;;
+			import) cmd_node_import "$SUB2" "$SUB3" ;;
+			export|dump) cmd_node_export "$SUB2" ;;
+			del|delete|rm) cmd_node_del "$SUB2" ;;
+			test|ping) cmd_node_test ;;
+			*) echo "Unknown node action: $SUB" >&2; exit 2 ;;
+		esac
+		;;
+	rule)
+		case "$SUB" in
+			list|"") cmd_rule_list ;;
+			add) cmd_rule_add "$SUB2" ;;
+			del|delete|rm) cmd_rule_del "$SUB2" ;;
+			*) echo "Unknown rule action: $SUB" >&2; exit 2 ;;
+		esac
+		;;
+	config)
+		case "$SUB" in
+			generate|"") cmd_config_generate ;;
+			backup) cmd_config_backup "$SUB2" ;;
+			restore|import) cmd_config_restore "$SUB2" ;;
+			reset|default) cmd_config_reset ;;
+			*) echo "Unknown config action: $SUB" >&2; exit 2 ;;
+		esac
+		;;
+	ruleset|rulesets)
+		cmd_ruleset "$SUB"
+		;;
+	doctor|diag) cmd_doctor ;;
+	uninstall-clean|clean) cmd_uninstall_clean ;;
+	start) cmd_start ;;
+	transparent)
+		case "$SUB" in
+			apply) cmd_transparent apply ;;
+			remove|down|off) cmd_transparent remove ;;
+			status|"") cmd_transparent status ;;
+			audit|check) cmd_transparent audit ;;
+			*) echo "Unknown transparent action: $SUB" >&2; exit 2 ;;
+		esac
+		;;
+	stop) cmd_stop ;;
+	restart) cmd_restart ;;
+	run) cmd_run ;;
+	log) cmd_log "$SUB" ;;
+	traffic) cmd_traffic "$SUB" ;;
+	subscribe) cmd_subscribe "$SUB" "$SUB2" ;;
+	help|-h|--help|"") usage ;;
+	*) usage >&2; exit 2 ;;
+esac
+

@@ -1,0 +1,404 @@
+name: EasyProxy package and kernel build
+
+on:
+  push:
+    branches: ["main"]
+    tags: ["v*"]
+  pull_request:
+    branches: ["main"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "要发布的版本号（必须与 package/easyproxy/Makefile 的 PKG_VERSION 相同，例如 0.8.0）；留空则只构建不发布"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ImmortalWrt 25.12.2 packages and kernels
+    runs-on: ubuntu-24.04
+
+    steps:
+      # Release notes are generated from the commits since the previous release,
+      # so the history must be there: the default shallow checkout (1 commit)
+      # made `v0.7.0..HEAD` empty and the publish step aborted with "range has no
+      # commit" in run 43955772351. Tags are fetched for the same reason.
+      - name: Checkout EasyProxy
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      # Three ways can ask for a release, resolved once here so every later
+      # step uses the same tag:
+      #   1. a v* tag the maintainer pushed by hand;
+      #   2. a manual run that passes inputs.version;
+      #   3. a committed .release-request file, which is how an automation
+      #      publishes: GITHUB_TOKEN cannot dispatch a run, but a real push
+      #      by the maintainer does start this workflow.
+      - name: Resolve the release intent
+        id: intent
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          TAG=""
+          if [ "${GITHUB_REF_TYPE}" = "tag" ] && [ "${GITHUB_REF_NAME#v}" != "${GITHUB_REF_NAME}" ]; then
+            TAG="${GITHUB_REF_NAME}"
+          elif [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ] && [ -n "${INPUT_VERSION}" ]; then
+            TAG="v${INPUT_VERSION}"
+          elif [ -f .release-request ]; then
+            REQ="$(tr -d '[:space:]' < .release-request)"
+            if [ -n "$REQ" ]; then
+              case "$REQ" in
+                v*) TAG="$REQ" ;;
+                *) TAG="v$REQ" ;;
+              esac
+            fi
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "release intent: ${TAG:-none (build only)}"
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential clang flex bison g++ gawk \
+            gcc-multilib gettext git libncurses-dev \
+            libssl-dev python3 python3-setuptools \
+            rsync unzip zlib1g-dev file wget curl zstd
+
+      # The suites must check the generated config with the kernel the release
+      # actually installs, not with a stub. The archive is verified against the
+      # same sha256 the installer pins (scripts/install.sh, kernel_sha amd64),
+      # because a test that validates against a different build proves nothing
+      # about what a router will run.
+      - name: Install the pinned sing-box used by the tests
+        run: |
+          set -euo pipefail
+          SB_VER=1.14.4
+          SB_URL="https://github.com/SagerNet/sing-box/releases/download/v${SB_VER}/sing-box-${SB_VER}-linux-amd64.tar.gz"
+          SB_SHA=699a1b510aa4396b2176d32d1181920399ebf1e267835da6f3b598d0f7c24968
+
+          curl -fSL "$SB_URL" -o sb.tar.gz || { echo "::error title=sing-box download::cannot download $SB_URL"; exit 1; }
+          echo "$SB_SHA  sb.tar.gz" | sha256sum -c - || { echo "::error title=sing-box checksum::the pinned sing-box archive changed"; exit 1; }
+          tar -xzf sb.tar.gz
+          mkdir -p /opt/easyproxy-ci
+          cp "sing-box-${SB_VER}-linux-amd64/sing-box" /opt/easyproxy-ci/sing-box
+          chmod +x /opt/easyproxy-ci/sing-box
+          /opt/easyproxy-ci/sing-box version
+          # The path is deliberately NOT exported through $GITHUB_ENV: that env
+          # reaches every later step, and the installer suite asserts that the
+          # kernel is downloaded, so a global EP_SING_BOX_BIN made those 12
+          # assertions fail in CI (run #116..#122). It is handed to the four
+          # config suites only, in the test step below.
+
+      # Every behaviour this release ships is guarded by the repo suites, so a
+      # build that would publish a broken package fails here instead. The
+      # counting now happens in tests/run-all.sh, which only adds up the
+      # `结果：N 通过，M 失败` line each suite prints itself: a suite that dies
+      # before its result line or skips a check contributes nothing and fails
+      # the run ("skipped" is not "passed", and "not run" is not "passed").
+      - name: Run package test suites with the real kernel
+        run: |
+          set -uo pipefail
+          EP_SING_BOX_BIN=/opt/easyproxy-ci/sing-box \
+          EP_TEST_LOG_DIR=test-logs \
+          sh tests/run-all.sh
+
+      - name: Upload test logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: easyproxy-test-logs
+          path: test-logs/*
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Download official ImmortalWrt SDK
+        run: |
+          set -euo pipefail
+          SDK_URL="https://downloads.immortalwrt.org/releases/25.12.2/targets/x86/64/immortalwrt-sdk-25.12.2-x86-64_gcc-14.3.0_musl.Linux-x86_64.tar.zst"
+          SDK_SHA="4d4631f134c2f27215a91aa7ef5bf9a01ea96c2450d3b8a5c38048c32462ac60"
+
+          curl -fL "$SDK_URL" -o sdk.tar.zst || { echo "::error title=SDK download::cannot download $SDK_URL"; exit 1; }
+          echo "$SDK_SHA  sdk.tar.zst" | sha256sum -c - || { echo "::error title=SDK checksum::published SDK no longer matches the pinned sha256"; exit 1; }
+
+          mkdir sdk
+          tar --zstd -xf sdk.tar.zst -C sdk --strip-components=1
+
+      - name: Build EasyProxy
+        run: |
+          set -euo pipefail
+          cd sdk
+          mkdir -p package/easyproxy
+          cp -a ../package/easyproxy/. package/easyproxy/
+          make defconfig
+          make package/easyproxy/compile V=s -j2 || { echo "::error title=Package compile::SDK build failed"; exit 1; }
+
+      - name: Package manual-install archive
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          VER="$(sed -n 's/^PKG_VERSION:=//p' package/easyproxy/Makefile | head -1)"
+          [ -n "$VER" ] || { echo "::error::cannot read PKG_VERSION"; exit 1; }
+          tar --owner=0 --group=0 --numeric-owner \
+            -czf "dist/easyproxy-${VER}-rootfs.tar.gz" -C package/easyproxy/files .
+          ls -l dist
+
+      # The SDK build above produces whatever package format the target uses
+      # (apk on ImmortalWrt 25.x). These add the opkg-readable twins of the same
+      # files: `all` for firmware that accepts it, `x86_64` for firmware whose
+      # opkg refuses an architecture-less package.
+      - name: Package ipk for opkg-based firmware
+        run: |
+          set -euo pipefail
+          sh scripts/make-ipk.sh package/easyproxy dist all || { echo "::error title=ipk all::make-ipk.sh failed"; exit 1; }
+          sh scripts/make-ipk.sh package/easyproxy dist x86_64 || { echo "::error title=ipk x86_64::make-ipk.sh failed"; exit 1; }
+          ls -l dist
+
+      # The kernels are their own packages. `easyproxy_..._all.ipk` cannot carry a
+      # binary (one package would install an amd64 kernel on an ARM router), so
+      # sing-box and dae are packed per architecture, straight out of the official
+      # upstream archive after a pinned sha256 check. opkg then owns each of the
+      # three packages separately, which is what makes independent upgrade and
+      # independent removal possible on the router.
+      - name: Build kernel packages
+        run: |
+          set -euo pipefail
+          for arch in x86_64 aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4; do
+            sh scripts/make-kernel-ipk.sh sing-box "$arch" dist \
+              || { echo "::error title=sing-box $arch::kernel package build failed"; exit 1; }
+            sh scripts/make-kernel-ipk.sh dae "$arch" dist \
+              || { echo "::error title=dae $arch::kernel package build failed"; exit 1; }
+          done
+          ls -l dist
+
+      - name: Collect packages
+        run: |
+          set -euo pipefail
+          find sdk/bin/packages -type f \
+            \( -name 'easyproxy*.apk' -o -name 'easyproxy*.ipk' \) \
+            -exec cp -v {} dist/ \;
+
+          if ! compgen -G 'dist/easyproxy*' > /dev/null; then
+            echo "::error::EasyProxy package not found"
+            exit 1
+          fi
+
+      # The kernel versions are read from the package filenames the previous
+      # steps actually produced, not from the packaging script source: a filename
+      # cannot drift away from the package it names, and it needs no fragile sed
+      # escaping.
+      - name: Write KERNEL-VERSIONS
+        run: |
+          set -euo pipefail
+          SB_VER=""
+          for f in dist/sing-box_*_x86_64.ipk; do
+            [ -f "$f" ] || continue
+            SB_VER="${f#dist/sing-box_}"
+            SB_VER="${SB_VER%_x86_64.ipk}"
+          done
+          DAE_VER=""
+          for f in dist/dae_*_x86_64.ipk; do
+            [ -f "$f" ] || continue
+            DAE_VER="${f#dist/dae_}"
+            DAE_VER="${DAE_VER%_x86_64.ipk}"
+          done
+          [ -n "$SB_VER" ] && [ -n "$DAE_VER" ] || { echo "::error::cannot read the kernel versions from dist"; exit 1; }
+          VER="$(sed -n 's/^PKG_VERSION:=//p' package/easyproxy/Makefile | head -1)"
+          {
+            echo "component   version   upstream"
+            echo "easyproxy   ${VER}     https://github.com/${GITHUB_REPOSITORY}"
+            echo "sing-box    ${SB_VER}     SagerNet/sing-box v${SB_VER}"
+            echo "dae         ${DAE_VER}     daeuniverse/dae v${DAE_VER}"
+            echo
+            echo "architectures: x86_64, aarch64_cortex-a53, arm_cortex-a7_neon-vfpv4"
+            echo "kernel adapter: dae 适配器开发中，运行时分流仍由 sing-box 承担"
+            echo "built from commit: ${GITHUB_SHA}"
+            echo "built from ref: ${GITHUB_REF_NAME}"
+          } > dist/KERNEL-VERSIONS
+          cat dist/KERNEL-VERSIONS
+
+      - name: Checksums
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum easyproxy* sing-box_* dae_* KERNEL-VERSIONS > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: easyproxy-immortalwrt-25.12.2
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30
+
+      # A release happens only when the intent step resolved a tag: never from
+      # an ordinary push to main, a pull request or a bare manual run. The
+      # policy this release follows:
+      #   * a formal version gets a new version number and a new tag: the tag
+      #     must equal PKG_VERSION and must be higher than the newest release,
+      #   * a GitHub Release is really created (not just a job artifact),
+      #   * it carries the ipk packages and SHA256SUMS, and publishing stops
+      #     when either is missing,
+      #   * the notes are generated from the commits in Chinese with the three
+      #     required sections, and an empty note stops the release,
+      #   * existing assets are never overwritten: a second build of the same
+      #     version fails instead.
+      # Publishing is reachable three ways on purpose, all behind the same tag
+      # check above. GITHUB_TOKEN pushes never start another workflow run, and
+      # an automation token cannot add a workflow input either, so a tag created
+      # inside Actions published nothing: the work used to stop at job
+      # artifacts, which is exactly what kept releases from happening. A real
+      # push by the maintainer does start the build, so a committed
+      # .release-request file is the path an automation uses to publish.
+      - name: Publish GitHub release
+        if: steps.intent.outputs.tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.intent.outputs.tag }}
+        run: |
+          set -euo pipefail
+          REPO="$GITHUB_REPOSITORY"
+          [ -n "$TAG" ] || { echo "::error title=no version::a release run must resolve a version first"; exit 1; }
+          VER="$(sed -n 's/^PKG_VERSION:=//p' package/easyproxy/Makefile | head -1)"
+          [ -n "$VER" ] || { echo "::error::cannot read PKG_VERSION"; exit 1; }
+          if [ "$TAG" != "v${VER}" ]; then
+            echo "::error title=tag mismatch::release tag $TAG does not match PKG_VERSION $VER; bump PKG_VERSION and release again"
+            exit 1
+          fi
+          if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+            echo "::error title=version already released::release $TAG is already released; a published version is immutable - bump PKG_VERSION and tag a new version (this build stays a job artifact only)"
+            exit 1
+          fi
+
+          # A formal version number must be a new, higher one. Comparing with the
+          # newest published release catches the "reuse a version because it is
+          # convenient" case that the existence check above cannot.
+          PREV="$(gh release list --repo "$REPO" --limit 1 --json tagName --jq '.[0].tagName // empty' 2>/dev/null || true)"
+          PREV="${PREV#v}"
+          if [ -n "$PREV" ]; then
+            HIGHEST="$(printf '%s\n%s\n' "$PREV" "$VER" | sort -V | tail -n 1)"
+            if [ "$VER" = "$PREV" ] || [ "$HIGHEST" != "$VER" ]; then
+              echo "::error title=version not newer::PKG_VERSION $VER must be greater than the newest release $PREV; a formal version always gets a new version number and a new tag"
+              exit 1
+            fi
+            echo "version $PREV -> $VER"
+          fi
+
+          # Assets: an installable ipk package and the checksum file are
+          # mandatory. A release without them cannot be installed and cannot be
+          # verified, so publishing stops here.
+          if ! compgen -G "dist/*.ipk" > /dev/null; then
+            echo "::error title=no ipk::no ipk package in dist/, refusing to publish a release without an installable package"
+            exit 1
+          fi
+          if [ ! -f dist/SHA256SUMS ]; then
+            echo "::error title=no checksums::SHA256SUMS is missing, refusing to publish unverifiable assets"
+            exit 1
+          fi
+          for ipk in dist/*.ipk; do
+            base="$(basename "$ipk")"
+            grep -q "$base" dist/SHA256SUMS \
+              || { echo "::error title=checksum gap::SHA256SUMS does not cover $base"; exit 1; }
+          done
+
+          # Notes: generated from the commits since the previous release, in
+          # Chinese, with 修复了什么问题 / 修改了什么功能 / 优化了什么内容. The
+          # generator refuses an empty range; the checks below refuse a blank or
+          # truncated note.
+          NOTES_FILE="$(mktemp)"
+          if [ -n "$PREV" ]; then
+            sh scripts/release-notes.sh "$VER" "v$PREV" > "$NOTES_FILE"
+          else
+            sh scripts/release-notes.sh "$VER" > "$NOTES_FILE"
+          fi
+          [ -s "$NOTES_FILE" ] || { echo "::error title=empty notes::release notes are empty"; exit 1; }
+          for h in "修复了什么问题" "修改了什么功能" "优化了什么内容"; do
+            grep -q "$h" "$NOTES_FILE" \
+              || { echo "::error title=notes section missing::the note has no \"$h\" section"; exit 1; }
+            grep -A2 "$h" "$NOTES_FILE" | grep -q '^\- ' \
+              || { echo "::error title=notes section empty::the \"$h\" section has no entry"; exit 1; }
+          done
+
+          gh release create "$TAG" \
+            --repo "$REPO" \
+            --target "$GITHUB_SHA" \
+            --title "EasyProxy ${VER}" \
+            --notes-file "$NOTES_FILE" \
+            dist/easyproxy* dist/sing-box_* dist/dae_* dist/SHA256SUMS dist/KERNEL-VERSIONS
+          echo "created release $TAG from $GITHUB_SHA"
+          cat "$NOTES_FILE"
+
+      # Actions success is not release success: the job now reads the release
+      # back from the API, downloads every asset from the release URL, and
+      # checks it against SHA256SUMS. A release that says it published but has
+      # no installable ipk, or an asset whose download link is dead, fails here
+      # instead of being reported as delivered.
+      - name: Verify the published release and its download links
+        if: steps.intent.outputs.tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.intent.outputs.tag }}
+        run: |
+          set -euo pipefail
+          REPO="$GITHUB_REPOSITORY"
+          gh release view "$TAG" --repo "$REPO" --json tagName,isDraft,url,assets > release.json
+          jq -e . release.json >/dev/null || { echo "::error title=release unreadable::cannot read release $TAG"; exit 1; }
+          [ "$(jq -r .tagName release.json)" = "$TAG" ] || { echo "::error title=tag mismatch::release tag is not $TAG"; exit 1; }
+          [ "$(jq -r .isDraft release.json)" = "false" ] || { echo "::error title=draft::release $TAG is still a draft"; exit 1; }
+          COUNT="$(jq '.assets | length' release.json)"
+          echo "release $TAG has $COUNT assets"
+          [ "$COUNT" -ge 4 ] || { echo "::error title=missing assets::a release needs the ipk packages, SHA256SUMS and KERNEL-VERSIONS"; exit 1; }
+          NAMES="$(jq -r '.assets[].name' release.json)"
+          echo "$NAMES"
+          for want in SHA256SUMS KERNEL-VERSIONS; do
+            echo "$NAMES" | grep -qx "$want" || { echo "::error title=missing asset::$want is not attached to $TAG"; exit 1; }
+          done
+          echo "$NAMES" | grep -q '\.ipk$' || { echo "::error title=no ipk asset::no ipk is attached to $TAG"; exit 1; }
+
+          rm -rf verify-release && mkdir -p verify-release
+          gh release download "$TAG" --repo "$REPO" --dir verify-release
+          ( cd verify-release && sha256sum -c SHA256SUMS )
+
+          while IFS= read -r name; do
+            [ -n "$name" ] || continue
+            url="https://github.com/${REPO}/releases/download/${TAG}/${name}"
+            code="$(curl -fIL -sS -o /dev/null -w '%{http_code}' "$url" || true)"
+            [ "$code" = "200" ] || { echo "::error title=dead download link::$url returned $code"; exit 1; }
+            echo "  OK 200 $name"
+          done <<EOF
+          $(jq -r '.assets[].name' release.json)
+          EOF
+          echo "verified release $TAG at $(jq -r .url release.json)"
+
+      # At most 20 formal releases. scripts/release-gc.sh decides, this step
+      # only executes its plan, so the decision is visible in the log before
+      # anything is deleted. The script never deletes the newest release, a
+      # release whose assets have been downloaded (someone is installing it),
+      # or the tag that was just published.
+      - name: Prune old releases (keep the newest 20)
+        if: steps.intent.outputs.tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.intent.outputs.tag }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" > releases.json
+          PLAN="$(sh scripts/release-gc.sh --keep 20 --protect "$TAG" < releases.json)"
+          printf '%s\n' "$PLAN"
+          printf '%s\n' "$PLAN" | awk -F'\t' '$1 == "DELETE" { print $2 }' > to-delete.txt
+          while IFS= read -r tag; do
+            [ -n "$tag" ] || continue
+            echo "deleting release $tag (outside the newest 20, not in use)"
+            gh release delete "$tag" --repo "$GITHUB_REPOSITORY" --yes \
+              || { echo "::error title=release delete failed::cannot delete $tag"; exit 1; }
+            git push origin --delete "$tag" \
+              || echo "::warning title=tag delete::tag $tag was already gone"
+          done < to-delete.txt
+          echo "pruned $(grep -c . to-delete.txt 2>/dev/null || echo 0) release(s)"
