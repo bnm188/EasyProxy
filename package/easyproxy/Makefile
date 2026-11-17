@@ -1,7 +1,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=easyproxy
-PKG_VERSION:=0.8.1
+PKG_VERSION:=0.8.2
 PKG_RELEASE:=1
 
 PKG_LICENSE:=MIT
@@ -26,6 +26,8 @@ define Package/easyproxy/description
  Stage 6 keeps LAN traffic direct and makes fail_closed real: when the CN rule
  sets are missing nothing is proxied instead of silently going full-tunnel.
  IPv6 is never captured silently: it is explicit `direct` or `block`.
+ 0.8.2 adds the entry bypass: China IPv4 destinations are released in nft
+ before tproxy, so domestic traffic never enters the sing-box process.
 endef
 
 define Package/easyproxy/conffiles
@@ -48,6 +50,7 @@ define Package/easyproxy/install
 	$(INSTALL_DATA) ./files/usr/lib/easyproxy/common.sh $(1)/usr/lib/easyproxy/common.sh
 	$(INSTALL_DATA) ./files/usr/lib/easyproxy/config.sh $(1)/usr/lib/easyproxy/config.sh
 	$(INSTALL_DATA) ./files/usr/lib/easyproxy/transparent.sh $(1)/usr/lib/easyproxy/transparent.sh
+	$(INSTALL_DATA) ./files/usr/lib/easyproxy/bypass.sh $(1)/usr/lib/easyproxy/bypass.sh
 	$(INSTALL_DATA) ./files/usr/lib/easyproxy/node.sh $(1)/usr/lib/easyproxy/node.sh
 	$(INSTALL_DATA) ./files/usr/lib/easyproxy/maint.sh $(1)/usr/lib/easyproxy/maint.sh
 	$(INSTALL_DATA) ./files/usr/lib/easyproxy/traffic.sh $(1)/usr/lib/easyproxy/traffic.sh
