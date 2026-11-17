@@ -908,9 +908,9 @@ Use: sh install.sh --rootfs  (extracts the archive at / without a package manage
 				if opkg_accepts_all; then
 					accepts_all=1
 				fi
-				[ -n "$arch" ] && url="$(asset_from_api "_${arch}\.ipk$" || true)"
+				[ -n "$arch" ] && url="$(asset_from_api "easyproxy_[0-9][0-9a-zA-Z._-]*_${arch}\.ipk$" || true)"
 				if [ -z "${url:-}" ] && [ "$accepts_all" = 1 ]; then
-					url="$(asset_from_api '_all\.ipk$' || true)"
+					url="$(asset_from_api 'easyproxy_[0-9][0-9a-zA-Z._-]*_all\.ipk$' || true)"
 				fi
 				if [ -z "${url:-}" ]; then
 					if [ "$accepts_all" != 1 ]; then
@@ -920,8 +920,8 @@ Use: sh install.sh --rootfs  (extracts the archive at / without a package manage
 						# architecture independent, so install the `_all.ipk` with
 						# --force-architecture; if even that is refused, the archive
 						# route below finishes the install. Kernels are never forced.
-						url="$(asset_from_api '_all\.ipk$' || true)"
-						[ -n "${url:-}" ] || url="$(asset_url '\.ipk$')" \
+						url="$(asset_from_api 'easyproxy_[0-9][0-9a-zA-Z._-]*_all\.ipk$' || true)"
+						[ -n "${url:-}" ] || url="$(asset_url 'easyproxy_[0-9][0-9a-zA-Z._-]*\.ipk$')" \
 							|| die "cannot resolve the ipk download URL (release API unreachable and no version in the Makefile)"
 						force_panel=1
 					else
@@ -934,8 +934,8 @@ Use: sh install.sh --rootfs  (extracts the archive at / without a package manage
 			info "downloading $(basename "$url")"
 			if ! fetch_verified "$url" "$file"; then
 				if [ "$MODE" = "ipk" ] && [ "$accepts_all" = 1 ]; then
-					alt="$(asset_from_api '_all\.ipk$' || true)"
-					[ -n "$alt" ] || alt="$(asset_url '\.ipk$' 2>/dev/null || true)"
+					alt="$(asset_from_api 'easyproxy_[0-9][0-9a-zA-Z._-]*_all\.ipk$' || true)"
+					[ -n "$alt" ] || alt="$(asset_url 'easyproxy_[0-9][0-9a-zA-Z._-]*\.ipk$' 2>/dev/null || true)"
 					[ -n "$alt" ] || die "download failed: $url"
 					info "architecture-specific package unavailable, retrying $(basename "$alt")"
 					url="$alt"
