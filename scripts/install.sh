@@ -516,15 +516,20 @@ install_pkg() {
 }
 
 # --- component bookkeeping -------------------------------------------------
+# ROOT defaults to "/", and "$ROOT/path" would then emit "//opt/open-box/...":
+# the path still resolves, but uci stores and displays that double slash, so
+# every place that joins ROOT with a path goes through this instead.
+ep_root_prefix() { printf '%s' "${ROOT%/}"; }
+
 kernel_bin() {
 	case "$1" in
-		sing-box) printf '%s' "${EP_SING_BOX_BIN:-$ROOT/usr/bin/sing-box}" ;;
-		dae)      printf '%s' "${EP_DAE_BIN:-$ROOT/usr/bin/dae}" ;;
+		sing-box) printf '%s' "${EP_SING_BOX_BIN:-$(ep_root_prefix)/usr/bin/sing-box}" ;;
+		dae)      printf '%s' "${EP_DAE_BIN:-$(ep_root_prefix)/usr/bin/dae}" ;;
 		*) return 1 ;;
 	esac
 }
 
-kernel_geodata() { printf '%s' "${EP_DAE_DATA:-$ROOT/usr/share/dae}"; }
+kernel_geodata() { printf '%s' "${EP_DAE_DATA:-$(ep_root_prefix)/usr/share/dae}"; }
 
 # What the kernel reports about itself, parsed from its own `version` output:
 # sing-box prints `sing-box version 1.14.4`, dae prints `dae version v2.1.2`.
@@ -587,15 +592,15 @@ kernel_configure() {
 kernel_external_paths() {
 	case "$1" in
 		sing-box) printf '%s\n' \
-			"$ROOT/opt/open-box/bin/sing-box" \
-			"$ROOT/usr/local/bin/sing-box" \
-			"$ROOT/etc/sing-box/sing-box" \
-			"$ROOT/koolshare/bin/sing-box" \
-			"$ROOT/opt/sing-box/sing-box" ;;
+			"$(ep_root_prefix)/opt/open-box/bin/sing-box" \
+			"$(ep_root_prefix)/usr/local/bin/sing-box" \
+			"$(ep_root_prefix)/etc/sing-box/sing-box" \
+			"$(ep_root_prefix)/koolshare/bin/sing-box" \
+			"$(ep_root_prefix)/opt/sing-box/sing-box" ;;
 		dae) printf '%s\n' \
-			"$ROOT/usr/local/bin/dae" \
-			"$ROOT/etc/dae/dae" \
-			"$ROOT/opt/dae/dae" ;;
+			"$(ep_root_prefix)/usr/local/bin/dae" \
+			"$(ep_root_prefix)/etc/dae/dae" \
+			"$(ep_root_prefix)/opt/dae/dae" ;;
 	esac
 }
 

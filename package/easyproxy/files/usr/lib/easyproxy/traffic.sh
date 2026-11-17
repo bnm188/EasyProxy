@@ -4,6 +4,14 @@
 # Reads /proc/net/dev only; never writes anything.
 
 iface="$1"
+# Which interface to sample matters: br-lan only counts LAN-to-router traffic,
+# which is near zero on a router that proxies for the whole LAN. Prefer an
+# explicit UCI choice, then the default-route interface (the one that actually
+# carries the proxied traffic), then the first LAN interface.
+[ -n "$iface" ] || iface="$(uci -q get easyproxy.main.traffic_iface 2>/dev/null)"
+if [ -z "$iface" ]; then
+	iface="$(LC_ALL=C awk '$1 == "00000000" { print $2; exit }' /proc/net/route 2>/dev/null)"
+fi
 [ -n "$iface" ] || iface="$(uci -q get easyproxy.transparent.lan_interfaces 2>/dev/null | LC_ALL=C awk '{ print $1 }')"
 [ -n "$iface" ] || iface="br-lan"
 

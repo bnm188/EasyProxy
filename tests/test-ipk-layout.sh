@@ -95,6 +95,7 @@ want_file usr/lib/easyproxy/adapters/sing-box.sh
 want_file usr/share/easyproxy/easyproxy.default
 want_file usr/share/luci/menu.d/luci-app-easyproxy.json
 want_file usr/share/rpcd/acl.d/luci-app-easyproxy.json
+want_file usr/share/rpcd/ucode/luci.easyproxy.uc
 want_file www/luci-static/resources/easyproxy/app.js
 want_file www/luci-static/resources/view/easyproxy/overview.js
 want_file www/luci-static/resources/view/easyproxy/settings.js

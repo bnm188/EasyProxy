@@ -69,22 +69,24 @@ case "$cmd" in
 	show) grep -F "$1" "$DB" | grep -v '^$'; exit 0 ;;
 	add)
 		pkg="$1"; type="$2"
-		# count section lines only: option lines start with "@node[0].xxx"
-		n=$(grep -F "$pkg.@$type[" "$DB" | grep -c "=$type$")
+		# real uci hands out max(index)+1; counting lines breaks after a delete
+		n=$(grep -F "$pkg.@$type[" "$DB" | grep "=$type\$" | sed 's/.*\[\([0-9]*\)\].*/\1/' | sort -n | tail -1)
+		[ -n "$n" ] || n=-1
+		n=$((n + 1))
 		sec="@$type[$n]"
 		printf '%s.%s=%s\n' "$pkg" "$sec" "$type" >> "$DB"
 		printf '%s' "$sec"
 		exit 0
 		;;
 	set)
-		key="$1"; val="${2-}"
-		case "$key" in
-			*.*.*) db_set "$key" "$val" ;;
-			*)
-				# "uci set pkg.sec.type" style with three components is the only form used
-				db_set "$key" "$val"
-				;;
+		# Real uci only accepts the single-argument "key=value" form; the
+		# two-argument form prints usage and fails with a non-zero code.
+		one="$1"
+		case "$one" in
+			*=*) key="${one%%=*}"; val="${one#*=}" ;;
+			*) echo "uci: set needs key=value" >&2; exit 1 ;;
 		esac
+		db_set "$key" "$val"
 		exit 0
 		;;
 	delete) awk -v k="$1" '{ if (index($0, k "=") == 1 || index($0, k ".") == 1) next; print }' "$DB" > "$DB.new" && mv "$DB.new" "$DB"; exit 0 ;;
@@ -125,6 +127,15 @@ grep -qE '\.name=.*香港-01$' "$SB/etc/uci.db" && ok "百分号编码的节点�
 out="$("$EP" node add "ss://chacha20-ietf-poly1305:pw2@198.51.100.7:8443#us-02" 2>&1)"; rc=$?
 [ "$rc" = "0" ] && ok "ss 明文 userinfo 也能导入" || no "ss 明文 userinfo 也能导入" "rc=$rc $out"
 grep -q '\.method=chacha20-ietf-poly1305$' "$SB/etc/uci.db" && ok "明文方式写入正确" || no "明文方式写入正确"
+
+# --- 2b. ss:// base64url userinfo, unpadded ----------------------------------
+# Real share links use the URL-safe alphabet and drop padding; plain
+# `base64 -d` rejects that outright.
+SS_URL="$(printf 'aes-256-gcm:p+a/s' | base64 | tr -d '=\n' | tr '+/' '-_')"
+out="$("$EP" node add "ss://${SS_URL}@198.51.100.16:8388#jp-url" 2>&1)"; rc=$?
+[ "$rc" = "0" ] && ok "ss base64url 链接导入成功" || no "ss base64url 链接导入成功" "rc=$rc $out"
+grep -q '\.password=p+a/s$' "$SB/etc/uci.db" && ok "base64url 解出密码" || no "base64url 解出密码" "$(grep 'password=' "$SB/etc/uci.db")"
+grep -q '\.method=aes-256-gcm$' "$SB/etc/uci.db" && ok "base64url 解出加密方式" || no "base64url 解出加密方式"
 
 # --- 3. vmess:// -------------------------------------------------------------
 say "== node import: vmess / vless / trojan =="
@@ -216,6 +227,15 @@ json_py "import json;d=json.load(open('$SB/rules.json'));print(len(d['rules']))"
 "$EP" rule del 2 >/dev/null 2>&1
 out="$("$EP" rule list 2>&1)"
 printf '%s\n' "$out" | grep -q 'ads.test' && no "删除第 2 条规则后不再出现" "$out" || ok "删除第 2 条规则后不再出现"
+# 真机上按规格删除才是自然用法：rule del domain-suffix:x:proxy。只认序号会
+# 让人以为删掉了，实际 rc=2（真机实测 "rule index must be a number"）。
+out="$("$EP" rule del "ip-cidr:198.18.0.0/15:direct" 2>&1)"; rc=$?
+[ "$rc" = "0" ] && ok "按规格删除规则" || no "按规格删除规则" "rc=$rc $out"
+printf '%s\n' "$("$EP" rule list 2>&1)" | grep -q '198.18.0.0/15' \
+	&& no "按规格删除后规则消失" || ok "按规格删除后规则消失"
+out="$("$EP" rule del "domain:no-such.test:proxy" 2>&1)"; rc=$?
+[ "$rc" -ne 0 ] && ok "删除不存在的规格报错" || no "删除不存在的规格报错" "rc=$rc $out"
+
 # the block rule is added back so the config path that emits the block outbound runs
 "$EP" rule add "domain:ads.test:block" >/dev/null 2>&1
 out="$("$EP" rule add "domain:foo.com" 2>&1)"; rc=$?
@@ -253,12 +273,83 @@ json_py "import json;d=json.load(open('$CFG'));print(d['route']['final'])" > "$S
 json_py "import json;d=json.load(open('$CFG'));r=d['route']['rules'];print(next(i for i,x in enumerate(r) if 'youtube.com' in str(x)) < next(i for i,x in enumerate(r) if x.get('rule_set')))" > "$SB/g10"
 [ "$(cat "$SB/g10")" = "True" ] && ok "平台分流排在 CN 规则之前" || no "平台分流排在 CN 规则之前" "$(cat "$SB/g10")"
 
+say "== 重名节点不破坏配置生成 =="
+"$EP" node add "ss://chacha20-ietf-poly1305:pa@198.51.100.31:8443#dup-name" >/dev/null 2>&1
+"$EP" node add "ss://chacha20-ietf-poly1305:pb@198.51.100.32:8443#dup-name" >/dev/null 2>&1
+out="$("$EP" config generate 2>&1)"; rc=$?
+[ "$rc" = "0" ] && ok "重名节点也能生成配置" || no "重名节点也能生成配置" "rc=$rc $out"
+json_py "import json;d=json.load(open('$CFG'));t=[o.get('tag') for o in d['outbounds']];print('OK' if len(t)==len(set(t)) else 'DUP')" > "$SB/dup1"
+[ "$(cat "$SB/dup1")" = "OK" ] && ok "所有出站 tag 唯一" || no "所有出站 tag 唯一" "$(cat "$SB/dup1")"
+json_py "import json;d=json.load(open('$CFG'));print('YES' if any(o.get('tag')=='dup-name-2' for o in d['outbounds']) else 'NO')" > "$SB/dup2"
+[ "$(cat "$SB/dup2")" = "YES" ] && ok "重名节点自动加后缀" || no "重名节点自动加后缀"
+json_py "import json;d=json.load(open('$CFG'));u=[o for o in d['outbounds'] if o['type']=='urltest'];print('OK' if all(len(g['outbounds'])==len(set(g['outbounds'])) for g in u) else 'DUP')" > "$SB/dup3"
+[ "$(cat "$SB/dup3")" = "OK" ] && ok "分组引用不重复" || no "分组引用不重复" "$(cat "$SB/dup3")"
+
+say "== 同一端点重复导入被拒绝 =="
+out="$("$EP" node add "ss://chacha20-ietf-poly1305:pa@198.51.100.31:8443#dup-name" 2>&1)"; rc=$?
+[ "$rc" = "1" ] && ok "重复导入返回非 0" || no "重复导入返回非 0" "rc=$rc $out"
+printf '%s' "$out" | grep -q 'already exists' && ok "重复导入提示已存在" || no "重复导入提示已存在" "$out"
+[ "$(grep -c '198.51.100.31' "$SB/etc/uci.db")" = "1" ] && ok "重复导入没有多建 section" || no "重复导入没有多建 section" "$(grep -c '198.51.100.31' "$SB/etc/uci.db")"
+
 # --- 10. platform switches ---------------------------------------------------
 say "== 平台分流可关闭 =="
 printf 'easyproxy.routing.platform_netflix=0\n' >> "$SB/etc/uci.db"
 "$EP" config generate >/dev/null 2>&1
 json_py "import json;d=json.load(open('$CFG'));print(sum(1 for x in d['route']['rules'] if 'netflix.com' in str(x)))" > "$SB/g11"
 [ "$(cat "$SB/g11")" = "0" ] && ok "关闭 Netflix 开关后规则消失" || no "关闭 Netflix 开关后规则消失" "$(cat "$SB/g11")"
+
+say ""
+say "== 无 base64/openssl 时的 awk 兜底 =="
+# Kwrt 25.12 ships neither base64 nor openssl; without the awk codec every
+# share link failed with "userinfo is not base64".
+mkdir -p "$SB/minbin"
+for t in awk tr sed sh; do
+	p="$(command -v "$t" 2>/dev/null)" && ln -sf "$p" "$SB/minbin/$t"
+done
+out="$(PATH="$SB/minbin" "$SB/minbin/sh" -c '. "$1"; ep_b64_decode "$2"' _ "$SB/usr/lib/easyproxy/node.sh" "$SS_URL" 2>/dev/null)"
+[ "$out" = "aes-256-gcm:p+a/s" ] && ok "awk 解码 base64url" || no "awk 解码 base64url" "got=$out"
+out="$(PATH="$SB/minbin" "$SB/minbin/sh" -c '. "$1"; ep_b64_decode "$2"' _ "$SB/usr/lib/easyproxy/node.sh" "$SS_B64" 2>/dev/null)"
+[ "$out" = "aes-256-gcm:secretpass" ] && ok "awk 解码标准 base64" || no "awk 解码标准 base64" "got=$out"
+out="$(PATH="$SB/minbin" "$SB/minbin/sh" -c '. "$1"; ep_b64_encode "$2"' _ "$SB/usr/lib/easyproxy/node.sh" "aes-256-gcm:secretpass" 2>/dev/null)"
+[ "$out" = "$SS_B64" ] && ok "awk 编码与标准编码一致" || no "awk 编码与标准编码一致" "got=$out want=$SS_B64"
+
+say ""
+say "== 测速超时判不可达 =="
+# A connect that never completes must never be reported as a live node. curl
+# exits 28 on --max-time and 7 on refusal; only 0 is a completed handshake.
+mkdir -p "$SB/probe"
+cat > "$SB/probe/curl" <<'CURLSTUB'
+#!/bin/sh
+exit "${EP_STUB_CURL_RC:-28}"
+CURLSTUB
+cat > "$SB/probe/date" <<'DATESTUB'
+#!/bin/sh
+printf '1'
+DATESTUB
+chmod +x "$SB/probe/curl" "$SB/probe/date"
+ln -sf "$(command -v sh)" "$SB/probe/sh" 2>/dev/null || ln -sf /bin/sh "$SB/probe/sh"
+probe() { PATH="$SB/probe" EP_STUB_CURL_RC="$1" "$SB/probe/sh" -c '. "$1"; ep_tcp_probe 10.255.255.1 8388 1' _ "$SB/usr/lib/easyproxy/common.sh" 2>/dev/null; }
+out="$(probe 28)"
+[ "$out" = "unreachable" ] && ok "curl 超时(28)判为不可达" || no "curl 超时(28)判为不可达" "got=$out"
+out="$(probe 7)"
+[ "$out" = "unreachable" ] && ok "curl 拒绝(7)判为不可达" || no "curl 拒绝(7)判为不可达" "got=$out"
+out="$(probe 0)"
+case "$out" in
+	''|unreachable|unknown) no "curl 成功(0)判为可达" "got=$out" ;;
+	*) ok "curl 成功(0)判为可达" ;;
+esac
+# 52 / 56 是"TCP 已建立但对方不说 HTTP"（shadowsocks 端口的正常表现），
+# 真机上这种端口被旧的判定规则全部误判为不可达。
+out="$(probe 52)"
+case "$out" in
+	''|unreachable|unknown) no "curl 空响应(52)判为可达" "got=$out" ;;
+	*) ok "curl 空响应(52)判为可达" ;;
+esac
+out="$(probe 56)"
+case "$out" in
+	''|unreachable|unknown) no "curl 连接重置(56)判为可达" "got=$out" ;;
+	*) ok "curl 连接重置(56)判为可达" ;;
+esac
 
 say ""
 say "结果：$PASS 通过，$FAIL 失败"

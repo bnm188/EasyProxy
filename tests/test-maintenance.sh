@@ -133,6 +133,30 @@ run_cli config reset
 cmp -s "$EP_TEST_DEFAULT" "$EP_CONFIG_FILE" \
 	&& ok "重置为包内默认配置" || no "重置为包内默认配置" "$(cat "$EP_CONFIG_FILE")"
 [ -f "$EP_CONFIG_FILE.before-reset" ] && ok "重置前配置留档 .before-reset" || no "重置前配置留档"
+# 重置不能把引擎重置成 none：真机 reset 之后 engine=none、binary missing，
+# 用户按"恢复默认"反而把代理弄成起不来。查的是随包发布的默认配置本身。
+PKG_DEF="$SRC/package/easyproxy/files/usr/share/easyproxy/easyproxy.default"
+grep -q "option engine 'sing-box'" "$PKG_DEF" \
+	&& ok "包内默认引擎可用（sing-box）" || no "包内默认引擎可用（sing-box）" "$(grep 'option engine' "$PKG_DEF")"
+# reset 用的是 easyproxy.default，首次安装用的是 etc/config/easyproxy。两份要是
+# 不一致，"恢复默认"就会把配置回退到一个用户从没见过的形态。
+cmp -s "$SRC/package/easyproxy/files/etc/config/easyproxy" "$PKG_DEF" \
+	&& ok "两份默认配置一致" || no "两份默认配置一致"
+
+
+# --- 引擎二进制自愈 -------------------------------------------------------
+# 固件里的 sing-box 不一定在 /usr/bin：这台真机装在 /opt/open-box/bin。
+# 配置记的路径失效时，必须自己按候选路径找回可执行文件，否则 reset/升级后
+# 会报 binary missing 而明明装着内核。
+reset
+export EP_SING_BOX_BIN_CANDIDATES="$SB/opt/open-box/bin/sing-box /usr/bin/sing-box"
+mkdir -p "$SB/opt/open-box/bin"
+printf '#!/bin/sh\necho "sing-box version test"\n' > "$SB/opt/open-box/bin/sing-box"
+chmod +x "$SB/opt/open-box/bin/sing-box"
+run_cli binary path
+[ "$RC" -eq 0 ] && ok "binary path 退出码 0" || no "binary path 退出码 0" "$(cat "$SB/out")"
+grep -q "opt/open-box/bin/sing-box" "$SB/out" \
+	&& ok "配置路径失效时按候选找回内核" || no "配置路径失效时按候选找回内核" "$(cat "$SB/out")"
 
 # --- ruleset --------------------------------------------------------------
 reset

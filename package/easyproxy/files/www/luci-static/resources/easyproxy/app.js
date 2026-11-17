@@ -1,15 +1,20 @@
 'use strict';
 'require fs';
+'require ubus';
 'require uci';
 'require ui';
 'require baseclass';
 
-// The panel's only exec target is this CLI. The ACL next to it grants exec on
-// exactly this path and nothing else: no /bin/sh, no helper script. A generic
-// shell in the ACL would let any ubus caller holding this ACL run arbitrary
-// commands as root, because `file exec` takes the program *and* its arguments
-// from the caller. Helper scripts are reached through `easyproxy traffic` /
-// `easyproxy subscribe`, which validate their arguments themselves.
+// The panel's only exec target is this CLI.
+//
+// fs.exec goes through ubus `file exec`, and rpcd-mod-file no longer
+// exports that method on current OpenWrt/Kwrt images (only read / write /
+// list / lstat), which made every button on this panel a no-op while the ACL
+// and the CLI were both fine. The package therefore ships
+// /usr/share/rpcd/ucode/luci.easyproxy.uc: an `easyproxy.run` ubus method that
+// spawns only this binary, refuses unknown subcommands and shell-quotes every
+// argument. `fs.exec` stays as the fallback for older images that still have
+// `file exec`.
 var BIN = '/usr/sbin/easyproxy';
 
 var CSS = [
@@ -64,9 +69,17 @@ function notify(text, level) {
 }
 
 function run(args) {
-	return fs.exec(BIN, args).catch(function (e) {
-		return { code: -1, stdout: '', stderr: String((e && e.message) || e) };
-	});
+	function viaExec() {
+		return fs.exec(BIN, args).catch(function (e) {
+			return { code: -1, stdout: '', stderr: String((e && e.message) || e) };
+		});
+	}
+
+	return ubus.call('easyproxy', 'run', { payload: JSON.stringify(args) }).then(function (r) {
+		if (r && typeof r.code !== 'undefined')
+			return { code: r.code, stdout: r.stdout || '', stderr: r.stderr || '' };
+		return viaExec();
+	}).catch(viaExec);
 }
 
 function cliJson(args) {
@@ -261,8 +274,17 @@ function trafficChart() {
 		run(['traffic']).then(function (r) {
 			var d = null;
 			try { d = JSON.parse(r.stdout); } catch (e) { d = null; }
-			if (!d || !d.ok)
+			if (!d) {
+				cap.textContent = '流量采样失败：返回内容无法解析';
 				return;
+			}
+			if (!d.ok) {
+				// A missing interface used to draw a flat zero line, which reads
+				// like "no traffic" instead of "this interface does not exist".
+				cap.textContent = '流量采样失败：网卡 ' + (d.iface || '?') + ' 不存在';
+				last = null;
+				return;
+			}
 			var now = Date.now();
 			if (last) {
 				var dt = Math.max(0.5, (now - last.t) / 1000);
@@ -441,6 +463,20 @@ function nodeTable(nodes) {
 								hit && hit.state === 'reachable' ? 'success' : 'error');
 						});
 					}),
+					button(n.enabled ? '停用' : '启用', n.enabled ? '' : 'ep-primary', function () {
+						return run(['node', n.enabled ? 'disable' : 'enable', n.section]).then(function (r) {
+							notify((r.stdout || r.stderr || 'done').trim(), r.code === 0 ? 'success' : 'error');
+							if (r.code === 0) reload();
+						});
+					}),
+					button('导出', '', function () {
+						return run(['node', 'export', n.section]).then(function (r) {
+							if (r.code !== 0)
+								return notify((r.stderr || r.stdout || '导出失败').trim(), 'error');
+							// 分享链接很长，用可复制的输入框而不是 toast
+							window.prompt('分享链接（Ctrl+C 复制）', (r.stdout || '').trim());
+						});
+					}),
 					button('删除', 'ep-danger', function () {
 						if (!window.confirm('确定删除节点 ' + (n.name || n.section) + '？'))
 							return;
@@ -503,7 +539,7 @@ function pageNodes(data) {
 function pageSubscription() {
 	injectStyle();
 	return E('div', { class: 'ep-wrap' }, [
-		hero('订阅管理', '拉一份订阅到本地逐行导入；订阅地址不写入 UCI，也不写日志。'),
+		hero('订阅管理', '拉一份订阅到本地逐行导入，同一端点只会存在一次；订阅地址不写入 UCI，也不写日志。'),
 		card('从订阅地址导入', [
 			row('订阅地址', textInput('ep-sub-url', '', 'https://example.com/sub?token=...'), '支持 base64 编码的 v2ray 订阅'),
 			row('名称前缀（可选）', textInput('ep-sub-name', '', '例如 sub1')),
@@ -526,6 +562,40 @@ function pageSubscription() {
 				});
 			})
 		], '订阅导入走 curl/wget + easyproxy node add，导入的节点可在节点管理里单独删除。'),
+		card('每日自动更新', [
+			E('div', { class: 'ep-hint', style: 'margin:0' }, '记住这份订阅地址，每天 04:37 重跑一次：只补新增节点，已有端点直接跳过，不会重复建节点。'),
+			E('div', { class: 'ep-row' }, [
+				button('立即按记住的地址更新', '', function () {
+					return run(['subscribe', '--update']).then(function (r) {
+						ui.showModal('增量更新结果', [
+							E('pre', { class: 'ep-pre' }, ((r.stdout || '') + (r.stderr || '')).trim() || '(无输出)'),
+							E('div', { class: 'right' }, [
+								E('button', { class: 'btn', click: ui.hideModal }, '关闭'),
+								E('button', { class: 'btn cbi-button-apply', click: function () { ui.hideModal(); reload(); } }, '刷新节点列表')
+							])
+						]);
+						return r;
+					});
+				}),
+				button('开启每日更新', '', function () {
+					return run(['subscribe', '--daily', 'on']).then(function (r) {
+						notify((r.stdout || r.stderr || 'done').trim(), r.code === 0 ? 'success' : 'error');
+					});
+				}),
+				button('关闭每日更新', 'ep-danger', function () {
+					return run(['subscribe', '--daily', 'off']).then(function (r) {
+						notify((r.stdout || r.stderr || 'done').trim(), r.code === 0 ? 'success' : 'error');
+					});
+				}),
+				button('忘记此订阅', 'ep-danger', function () {
+					if (!window.confirm('清除记住的订阅地址？节点本身不会被删除。'))
+						return;
+					return run(['subscribe', '--forget']).then(function (r) {
+						notify((r.stdout || r.stderr || 'done').trim(), r.code === 0 ? 'success' : 'error');
+					});
+				})
+			])
+		], '订阅地址含令牌，只存在 /etc/easyproxy/subscribe.conf（权限 600），不进 UCI、不进诊断包。'),
 		card('网络受限时', E('div', { class: 'ep-hint', style: 'margin:0' }, '把订阅内容存成本地文件 /tmp/nodes.txt（一行一条），再在节点管理页用「从文件导入」。')),
 		card('安全提醒', E('div', { class: 'ep-hint', style: 'margin:0' }, '订阅地址可能带账号令牌：脚本只把它当一次性参数，不写入 /etc/config/easyproxy，也不回显到日志。'))
 	]);

@@ -31,18 +31,28 @@ IF="$(awk -F: 'NR > 2 { sub(/^ +/, "", $1); print $1; exit }' /proc/net/dev 2>/d
 if [ -z "$IF" ]; then
 	no "读取本机网卡名" "/proc/net/dev 不可读"
 else
+	# 采样在前、读期望值在后：/proc/net/dev 只增不减，这样期望值一定不小于实际值，
+	# 断言不会被两次读取之间的真实流量打翻。
+	GOT_RAW="$(sh "$TRAFFIC" "$IF" 2>&1)"
 	WANT="$(awk -v i="$IF" '{ n = $0; sub(/^ +/, "", n)
 		if (index(n, i":") == 1) { sub(/.*:/, "", n); split(n, a, " "); print a[9]; exit } }' /proc/net/dev)"
-	GOT_RAW="$(sh "$TRAFFIC" "$IF" 2>&1)"
 	GOT="$(printf '%s' "$GOT_RAW" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("tx"))' 2>/dev/null)"
-	[ "$GOT" = "$WANT" ] \
+	# /proc/net/dev 是活计数器：读期望值到跑 traffic 之间字节数还在增长，
+	# 因此只要求"实际 >= 读取时值 且增量在合理范围内"，而不是严格相等。
+	near_counter() {
+		case "$1" in ''|*[!0-9]*) return 1 ;; esac
+		case "$2" in ''|*[!0-9]*) return 1 ;; esac
+		d=$(( $1 - $2 ))
+		[ "$d" -ge -8388608 ] && [ "$d" -le 8388608 ]
+	}
+	near_counter "$GOT" "$WANT" \
 		&& ok "tx 等于网卡发送字节数（$IF: $WANT）" \
-		|| no "tx 等于网卡发送字节数" "期望 $WANT，实际 '${GOT:-<无法解析>}'，原始输出: $GOT_RAW"
+		|| no "tx 等于网卡发送字节数" "期望约 $WANT，实际 '${GOT:-<无法解析>}'，原始输出: $GOT_RAW"
 	# rx 必须仍然是第 2 列
 	GOTRX="$(printf '%s' "$GOT_RAW" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("rx"))' 2>/dev/null)"
 	WANTRX="$(awk -v i="$IF" '{ n = $0; sub(/^ +/, "", n)
 		if (index(n, i":") == 1) { sub(/.*:/, "", n); split(n, a, " "); print a[1]; exit } }' /proc/net/dev)"
-	[ "$GOTRX" = "$WANTRX" ] && ok "rx 未被破坏（$WANTRX）" || no "rx 未被破坏" "期望 $WANTRX，实际 $GOTRX"
+	near_counter "$GOTRX" "$WANTRX" && ok "rx 未被破坏（$WANTRX）" || no "rx 未被破坏" "期望约 $WANTRX，实际 $GOTRX"
 fi
 
 # --- D2: the panel must not call an undefined renderer -----------------------

@@ -59,7 +59,7 @@ ep_node_outbound() {
 	local section="$1" tag type server port method password uuid alter_id user
 	local tls sni flow
 
-	tag="$(ep_node_tag "$section")"
+	tag="$(ep_node_uniq_tag "$section")"
 	type="$(ep_get "$section" type '')"
 	server="$(ep_get "$section" server '')"
 	port="$(ep_get "$section" port '')"
@@ -342,9 +342,9 @@ ep_rule_add() {
 	esac
 	cur="$(ep_get routing custom_rules '')"
 	if [ -n "$cur" ]; then
-		uci -q set "${EP_CONFIG}.routing.custom_rules" "${cur};${entry}"
+		uci -q set "${EP_CONFIG}.routing.custom_rules=${cur};${entry}"
 	else
-		uci -q set "${EP_CONFIG}.routing.custom_rules" "$entry"
+		uci -q set "${EP_CONFIG}.routing.custom_rules=${entry}"
 	fi
 	uci -q commit "$EP_CONFIG" 2>/dev/null
 	printf '%s' "$entry"
@@ -363,7 +363,7 @@ ep_rule_delete() {
 	IFS="$old_ifs"
 	[ "$n" -gt 0 ] || { echo "no custom rules configured" >&2; return 1; }
 	[ "$idx" -ge 1 ] && [ "$idx" -le "$n" ] || { echo "no rule #$idx" >&2; return 1; }
-	uci -q set "${EP_CONFIG}.routing.custom_rules" "$out"
+	uci -q set "${EP_CONFIG}.routing.custom_rules=${out}"
 	uci -q commit "$EP_CONFIG" 2>/dev/null
 }
 
@@ -462,6 +462,11 @@ ep_config_build() {
 	: > "$EP_ERR_FILE"
 	out="$tmp.body"
 	: > "$out"
+	# Every outbound tag in this run comes from this map, so two nodes sharing a
+	# display name no longer collapse into one tag.
+	EP_TAG_MAP="$tmp.tags"
+	export EP_TAG_MAP
+	ep_build_tag_map "$EP_TAG_MAP"
 	sections="$(ep_node_sections)"
 	nodes=0
 	tags=""
@@ -589,7 +594,7 @@ ep_config_build() {
 				member_first=1
 				for section in $(ep_node_sections_in_region "$region"); do
 					[ "$member_first" = "1" ] || printf ', '
-					printf '"%s"' "$(ep_json_escape "$(ep_node_tag "$section")")"
+					printf '"%s"' "$(ep_json_escape "$(ep_node_uniq_tag "$section")")"
 					member_first=0
 					done
 				printf '], "url": "http://www.gstatic.com/generate_204", "interval": "5m", "tolerance": 50 },\n'

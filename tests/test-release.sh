@@ -217,6 +217,22 @@ grep -q 'sha256sum -c' "$WF" && ok "下载的资产用 SHA256SUMS 校验" || no 
 grep -q 'curl -fIL' "$WF" && ok "逐个资产校验下载地址可用" || no "逐个资产校验下载地址可用"
 grep -q 'continue-on-error' "$WF" && no "自检不允许 continue-on-error" || ok "自检不允许 continue-on-error"
 
+# update apply reads the version out of the freshly installed tree instead of
+# asking the running CLI (which would report the old build). The version lives
+# in usr/lib/easyproxy/common.sh only; the CLI used to be read instead, and the
+# `sed` expression then matched its own source line inside that file, so every
+# upgrade "failed verification" and rolled itself back. Behavioural proof needs
+# a router; these two checks pin the shape that made it impossible here.
+CLI="$SRC/package/easyproxy/files/usr/sbin/easyproxy"
+COMMON="$SRC/package/easyproxy/files/usr/lib/easyproxy/common.sh"
+grep -q 'EP_VERSION=' "$COMMON" && ok "版本号定义在 common.sh（唯一真源）" || no "版本号定义在 common.sh（唯一真源）"
+grep -q 'EP_UPDATE_ROOT/usr/lib/easyproxy/common.sh' "$CLI" && ok "更新校验从 common.sh 读版本号" || no "更新校验从 common.sh 读版本号"
+if grep -q 'sed -n .*EP_UPDATE_ROOT/usr/sbin/easyproxy' "$CLI"; then
+	no "更新校验不再从 CLI 自身读版本号（会自匹配）"
+else
+	ok "更新校验不再从 CLI 自身读版本号（会自匹配）"
+fi
+
 say ""
 say "结果：$PASS 通过，$FAIL 失败"
 [ "$FAIL" -eq 0 ] || exit 1

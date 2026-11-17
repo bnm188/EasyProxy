@@ -18,7 +18,8 @@
 		},
 		"write": {
 			"ubus": {
-				"file": [ "exec" ]
+				"file": [ "exec" ],
+				"easyproxy": [ "run" ]
 			},
 			"uci": [ "easyproxy" ],
 			"file": {

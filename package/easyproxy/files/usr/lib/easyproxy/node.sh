@@ -1,8 +1,10 @@
 #!/bin/sh
 # Node import/export/grouping helpers.
 #
-# Busybox only: no python, no jq. `base64` ships on every OpenWrt image and
-# `openssl` is the fallback, so base64 links decode on old and new firmwares.
+# Busybox only: no python, no jq. A busybox image may ship `base64`, may ship
+# `openssl`, and sometimes ships neither (the Kwrt 25.12 build this is tested
+# against has both missing), so the awk codec below is the implementation that
+# matters and the external tools are only a shortcut.
 #
 # Supported share links:
 #   ss://         shadowsocks (base64 or plain "method:password" userinfo)
@@ -44,19 +46,85 @@ ep_uri_unescape() {
 	}'
 }
 
-# Base64 decode; tolerant of missing padding and wrapped input
+# Base64 decode; tolerant of standard and URL-safe alphabets ("-" "_"),
+# missing padding and wrapped input. Share links in the wild are URL-safe
+# base64 without padding, which plain `base64 -d` rejects outright.
+#
+# A busybox image frequently ships neither `base64` nor `openssl` (the Kwrt
+# build this was tested on has neither), so the awk decoder below is the real
+# implementation; the external tools are just a shortcut when present.
+ep_b64_decode_awk() {
+	awk 'BEGIN {
+		alpha = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+		for (i = 1; i <= 64; i++) idx[substr(alpha, i, 1)] = i - 1;
+	}
+	{
+		s = $0; n = length(s); out = "";
+		for (p = 1; p <= n; p += 4) {
+			ca = substr(s, p, 1);
+			cb = substr(s, p + 1, 1);
+			cc = substr(s, p + 2, 1);
+			cd = substr(s, p + 3, 1);
+			if (ca == "=" || cb == "") break;
+			a = idx[ca];
+			b = (cb == "") ? 0 : idx[cb];
+			c = (cc == "" || cc == "=") ? -1 : idx[cc];
+			d = (cd == "" || cd == "=") ? -1 : idx[cd];
+			out = out sprintf("%c", a * 4 + int(b / 16));
+			if (c >= 0) out = out sprintf("%c", (b % 16) * 16 + int(c / 4));
+			if (d >= 0) out = out sprintf("%c", (c % 4) * 64 + d);
+		}
+		printf "%s", out;
+	}'
+}
+
 ep_b64_decode() {
 	local data="$1" pad
+	case "$data" in
+		*-*|*_*) data="$(printf '%s' "$data" | tr '_' '/' | tr '-' '+')" ;;
+	esac
+	pad=$(( ${#data} % 4 ))
+	case "$pad" in
+		2) data="${data}==" ;;
+		3) data="${data}=" ;;
+		1) return 1 ;;
+	esac
 	if command -v base64 >/dev/null 2>&1; then
 		printf '%s' "$data" | base64 -d 2>/dev/null && return 0
 	fi
 	if command -v openssl >/dev/null 2>&1; then
-		pad=$(( ${#data} % 4 ))
-		[ "$pad" -eq 2 ] && data="${data}=="
-		[ "$pad" -eq 3 ] && data="${data}="
 		printf '%s' "$data" | openssl base64 -d -A 2>/dev/null && return 0
 	fi
+	if command -v awk >/dev/null 2>&1; then
+		printf '%s\n' "$data" | ep_b64_decode_awk && return 0
+	fi
 	return 1
+}
+
+ep_b64_encode_awk() {
+	awk 'function ord(c,   i) {
+		for (i = 0; i < 256; i++)
+			if (sprintf("%c", i) == c)
+				return i;
+		return 0;
+	}
+	BEGIN { alpha = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"; }
+	{
+		s = $0; n = length(s); out = "";
+		for (p = 1; p <= n; p += 3) {
+			c1 = ord(substr(s, p, 1));
+			c2 = (p + 1 <= n) ? ord(substr(s, p + 1, 1)) : 0;
+			c3 = (p + 2 <= n) ? ord(substr(s, p + 2, 1)) : 0;
+			b1 = int(c1 / 4);
+			b2 = (c1 % 4) * 16 + int(c2 / 16);
+			b3 = (c2 % 16) * 4 + int(c3 / 64);
+			b4 = c3 % 64;
+			out = out substr(alpha, b1 + 1, 1) substr(alpha, b2 + 1, 1);
+			out = out ((p + 1 <= n) ? substr(alpha, b3 + 1, 1) : "=");
+			out = out ((p + 2 <= n) ? substr(alpha, b4 + 1, 1) : "=");
+		}
+		printf "%s", out;
+	}'
 }
 
 ep_b64_encode() {
@@ -64,7 +132,15 @@ ep_b64_encode() {
 		printf '%s' "$1" | base64 | tr -d '\n'
 		return 0
 	fi
-	printf '%s' "$1" | openssl base64 -A 2>/dev/null | tr -d '\n'
+	if command -v openssl >/dev/null 2>&1; then
+		printf '%s' "$1" | openssl base64 -A 2>/dev/null | tr -d '\n'
+		return 0
+	fi
+	if command -v awk >/dev/null 2>&1; then
+		printf '%s\n' "$1" | ep_b64_encode_awk
+		return 0
+	fi
+	return 1
 }
 
 # Split "userinfo@host:port?query#frag" into EP_URI_USER / EP_URI_HOST /
@@ -304,25 +380,55 @@ ep_node_export_uri() {
 
 # Import one share link as a new node section. Prints the section id.
 # `uci add` is used (not a fixed index) so an upgrade never collides.
+# Endpoint identity of a share link, without touching UCI. Used by the
+# subscription importer so the same server is not imported twice.
+ep_node_key_from_uri() {
+	local uri="$1" parsed type server port method
+	parsed="$(ep_node_parse_uri "$uri" 2>/dev/null)" || return 1
+	type="$(printf '%s\n' "$parsed" | sed -n 's/^type=//p')"
+	server="$(printf '%s\n' "$parsed" | sed -n 's/^server=//p')"
+	port="$(printf '%s\n' "$parsed" | sed -n 's/^port=//p')"
+	method="$(printf '%s\n' "$parsed" | sed -n 's/^method=//p')"
+	[ -n "$server" ] || return 1
+	printf '%s|%s|%s|%s' "$type" "$server" "$port" "$method"
+}
+
 ep_node_import() {
-	local uri="$1" want_name="${2:-}" parsed section key value name
+	local uri="$1" want_name="${2:-}" parsed section key value name dupkey existing
 	parsed="$(ep_node_parse_uri "$uri")" || { printf '%s\n' "$EP_NODE_ERR" >&2; return 1; }
 	[ -n "$parsed" ] || { echo "empty node definition" >&2; return 1; }
 
+	# The same endpoint must not be stored twice: duplicate sections end up as
+	# duplicate outbound tags and make the entire config generation fail.
+	dupkey="$(printf '%s\n' "$parsed" | sed -n 's/^server=//p')"
+	if [ -n "$dupkey" ]; then
+		dupkey="$(printf '%s|%s|%s|%s' \
+			"$(printf '%s\n' "$parsed" | sed -n 's/^type=//p')" \
+			"$(printf '%s\n' "$parsed" | sed -n 's/^server=//p')" \
+			"$(printf '%s\n' "$parsed" | sed -n 's/^port=//p')" \
+			"$(printf '%s\n' "$parsed" | sed -n 's/^method=//p')")"
+		existing="$(ep_node_sections | while read -r s; do
+			[ "$(ep_node_key_of "$s")" = "$dupkey" ] && { printf '%s' "$s"; break; }
+		done)"
+		if [ -n "$existing" ]; then
+			echo "node already exists: $existing ($(ep_node_tag "$existing"))" >&2
+			return 1
+		fi
+	fi
 	section="$(uci -q add "$EP_CONFIG" node)" || { echo "cannot add a node section" >&2; return 1; }
 	[ -n "$section" ] || { echo "uci did not return a section id" >&2; return 1; }
 	printf '%s\n' "$parsed" | while IFS= read -r line; do
 		[ -n "$line" ] || continue
 		key="${line%%=*}"
 		value="${line#*=}"
-		uci -q set "${EP_CONFIG}.${section}.${key}" "$value"
+		uci -q set "${EP_CONFIG}.${section}.${key}=${value}"
 	done
-	uci -q set "${EP_CONFIG}.${section}.enabled" '1'
+	uci -q set "${EP_CONFIG}.${section}.enabled=1"
 	if [ -n "$want_name" ]; then
-		uci -q set "${EP_CONFIG}.${section}.name" "$want_name"
+		uci -q set "${EP_CONFIG}.${section}.name=${want_name}"
 	else
 		name="$(printf '%s\n' "$parsed" | sed -n 's/^name=//p')"
-		[ -n "$name" ] && uci -q set "${EP_CONFIG}.${section}.name" "$name"
+		[ -n "$name" ] && uci -q set "${EP_CONFIG}.${section}.name=${name}"
 	fi
 	uci -q commit "$EP_CONFIG" 2>/dev/null
 	printf '%s' "$section"

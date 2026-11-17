@@ -2,7 +2,7 @@
 
 EP_CONFIG="easyproxy"
 EP_CONFIG_FILE="${EP_CONFIG_FILE:-/etc/config/easyproxy}"
-EP_VERSION="0.8.8"
+EP_VERSION="0.8.9"
 EP_STAGE="7"
 
 EP_RUNTIME_DIR="${EP_RUNTIME_DIR:-/var/run/easyproxy}"
@@ -81,13 +81,31 @@ ep_engine_section() {
 }
 
 # Absolute path of the selected engine binary (empty when no engine is set)
+# Where sing-box is likely to live. Firmware bundles vary: this router ships
+# Open-Box under /opt/open-box/bin instead of /usr/bin, so a stale recorded
+# path must not turn into "binary missing" while the engine is installed.
+EP_SING_BOX_BIN_CANDIDATES="${EP_SING_BOX_BIN_CANDIDATES:-/usr/bin/sing-box /usr/sbin/sing-box /opt/open-box/bin/sing-box /opt/bin/sing-box /usr/lib/sing-box/sing-box}"
+
 ep_engine_binary() {
-	local section
+	local section recorded found
 	section="$(ep_engine_section "$1")" || return 0
 	case "$1" in
 		dae) ep_get "$section" binary '/usr/bin/dae' ;;
-		sing-box) ep_get "$section" binary '/usr/bin/sing-box' ;;
+		sing-box) recorded="$(ep_get "$section" binary '/usr/bin/sing-box')" ;;
+		*) return 0 ;;
 	esac
+	[ "$1" = "sing-box" ] || { printf '%s' "$recorded"; return 0; }
+	if [ -n "$recorded" ] && [ -x "$recorded" ]; then
+		printf '%s' "$recorded"
+		return 0
+	fi
+	for found in $EP_SING_BOX_BIN_CANDIDATES; do
+		if [ -x "$found" ]; then
+			printf '%s' "$found"
+			return 0
+		fi
+	done
+	printf '%s' "$recorded"
 }
 
 # Path of the config file the selected engine consumes
@@ -119,6 +137,44 @@ ep_node_count() {
 ep_node_sections() {
 	uci -q show "$EP_CONFIG" 2>/dev/null \
 		| sed -n 's/^easyproxy\.\([^.=]*\)=node$/\1/p'
+}
+
+# Tag actually used for a node inside a generated config. Two nodes that share
+# a display name would otherwise emit the same outbound tag and sing-box
+# rejects the whole config ("duplicate outbound/endpoint tag"), taking every
+# proxy down. EP_TAG_MAP is built once per generate run by
+# ep_build_tag_map; without it this falls back to the plain name.
+ep_node_uniq_tag() {
+	local section="$1" mapped=""
+	if [ -n "${EP_TAG_MAP:-}" ] && [ -f "$EP_TAG_MAP" ]; then
+		mapped="$(awk -F'\t' -v s="$section" '$1 == s { print $2; exit }' "$EP_TAG_MAP" 2>/dev/null)"
+		[ -n "$mapped" ] && { printf '%s' "$mapped"; return 0; }
+	fi
+	ep_node_tag "$section"
+}
+
+# Build section -> unique tag mapping for all enabled nodes. Duplicates get a
+# "-2", "-3" ... suffix in section order, stable across regenerations.
+ep_build_tag_map() {
+	local out="$1" section base uniq n seen
+	: > "$out"
+	seen=" "
+	for section in $(ep_node_sections); do
+		[ "$(ep_get "$section" enabled 1)" = "1" ] || continue
+		base="$(ep_node_tag "$section")"
+		[ -n "$base" ] || base="$section"
+		uniq="$base"
+		n=2
+		while :; do
+			case "$seen" in
+				*" $uniq "*) uniq="${base}-${n}"; n=$((n + 1)) ;;
+				*) break ;;
+			esac
+		done
+		seen="$seen$uniq "
+		printf '%s\t%s\n' "$section" "$uniq" >> "$out"
+	done
+	return 0
 }
 
 # Number of nodes that are not explicitly disabled
@@ -300,14 +356,33 @@ ep_now_ms() {
 
 # Measure a TCP handshake to host:port. Prints "<ms>" on success, "unreachable"
 # on a refused/timeout connection, "unknown" when no probe tool is installed.
-# nc is preferred (busybox ships it); curl is the fallback and its exit 7 is the
-# only code that means "never connected".
+# nc is preferred (busybox ships it); curl is the fallback and only exit 0
+# counts as a completed handshake.
 ep_tcp_probe() {
 	local host="$1" port="$2" timeout="${3:-3}" start end rc
 	[ -n "$host" ] && [ -n "$port" ] || { printf '%s' 'unknown'; return 0; }
 	case "$port" in
 		''|*[!0-9]*) printf '%s' 'unknown'; return 0 ;;
 	esac
+	# curl first: the busybox `nc` on a stripped firmware is a two-argument
+	# "nc IPADDR PORT" build that rejects -w and exits 1 on every call, which
+	# silently marked every node unreachable.
+	if command -v curl >/dev/null 2>&1; then
+		start="$(ep_now_ms)"
+		curl -sS -o /dev/null --connect-timeout "$timeout" --max-time "$timeout" \
+			"http://${host}:${port}/" >/dev/null 2>&1
+		rc=$?
+		end="$(ep_now_ms)"
+		# A shadowsocks/socks port speaks no HTTP, so a completed handshake
+		# comes back as 52 (empty reply) or 56 (reset) -- the port is alive.
+		# Only "never reached" is a failure: 7 refused, 28 timeout,
+		# 6/35 resolution or TLS.
+		case "$rc" in
+			0|52|56|92) printf '%s' "$((end - start))" ;;
+			*) printf '%s' 'unreachable' ;;
+		esac
+		return 0
+	fi
 	if command -v nc >/dev/null 2>&1; then
 		start="$(ep_now_ms)"
 		nc -w "$timeout" "$host" "$port" </dev/null >/dev/null 2>&1
@@ -317,19 +392,6 @@ ep_tcp_probe() {
 			printf '%s' "$((end - start))"
 		else
 			printf '%s' 'unreachable'
-		fi
-		return 0
-	fi
-	if command -v curl >/dev/null 2>&1; then
-		start="$(ep_now_ms)"
-		curl -sS -o /dev/null --connect-timeout "$timeout" --max-time "$timeout" \
-			"http://${host}:${port}/" >/dev/null 2>&1
-		rc=$?
-		end="$(ep_now_ms)"
-		if [ "$rc" = "7" ]; then
-			printf '%s' 'unreachable'
-		else
-			printf '%s' "$((end - start))"
 		fi
 		return 0
 	fi
@@ -426,6 +488,28 @@ ep_engine_health() {
 # while the share-link parsers are only needed when importing a node.
 
 # "name", server address or a section id -> section id
+# Identity of a node for duplicate detection: the same server/port with the
+# same protocol method is the same endpoint, no matter what it was named.
+ep_node_key_of() {
+	local section="$1"
+	printf '%s|%s|%s|%s' \
+		"$(ep_get "$section" type '')" \
+		"$(ep_get "$section" server '')" \
+		"$(ep_get "$section" port '')" \
+		"$(ep_get "$section" method '')"
+}
+
+# 0 when a node with the same endpoint already exists. Subscriptions re-imported
+# twice used to create duplicate sections, which then produced a duplicate
+# outbound tag and made the whole config generation fail.
+ep_node_exists_key() {
+	local key="$1" section
+	for section in $(ep_node_sections); do
+		[ "$(ep_node_key_of "$section")" = "$key" ] && return 0
+	done
+	return 1
+}
+
 ep_node_resolve() {
 	local want="$1" section
 	for section in $(ep_node_sections); do

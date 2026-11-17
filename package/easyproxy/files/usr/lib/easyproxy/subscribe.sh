@@ -1,15 +1,20 @@
 #!/bin/sh
 # Fetch a subscription and import its share links one by one.
 # Usage: sh subscribe.sh <url> [name-prefix]
-# The URL is never written to UCI or the log: this is a one-shot import.
+#
+# Two things this must survive on a real router:
+#   * a busybox image with neither `base64` nor `openssl` (the v2ray style
+#     base64 blob is decoded through node.sh, whose awk codec always works);
+#   * importing the same subscription twice, which used to create duplicate
+#     nodes and then break the whole config generation (duplicate outbound tag).
+#
+# The URL itself is never logged; the caller may record it in
+# /etc/easyproxy/subscribe.conf (mode 600) so the daily update can re-run it.
 
 [ -n "$1" ] || { echo "usage: subscribe.sh <url> [name-prefix]" >&2; exit 2; }
 url="$1"
 prefix="$2"
 
-# This runs as root (it is started by the root-owned CLI), so the scheme is
-# checked here as well: curl would happily read `file:///etc/shadow` or speak
-# gopher to a local service. Only http(s) subscriptions are supported.
 case "$url" in
 	http://*|https://*) ;;
 	*)
@@ -17,11 +22,20 @@ case "$url" in
 		exit 2
 		;;
 esac
+
+EP_LIB_DIR="${EP_LIB_DIR:-/usr/lib/easyproxy}"
+EP_CONFIG="${EP_CONFIG:-easyproxy}"
+EP_CONFIG_FILE="${EP_CONFIG_FILE:-/etc/config/easyproxy}"
+if [ -r "$EP_LIB_DIR/common.sh" ] && [ -r "$EP_LIB_DIR/node.sh" ]; then
+	. "$EP_LIB_DIR/common.sh"
+	. "$EP_LIB_DIR/node.sh"
+fi
+
 tmp="$(mktemp /tmp/easyproxy-sub.XXXXXX 2>/dev/null)" || exit 1
-trap 'rm -f "$tmp" "$tmp.dec"' EXIT
+trap 'rm -f "$tmp" "$tmp.dec" "$tmp.b64"' EXIT
 
 if command -v curl >/dev/null 2>&1; then
-	curl -fsSL --max-time 30 -A 'EasyProxy/0.6' "$url" -o "$tmp" || { echo "download failed" >&2; exit 1; }
+	curl -fsSL --max-time 30 -A 'EasyProxy/0.8' "$url" -o "$tmp" || { echo "download failed" >&2; exit 1; }
 else
 	wget -q -T 30 -O "$tmp" "$url" || { echo "download failed" >&2; exit 1; }
 fi
@@ -30,19 +44,22 @@ fi
 # v2ray style subscriptions ship a base64 blob with no scheme at all.
 if ! grep -q '://' "$tmp" 2>/dev/null; then
 	tr -d '\r\n ' < "$tmp" > "$tmp.b64"
-	if base64 -d "$tmp.b64" > "$tmp.dec" 2>/dev/null; then
-		mv "$tmp.dec" "$tmp"
-	elif openssl base64 -d -in "$tmp.b64" -out "$tmp.dec" 2>/dev/null; then
+	body="$(cat "$tmp.b64")"
+	decoded=""
+	if command -v ep_b64_decode >/dev/null 2>&1; then
+		decoded="$(ep_b64_decode "$body")"
+	fi
+	if [ -n "$decoded" ]; then
+		printf '%s\n' "$decoded" > "$tmp.dec"
 		mv "$tmp.dec" "$tmp"
 	else
 		echo "subscription is neither plain links nor decodable base64" >&2
-		rm -f "$tmp.b64"
 		exit 1
 	fi
-	rm -f "$tmp.b64"
 fi
 
 added=0
+skipped=0
 failed=0
 while IFS= read -r line; do
 	line="$(printf '%s' "$line" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
@@ -53,8 +70,20 @@ while IFS= read -r line; do
 		*://*) ;;
 		*) continue ;;
 	esac
+
+	# Duplicate detection runs on the parsed endpoint, not on the name: a
+	# subscription that ships the same server twice must not create two nodes.
+	key=""
+	if command -v ep_node_key_from_uri >/dev/null 2>&1; then
+		key="$(ep_node_key_from_uri "$line" 2>/dev/null)"
+	fi
+	if [ -n "$key" ] && ep_node_exists_key "$key"; then
+		skipped=$((skipped + 1))
+		continue
+	fi
+
 	if [ -n "$prefix" ]; then
-		name="$prefix-$((added + failed + 1))"
+		name="$prefix-$((added + skipped + failed + 1))"
 		if easyproxy node add "$line" "$name" >/dev/null 2>&1; then
 			added=$((added + 1))
 		else
@@ -69,5 +98,5 @@ while IFS= read -r line; do
 	fi
 done < "$tmp"
 
-printf 'imported: %s, failed: %s\n' "$added" "$failed"
-[ "$added" -gt 0 ]
+printf 'imported: %s, skipped: %s, failed: %s\n' "$added" "$skipped" "$failed"
+[ "$added" -gt 0 ] || [ "$skipped" -gt 0 ]

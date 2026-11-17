@@ -1,7 +1,11 @@
 config global 'main'
 	option enabled '0'
-	option engine 'none'
+	# sing-box ships enabled by default: "restore defaults" must leave a
+	# router that can start, not one whose engine is 'none'.
+	option engine 'sing-box'
 	option log_level 'notice'
+	# Log file is /var/log/easyproxy.log, created 0600 and rotated at this size.
+	option log_max_bytes '1048576'
 	option listen '127.0.0.1'
 	option listen_port '7890'
 	# sing-box caches the resolved addresses it learns so a restart does not

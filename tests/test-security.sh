@@ -190,6 +190,35 @@ else
 	ok "其他页面同样只 exec 固定 CLI"
 fi
 
+# The panel must reach the CLI through the ubus bridge: on current images
+# rpcd-mod-file exports no `file exec`, so fs.exec alone is a dead button.
+if grep -q '"easyproxy": \[ "run" \]' "$ACL"; then
+	ok "ACL 授予 easyproxy.run"
+else
+	no "ACL 授予 easyproxy.run" "$(grep -n 'easyproxy' "$ACL" | head -2)"
+fi
+if grep -q "ubus.call('easyproxy', 'run'" "$APP"; then
+	ok "app.js 通过 easyproxy.run 执行 CLI"
+else
+	no "app.js 通过 easyproxy.run 执行 CLI" "$(grep -n 'ubus.call' "$APP" | head -2)"
+fi
+UCODE="$SRC/package/easyproxy/files/usr/share/rpcd/ucode/luci.easyproxy.uc"
+if [ -f "$UCODE" ] && grep -q "return { 'easyproxy': methods }" "$UCODE"; then
+	ok "rpcd ucode 插件导出 easyproxy 对象"
+else
+	no "rpcd ucode 插件导出 easyproxy 对象"
+fi
+if grep -q 'const BIN = /usr/sbin/easyproxy' "$UCODE" 2>/dev/null || grep -q "const BIN = '/usr/sbin/easyproxy'" "$UCODE" 2>/dev/null; then
+	ok "ucode 插件只 spawn 固定 CLI"
+else
+	no "ucode 插件只 spawn 固定 CLI"
+fi
+if grep -q "refused subcommand" "$UCODE" 2>/dev/null; then
+	ok "ucode 插件拒绝未知子命令"
+else
+	no "ucode 插件拒绝未知子命令"
+fi
+
 if grep -qn "eval \|sh -c\|sh -c " "$BIN_SRC"; then
 	no "CLI 不使用 eval / sh -c 解释参数" "$(grep -n 'eval \|sh -c' "$BIN_SRC" | head -3)"
 else

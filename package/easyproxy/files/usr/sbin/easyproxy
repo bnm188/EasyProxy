@@ -544,6 +544,16 @@ cmd_node_export() {
 	return 0
 }
 
+cmd_node_enabled() {
+	local want="$1" val="$2" section word
+	[ -n "$want" ] || { echo "usage: easyproxy node enable|disable <name|server|section>" >&2; return 2; }
+	section="$(ep_node_resolve "$want")" || { echo "no such node: $want" >&2; return 1; }
+	uci -q set "${EP_CONFIG}.${section}.enabled=${val}" || return 1
+	uci -q commit "$EP_CONFIG" 2>/dev/null
+	[ "$val" = "1" ] && word=enabled || word=disabled
+	printf '%s %s\n' "$word" "$(ep_node_tag "$section")"
+}
+
 cmd_node_del() {
 	local want="$1" section
 	[ -n "$want" ] || { echo "usage: easyproxy node del <name|server|section>" >&2; return 2; }
@@ -584,11 +594,48 @@ cmd_rule_add() {
 	ep_rule_add "$entry" || return 1
 }
 
+# `easyproxy binary path` — where the engine binary really is. The panel's
+# "内核" card and doctor both need this answer after a reset or an upgrade that
+# left a stale path behind.
+cmd_binary() {
+	local action="${1:-path}" engine binary
+	case "$action" in
+		path|show) ;;
+		*) echo "Unknown binary action: $action" >&2; return 2 ;;
+	esac
+	engine="$(ep_get main engine sing-box)"
+	binary="$(ep_engine_binary "$engine")"
+	if [ "$JSON" = "1" ]; then
+		printf '{"engine":"%s","binary":"%s","state":"%s"}\n' \
+			"$(ep_json_escape "$engine")" \
+			"$(ep_json_escape "$binary")" \
+			"$(ep_binary_state "$binary")"
+	else
+		printf '%s\n' "$binary"
+	fi
+	return 0
+}
+
 cmd_rule_del() {
-	local idx="$1"
-	[ -n "$idx" ] || { echo "usage: easyproxy rule del <index>" >&2; return 2; }
+	local idx="$1" spec="" n=0 entry old_ifs
+	[ -n "$idx" ] || { echo "usage: easyproxy rule del <index|type:value:outbound>" >&2; return 2; }
 	case "$idx" in
-		*[!0-9]*) echo "rule index must be a number" >&2; return 2 ;;
+		*[!0-9]*)
+			# Rule specs are what `rule add` and `rule list` show, so accepting
+			# the same string here is the natural way to delete one. Only the
+			# index worked before, which made a delete look like it had no effect.
+			spec="$idx"
+			old_ifs="$IFS"
+			IFS=';'
+			for entry in $(ep_get routing custom_rules ''); do
+				n=$((n + 1))
+				if [ "$entry" = "$spec" ]; then idx="$n"; break; fi
+			done
+			IFS="$old_ifs"
+			case "$idx" in
+				*[!0-9]*) echo "no rule matches: $spec" >&2; return 1 ;;
+			esac
+			;;
 	esac
 	ep_rule_delete "$idx" || return 1
 	printf 'Deleted rule #%s\n' "$idx"
@@ -1481,10 +1528,16 @@ update_verify_install() {
 	grep -q 'baseclass.extend' "$app" || { echo "update: app.js is not the expected module" >&2; return 1; }
 	grep -q 'easyproxy/update' "$menu" 2>/dev/null || true
 	[ -x "$SELF" ] || { echo "update: CLI is not executable" >&2; return 1; }
-	# Read the version baked into the file that was just installed. Asking the
-	# running CLI would report the old build, which is exactly what this check
-	# exists to catch.
-	v="$(sed -n 's/.*EP_VERSION="\([^"]*\)".*/\1/p' "$EP_UPDATE_ROOT/usr/sbin/easyproxy" 2>/dev/null | head -n 1)"
+	# Read the version baked into common.sh of the tree that was just installed.
+	# Asking the running CLI would report the old build, which is exactly what
+	# this check exists to catch. It must NOT read usr/sbin/easyproxy: that file
+	# carries no EP_VERSION= of its own, so the `sed` expression below would
+	# match its own source line and yield "\([^" as the version, failing every
+	# real upgrade. (Found on a Kwrt x86_64 router: 0.8.7 -> 0.8.8 rolled back.)
+	v="$(sed -n 's/.*EP_VERSION="\([^"]*\)".*/\1/p' "$EP_UPDATE_ROOT/usr/lib/easyproxy/common.sh" 2>/dev/null | head -n 1)"
+	case "$v" in
+		''|*[!0-9.]*) v="" ;;
+	esac
 	[ -n "$v" ] || { echo "update: the installed CLI carries no version" >&2; return 1; }
 	[ -z "${1:-}" ] || { [ "$v" = "$1" ] || { echo "update: installed $v, expected $1" >&2; return 1; }; }
 	echo "update: installed version reports $v"
@@ -1615,10 +1668,81 @@ cmd_traffic() {
 	sh "$lib" "$iface"
 }
 
+# Remembered subscription: a subscription without its URL is useless the next
+# day, and the URL is a credential (it often carries a token). It therefore
+# lives in a 0600 file, never in UCI and never in the diagnostic bundle.
+EP_SUB_CONF="${EP_SUB_CONF:-/etc/easyproxy/subscribe.conf}"
+EP_SUB_CRON_TAG="# easyproxy-sub-daily"
+EP_SUB_CRON="37 4 * * * /usr/sbin/easyproxy subscribe --update >/dev/null 2>&1 $EP_SUB_CRON_TAG"
+
+sub_record() {
+	local url="$1" prefix="$2"
+	mkdir -p "$(dirname "$EP_SUB_CONF")" 2>/dev/null
+	( umask 077; printf 'url=%s\nprefix=%s\n' "$url" "$prefix" > "$EP_SUB_CONF" ) || return 1
+	chmod 600 "$EP_SUB_CONF" 2>/dev/null || true
+	return 0
+}
+
+sub_daily() {
+	local state="$1"
+	case "$state" in
+		on|enable|1)
+			[ -r "$EP_SUB_CONF" ] || {
+				echo "subscribe: no subscription remembered yet; run 'easyproxy subscribe <url>' first" >&2
+				return 1; }
+			mkdir -p "$(dirname "$EP_CRONTAB")" 2>/dev/null
+			if [ -f "$EP_CRONTAB" ]; then
+				grep -v 'easyproxy subscribe --update' "$EP_CRONTAB" > "$EP_CRONTAB.tmp" 2>/dev/null || true
+				mv -f "$EP_CRONTAB.tmp" "$EP_CRONTAB"
+			fi
+			printf '%s\n' "$EP_SUB_CRON" >> "$EP_CRONTAB"
+			chmod 600 "$EP_CRONTAB" 2>/dev/null || true
+			/etc/init.d/cron enable >/dev/null 2>&1 || true
+			/etc/init.d/cron restart >/dev/null 2>&1 || true
+			echo "subscribe: daily update enabled (04:37)"
+			return 0 ;;
+		off|disable|0)
+			[ -f "$EP_CRONTAB" ] || { echo "subscribe: no daily job configured"; return 0; }
+			grep -v 'easyproxy subscribe --update' "$EP_CRONTAB" > "$EP_CRONTAB.tmp" 2>/dev/null || true
+			mv -f "$EP_CRONTAB.tmp" "$EP_CRONTAB"
+			/etc/init.d/cron restart >/dev/null 2>&1 || true
+			echo "subscribe: daily update disabled"
+			return 0 ;;
+		*) echo "subscribe: --daily takes on or off" >&2; return 2 ;;
+	esac
+}
+
+sub_update() {
+	local url prefix
+	[ -r "$EP_SUB_CONF" ] || {
+		echo "subscribe: no subscription remembered yet; run 'easyproxy subscribe <url>' first" >&2
+		return 1; }
+	url="$(sed -n 's/^url=//p' "$EP_SUB_CONF" | head -n 1)"
+	prefix="$(sed -n 's/^prefix=//p' "$EP_SUB_CONF" | head -n 1)"
+	[ -n "$url" ] || { echo "subscribe: remembered subscription has no url" >&2; return 1; }
+	cmd_subscribe "$url" "$prefix"
+}
+
 cmd_subscribe() {
 	local url="${1:-}"
 	local prefix="${2:-}"
 	local lib="${EP_SUBSCRIBE_LIB:-/usr/lib/easyproxy/subscribe.sh}"
+	case "$url" in
+		--update|update) sub_update; return $? ;;
+		--daily|daily) sub_daily "${prefix:-}"; return $? ;;
+		--forget)
+			[ -f "$EP_SUB_CONF" ] && rm -f "$EP_SUB_CONF"
+			echo "subscribe: remembered subscription cleared"
+			return 0 ;;
+		--show)
+			if [ -r "$EP_SUB_CONF" ]; then
+				sed -n 's/^prefix=/prefix=/p' "$EP_SUB_CONF"
+				sed -n 's/^url=//p' "$EP_SUB_CONF" | sed 's/^/url=/'
+			else
+				echo "subscribe: nothing remembered"
+			fi
+			return 0 ;;
+	esac
 	case "$url" in
 		http://*|https://*) ;;
 		*)
@@ -1634,6 +1758,11 @@ cmd_subscribe() {
 	esac
 	[ -r "$lib" ] || { echo "subscription helper is missing: $lib" >&2; return 3; }
 	sh "$lib" "$url" "$prefix"
+	rc=$?
+	# Remember the URL whether or not every link imported: the endpoint list
+	# changes over time and the next run only adds what is genuinely new.
+	[ "$rc" -eq 0 ] && sub_record "$url" "$prefix"
+	return $rc
 }
 
 CMD="${1:-}"
@@ -1657,8 +1786,20 @@ case "$CMD" in
 	status)
 		if [ "$JSON" = "1" ]; then cmd_status_json; else cmd_status_text; fi
 		;;
+	version|--version|-v)
+		# The panel's version button calls this; without it the button fell
+		# through to the usage text and reported a non-zero exit.
+		if [ "$JSON" = "1" ]; then
+			printf '{"version":"%s"}\n' "$EP_VERSION"
+		else
+			printf '%s\n' "$EP_VERSION"
+		fi
+		;;
 	validate)
 		if [ "$JSON" = "1" ]; then cmd_validate_json; else cmd_validate_text; fi
+		;;
+	binary)
+		cmd_binary "$SUB"
 		;;
 	engine)
 		case "$SUB" in
@@ -1676,6 +1817,8 @@ case "$CMD" in
 			add) cmd_node_add "$SUB2" "$SUB3" ;;
 			import) cmd_node_import "$SUB2" "$SUB3" ;;
 			export|dump) cmd_node_export "$SUB2" ;;
+			enable) cmd_node_enabled "$SUB2" 1 ;;
+			disable) cmd_node_enabled "$SUB2" 0 ;;
 			del|delete|rm) cmd_node_del "$SUB2" ;;
 			test|ping) cmd_node_test ;;
 			*) echo "Unknown node action: $SUB" >&2; exit 2 ;;

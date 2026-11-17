@@ -59,6 +59,19 @@ esac
 NC
 chmod +x "$SB/bin/nc" "$SB/bin/logger"
 
+# curl stub: ep_tcp_probe tries curl first now (the stripped busybox nc on the
+# target firmware rejects -w and always exits 1), so reachability is decided
+# here. 0 stands for a completed handshake.
+cat > "$SB/bin/curl" <<'CURL'
+#!/bin/sh
+[ -f "$EP_TEST_NC_SLEEP" ] && sleep 0.1
+case "${EP_TEST_NC_RC:-0}" in
+	0) exit 0 ;;
+	*) exit "${EP_TEST_CURL_RC:-7}" ;;
+esac
+CURL
+chmod +x "$SB/bin/curl"
+
 # Engine stub: answers version/check, and exits 0 immediately for run.
 cat > "$SB/bin/sing-box" <<'ENG'
 #!/bin/sh

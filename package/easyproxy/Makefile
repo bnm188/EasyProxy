@@ -1,7 +1,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=easyproxy
-PKG_VERSION:=0.8.8
+PKG_VERSION:=0.8.9
 PKG_RELEASE:=1
 
 PKG_LICENSE:=MIT
@@ -99,6 +99,8 @@ define Package/easyproxy/install
 	$(INSTALL_DATA) ./files/usr/share/luci/menu.d/luci-app-easyproxy.json $(1)/usr/share/luci/menu.d/luci-app-easyproxy.json
 	$(INSTALL_DIR) $(1)/usr/share/rpcd/acl.d
 	$(INSTALL_DATA) ./files/usr/share/rpcd/acl.d/luci-app-easyproxy.json $(1)/usr/share/rpcd/acl.d/luci-app-easyproxy.json
+	$(INSTALL_DIR) $(1)/usr/share/rpcd/ucode
+	$(INSTALL_DATA) ./files/usr/share/rpcd/ucode/luci.easyproxy.uc $(1)/usr/share/rpcd/ucode/luci.easyproxy.uc
 	$(INSTALL_DIR) $(1)/etc/easyproxy/ruleset
 endef
 

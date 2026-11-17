@@ -53,6 +53,7 @@ mkdir -p "$D/etc/config" "$D/etc/init.d" "$D/etc/hotplug.d/iface" "$D/usr/sbin" 
 	"$D/www/luci-static/resources/easyproxy" \
 	"$D/www/luci-static/resources/view/easyproxy" \
 	"$D/usr/share/luci/menu.d" "$D/usr/share/rpcd/acl.d" \
+	"$D/usr/share/rpcd/ucode" \
 	"$D/etc/easyproxy/ruleset"
 
 F="$SRC_DIR/files"
@@ -80,6 +81,8 @@ install -m 0644 "$F/usr/share/luci/menu.d/luci-app-easyproxy.json" \
 	"$D/usr/share/luci/menu.d/luci-app-easyproxy.json"
 install -m 0644 "$F/usr/share/rpcd/acl.d/luci-app-easyproxy.json" \
 	"$D/usr/share/rpcd/acl.d/luci-app-easyproxy.json"
+install -m 0644 "$F/usr/share/rpcd/ucode/luci.easyproxy.uc" \
+	"$D/usr/share/rpcd/ucode/luci.easyproxy.uc"
 
 SIZE="$(du -sk "$D" | awk '{print $1}')"
 cat > "$STAGE/control/control" <<EOF
