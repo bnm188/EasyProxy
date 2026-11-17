@@ -426,9 +426,9 @@ function pageProxy(){
     resultBox('r-px');
 }
 
-/* ================= 页 3：连接设置 ================= */
+/* ================= 页 3：连接 ================= */
 function pageConn(){
-  return '<div class="page-head"><h1 class="page-title">连接设置</h1>'+
+  return '<div class="page-head"><h1 class="page-title">连接</h1>'+
     '<p class="page-desc">总开关、监听端口、透明代理与失败闭合</p></div>'+
 
     '<div class="card"><div class="card-hd"><h3>总开关</h3><span class="hd-note">easyproxy.main.enabled</span></div><div class="card-bd" style="padding:4px 12px">'+
@@ -529,7 +529,7 @@ function pageSettings(){
 const PAGES = [
   { id:'overview', t:'概览',     fn:pageOverview },
   { id:'proxy',    t:'代理',     fn:pageProxy },
-  { id:'conn',     t:'连接设置', fn:pageConn },
+  { id:'conn',     t:'连接',     fn:pageConn },
   { id:'dns',      t:'DNS',      fn:pageDns },
   { id:'settings', t:'设置',     fn:pageSettings }
 ];
@@ -717,12 +717,12 @@ function confirmDialog(title, body, onOk){
 
 /* ================= 抽屉：四类定稿说明 ================= */
 function drawerHtml(){
-  return '<div class="d-q"><b>四类结构参照 Open-Box 面板的导航设定</b>（其前端文案里 <span class="mono">overview:"概览"</span> / <span class="mono">proxies:"代理"</span> / <span class="mono">connectionSettings:"连接设置"</span> 与本版一一对应）。这一版只做四类主干，其余功能按后续版本逐个加回。</div>'+
+  return '<div class="d-q"><b>五类结构参照 Open-Box 面板的导航设定</b>（其前端文案里 <span class="mono">overview:"概览"</span> / <span class="mono">proxies:"代理"</span> / <span class="mono">connectionSettings:"连接设置"</span> 与本版一一对应）。这一版只做五类主干，其余功能按后续版本逐个加回。</div>'+
 
   '<div class="d-sec">本版包含</div>'+
   '<div class="d-item"><span class="k">1</span><span class="v"><b>概览</b>：网络状态四格 + 站点延时 + 运行细节 + 快捷操作</span></div>'+
   '<div class="d-item"><span class="k">2</span><span class="v"><b>代理</b>：节点 / 节点分组 / 导入 / 订阅 / 分流策略 / 平台分流 / 分流实测</span></div>'+
-  '<div class="d-item"><span class="k">3</span><span class="v"><b>连接设置</b>：总开关 / 自启 / 失败闭合 / 两个端口 / IPv6 / 透明代理 / 当前连接</span></div>'+
+  '<div class="d-item"><span class="k">3</span><span class="v"><b>连接</b>：总开关 / 自启 / 失败闭合 / 两个端口 / IPv6 / 透明代理 / 当前连接</span></div>'+
   '<div class="d-item"><span class="k">4</span><span class="v"><b>DNS</b>：国内与 DoH / DNS 分流 / FakeIP / 解析测试 / 规则集</span></div>'+
 
   '<div class="d-sec">暂缓到后续版本</div>'+
