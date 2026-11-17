@@ -129,7 +129,9 @@ check_env() {
 
 	say ""
 	if [ "$fail" = 0 ]; then
-		say "结论：可以安装。建议执行：sh easyproxy.sh install"
+		say "结论：可以安装。直接复制下面这一行执行："
+		say ""
+		say "  wget -qO- https://raw.githubusercontent.com/${REPO}/${BRANCH}/scripts/easyproxy.sh | sh -s install"
 	else
 		say "结论：存在阻塞项，先按上面 [失败] 的提示处理，再执行安装。"
 	fi
