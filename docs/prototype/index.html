@@ -872,8 +872,8 @@ function pageUpdate(){
     resultBox('r-nd2')),
 
     sec('report',
-    '<div class="card"><div class="card-hd"><h3>故障报告</h3><span class="hd-note">坚果云 · 每 15 天一次</span></div><div class="card-bd">'+
-      '<label class="switch-row"><input type="checkbox" class="sw" data-sw="diagAuto" '+(STATE.diagAuto?'checked':'')+'><span><span class="sw-lab">自动上报</span><span class="sw-sub">每 15 天打包一次诊断日志，上传到坚果云 EasyProxy 目录</span></span></label>'+
+    '<div class="card"><div class="card-hd"><h3>故障报告</h3><span class="hd-note">每 15 天一次 · 自动上传</span></div><div class="card-bd">'+
+      '<label class="switch-row"><input type="checkbox" class="sw" data-sw="diagAuto" '+(STATE.diagAuto?'checked':'')+'><span><span class="sw-lab">自动上报</span><span class="sw-sub">每 15 天打包一次诊断日志，自动上传到诊断目录</span></span></label>'+
       '<label class="switch-row"><input type="checkbox" class="sw" data-sw="diagMask" '+(STATE.diagMask?'checked':'')+'><span><span class="sw-lab">脱敏</span><span class="sw-sub">上传前抹除节点地址、密码与订阅令牌</span></span></label>'+
     '</div><div class="bar"><button class="btn primary" data-act="diag-now">立即上报一次</button><button class="btn" data-act="report-copy">生成问题摘要</button></div></div>')
   ].join('');
@@ -1104,7 +1104,7 @@ function drawerHtml(){
   '<div class="d-item"><span class="k">内核</span><span class="v">sing-box / dae 切换（dae 在固件上仍不可用）</span></div>'+
   '<div class="d-item"><span class="k">更新</span><span class="v">版本检查、安装、回滚</span></div>'+
   '<div class="d-item"><span class="k">备份</span><span class="v">备份 / 恢复 / 恢复出厂</span></div>'+
-  '<div class="d-item"><span class="k">系统</span><span class="v">诊断上报（每 15 天自动传坚果云）等杂项</span></div>'+
+  '<div class="d-item"><span class="k">系统</span><span class="v">诊断上报（每 15 天自动上传）等杂项</span></div>'+
 
   '<div class="d-sec">三条交互规范（沿用，未变）</div>'+
   '<div class="d-item"><span class="k">防重入</span><span class="v">点击即置灰「处理中」，拿到响应或 60s 超时才恢复</span></div>'+
