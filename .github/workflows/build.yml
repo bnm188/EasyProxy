@@ -13,10 +13,10 @@ on:
         required: false
         default: ""
   schedule:
-    # 每天 03:00 UTC（北京时间 11:00）跑一次体检构建：编译、跑全套测试、上传 artifact，
-    # 定时运行也按版本号判断：PKG_VERSION 比最新 Release 新就发版，所以一次推送
-    # 即使没启动构建，最晚到这次定时运行也会自动出包发版。可能延迟 5~20 分钟。
-    - cron: '0 3 * * *'
+    # 每 2 小时整点跑一次：编译、跑全套测试、上传 artifact，并按版本号判断是否发版。
+    # 令牌推送不会启动构建，所以定时这里就是自动发版的落地通道：版本号一变，
+    # 最晚两小时内自己出包发版。GitHub 的定时任务可能再延迟 5~20 分钟。
+    - cron: '0 */2 * * *'
 
 permissions:
   contents: write
@@ -48,11 +48,11 @@ jobs:
       # Release intent, resolved once here so every later step uses the same tag:
       #   1. a v* tag the maintainer pushed by hand;
       #   2. a manual run that passes inputs.version;
-      #   3. the version number itself: on main, on the daily scheduled run, and
-      #      on a manual run without an input, PKG_VERSION is compared with the
-      #      newest published release and a higher version publishes by itself.
+      #   3. the version number itself: on main, on the scheduled run, and on a
+      #      manual run without an input, PKG_VERSION is compared with the newest
+      #      published release and a higher version publishes by itself.
       #      The scheduled run is what makes an automation push land: commits
-      #      made with a token do not start a workflow, the 11:00 build does.
+      #      made with a token do not start a workflow, the scheduled build does.
       # A commit whose message carries [no-release] is exempt, for work that must
       # land on main without producing a release.
       - name: Resolve the release intent
