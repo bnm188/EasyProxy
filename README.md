@@ -2,8 +2,8 @@
 
 **OpenWrt / ImmortalWrt 上的中文代理管理系统。装一次，导入订阅就能用。**
 
-![version](https://img.shields.io/badge/version-0.8.12-blue)
-![tests](https://img.shields.io/badge/tests-866%20passed-brightgreen)
+![version](https://img.shields.io/badge/version-0.8.13-blue)
+![tests](https://img.shields.io/badge/tests-873%20passed-brightgreen)
 ![firmware](https://img.shields.io/badge/firmware-OpenWrt%20%7C%20ImmortalWrt%20%7C%20Kwrt-informational)
 ![license](https://img.shields.io/badge/license-MIT-green)
 
@@ -52,7 +52,7 @@ wget -qO- https://aka.doubaocdn.com/s/kTrtzs1bxe | sh
 
 ## 面板
 
-LuCI「服务 → EasyProxy」共 10 个中文页面：总览、节点、订阅、分流、透明代理、DNS、内核、维护、日志、关于。总览页直接把状态做成卡片，包括「入口旁路（国内不进内核）」的运行状态、地址表条数、判定口径，以及一键「恢复直连」。
+LuCI「服务 → EasyProxy」共 11 个中文页面：运行总览、节点管理、订阅管理、智能分流、内核管理、DNS 设置、规则管理、日志中心、备份与恢复、系统设置、版本更新。总览页直接把状态做成卡片，包括「入口旁路（国内不进内核）」的运行状态、地址表条数、判定口径，以及一键「恢复直连」。
 
 ---
 
@@ -67,18 +67,20 @@ LuCI「服务 → EasyProxy」共 10 个中文页面：总览、节点、订阅�
 
 ---
 
-## 已知限制（0.8.3）
+## 已知限制（0.8.13）
 
-- **换节点会断连**：改配置 + 重载，没有 clash API 热切换 → 计划 0.8.3。
-- **平台分流只有三个开关**：YouTube / Netflix / TikTok，且共用同一个 `proxy` 组 → 计划 0.8.5。
-- **dae 只装不用**：适配器标记开发中，`easyproxy start` 会拒绝它 → 计划 0.8.9。
-- **未上真机**：透明代理、`cn_ipv4` 集合的加载时间与内存占用目前只在沙箱验证 → 计划 0.8.8。
+- **同名节点会让整站断网**：同一节点导入两次即 `duplicate outbound tag`，配置生成失败 → 待修。
+- **`ss://` base64url 链接导不进**：报 `ss userinfo is not base64`，部分机场格式受影响 → 待修。
+- **测速会把死地址判成可达**：超时也报 `reachable` → 待修。
+- **dae 只装不用**：适配器标记开发中，`easyproxy start` 会拒绝它。
+- **换节点会断连**：改配置 + 重载，没有 clash API 热切换。
+- **平台分流只有三个开关**：YouTube / Netflix / TikTok。
 
 ---
 
 ## 测试
 
-15 套 **815 项**，`tests/run-all.sh` 是唯一计数来源；CI 会下载并校验 pinned sing-box，用真实内核跑 `check`，失败即停、不会发布。
+16 套 **873 项**，`tests/run-all.sh` 是唯一计数来源；CI 会下载并校验 pinned sing-box，用真实内核跑 `check`，失败即停、不会发布。
 
 ```sh
 EP_SING_BOX_BIN=/usr/bin/sing-box sh tests/run-all.sh
@@ -98,19 +100,12 @@ EP_SING_BOX_BIN=/usr/bin/sing-box sh tests/run-all.sh
 
 | 版本 | 里程碑 |
 |---|---|
-| 0.8.2 | 入口旁路：国内流量不进内核 ✅ |
-| 0.8.3 | 面板一键更新（SHA256 校验 + 自动回滚）、日志真正落盘并 600、客户诊断按编号归档每天上传 ✅ ｜ 无缝热切换（clash API）待做 |
-| 0.8.4 | 引擎接口 v2 + dae 条件化加载 |
-| 0.8.5 | 十个平台分流 + 可绑定地区组 |
-| 0.8.6 | 架构矩阵扩展 |
-| 0.8.7 | 生态第一步：profile 导出 + 扫码导入 |
-| 0.8.8 | 真机验收 + 面板升级 |
-| 0.8.9 | dae 真正启动 |
-| 0.8.10 | 修掉阻断升级的自校验缺陷（真机实测：0.8.7→0.8.8 曾自动回滚）＋全部 24 项真机验收取证 ｜ ⚠️ 升级会覆盖用户配置，请直接装 0.8.11 |
-| 0.8.11 | 尝试用 `--exclude` 阻止升级覆盖配置 ｜ ⚠️ 该固件的 busybox tar 不认 `--exclude`，等于未修复，请直接装 0.8.12 |
-| 0.8.12 | 改用 busybox 支持的 `-X` 模式文件（`./etc/config/*`）排除配置，真机实测升级后节点与开关保住 |
+| 0.8.13 | 面板随包自带 ubus 客户端，修复新版 LuCI 上整页 NetworkError ✅ ｜ 一键安装按版本号取最新 ipk ✅ ｜ 构建产物移出版本控制 ✅ |
+| 0.8.14 | 同名节点去重（断网级缺陷） |
+| 0.8.15 | `ss://` base64url 解析、测速判定修正 |
+| 0.8.16 | 订阅去重 + 节点启停开关 |
 
-进度见 [`docs/PROJECT-STATUS.md`](docs/PROJECT-STATUS.md)，细项见 [`docs/DEVELOPMENT-PLAN.md`](docs/DEVELOPMENT-PLAN.md)，历次报告见 [`docs/reports/`](docs/reports/)。
+进度见 [`docs/PROJECT-STATUS.md`](docs/PROJECT-STATUS.md)，活缺陷见 [`docs/issues/`](docs/issues/)，新增报告见 [`docs/reports/`](docs/reports/)。
 
 ---
 

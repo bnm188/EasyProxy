@@ -1,136 +1,67 @@
 # EasyProxy 项目总进度
 
-更新日期：2026-11-17
-当前版本：**0.8.8**（已发布，12 资产）
-真机：Kwrt 25.12-SNAPSHOT x86_64，面板 `http://10.10.10.13/cgi-bin/luci/admin/services/easyproxy`
+更新日期：2026-11-18
+当前版本：**0.8.13**（已发布，2 资产：ipk + SHA256SUMS）
+真机：Kwrt 25.12-SNAPSHOT / x86_64 / LuCI 27.307.53063，面板 `http://10.10.10.13/cgi-bin/luci/admin/services/easyproxy`
 
 本文件只回答一个问题：**哪些功能是真的能用，哪些只是"代码里在"。**
-判定依据与完整取证见 [功能审计报告](reports/EASYPROXY-FUNCTION-AUDIT.md)。
+历史版本的验收与审计记录已按要求清除，本文件从 0.8.13 重新起算；活缺陷见 [`docs/issues/`](issues/INDEX.md)。
 
 ---
 
-## 一、真正已实现（有真实运行证据）
+## 一、0.8.13 修掉的三件事（均有实现与验证）
 
-以下每一项都在本地沙箱（x86_64 Linux + 真 sing-box 1.14.4）或真机上实际跑过，并留下输出。
-
-| 功能 | 证据 |
-|---|---|
-| ss / vmess / vless 链接导入 | 三种协议导入成功，uci 落点正确 |
-| 节点删除 | 删除后节点消失 |
-| 订阅拉取（明文 / 整体 base64） | 本地 HTTP，两种格式均 2/2 成功 |
-| 国家地区自动分组 | 香港→auto-hk、美国→auto-us、日本→auto-jp |
-| 自动选节点（urltest） | 生成配置含 3 个 urltest 组 |
-| 手动选节点（selector） | 生成配置含 selector 出站 |
-| YouTube / Netflix / TikTok 独立分流 | 15 条平台域名落进内核配置 |
-| 大陆直连（锁定不可改） | validate 拒绝 proxy，配置固定 direct |
-| DNS 分流 | 配置含 dns.servers / rules / final |
-| 内网保护（不可关闭） | 私有网段规则进配置 |
-| 配置生成 + 内核自校验 | `Engine validation: passed`，`sing-box check rc=0` |
-| sing-box 真实启动 | 7890 真实监听，经代理 curl 得 HTTP 204 |
-| 内核版本读取 | `sing-box version 1.14.4` |
-| 脚本规则增删查 | rule list 正确显示 |
-| 运行状态读取 | `status --json` 字段齐全 |
-| 一键更新检查 | 真实 GitHub：current 0.8.8 / latest 0.8.8 |
-| 诊断回传（坚果云 WebDAV） | MKCOL/PUT 实测 201，通道打通 |
-| 15 天自动上报 | crontab 写入 `17 3 */15 * *` |
-| SSH 一键安装 | 真机 0.8.3→0.8.8 多次安装成功，面板可开 |
-
-**19 项 / 47 个审计点 = 36% 有真实运行证据。**
-
----
-
-## 二、代码已实现，但未经真实运行验证（18 项）
-
-不是"没写"，是"没在真机上验收过"。本环境缺 nftables / procd / rpcd，无法产出证据：
-
-- 透明代理开启/关闭、入口绕过、透明代理审计（要 nftables）
-- 内核停止 / 重启 / 故障自动恢复（要 procd）
-- 规则集更新、完整性检查（要外网 + 真机路径）
-- 配置备份 / 恢复 / 恢复默认（要 `/etc/config` 与 `/usr/share/easyproxy/`）
-- 日志查看与轮转、完整诊断 doctor
-- 一键更新应用、失败回滚
-- 仅清理自身规则
-- 节点测速的 nc 分支（真机走 nc，本地走 curl 分支）
-- 从文件批量导入
-
-**这 18 项必须在真机上逐项跑一次，才能进"已实现"清单。**
-
----
-
-## 三、明确没实现或坏的（10 项）
-
-| 项 | 状态 | 说明 |
+| 问题 | 根因 | 处理 |
 |---|---|---|
-| 面板所有按钮无响应 | **坏** | 真机实测，根因未定性（ACL 未刷新 或 app.js 报错） |
-| 同名节点导致配置生成失败 | **坏** | 拉两次订阅即复现，`duplicate outbound tag`，全站断网 |
-| 节点测速超时误判可达 | **坏** | 三个死地址全部报 `reachable 3019 ms` |
-| `ss://` base64url 链接 | **坏** | 报 `ss userinfo is not base64`，主流机场格式导不进 |
-| 订阅去重 / 定时更新 | 缺 | 无去重、无 cron、无增量 |
-| 面板节点启用/停用 | 缺 | 只显示状态，不能改 |
-| 节点导出分享链接 | 缺界面 | CLI 有 `node export`，面板无按钮 |
-| dae 内核 | 缺 | 只有 FRAME ONLY 骨架，明确"开发中" |
-| 远程 SSH 管理 | 缺 | 面板无此功能 |
-| 流量统计 | 部分 | 接口写死 `br-lan`，取不到时静默画 0 |
+| 面板整页 NetworkError | 新版 LuCI（27.x）不再发布 `/luci-static/resources/ubus.js`，改用 `rpc.js`，而 `app.js` 写死 `'require ubus'` → 404 → 内容区整页失败 | 新增随包发布的 `easyproxy/ubus.js`，`app.js` 改为 `'require easyproxy.ubus as ubus'`；真机 `ubus.js` 由 404 变 200 |
+| 一键安装装到旧版本 | 发布里残留上一次的 ipk 时，`asset_from_api()` 用 `grep + head -1` 取到旧的 | 新增 `asset_newest_from_api()`，按文件名版本号取最大；`release_component_version()` 同步 |
+| 发布夹带旧包 | `dist/*.ipk` 一直被 git 跟踪，发版时整目录上传 | `git rm --cached` 并写入 `.gitignore` |
+
+真机验证（0.8.12 → 0.8.13 实装）：`opkg` 升级成功、`easyproxy version` = 0.8.13、
+`/luci-static/resources/easyproxy/ubus.js` 200、`ubus call easyproxy run {"payload":["version"]}`
+→ `{"code":0,"stdout":"0.8.13\n","stderr":""}`。
+
+---
+
+## 二、当前仍然存在的缺陷（未修）
+
+| 项 | 严重度 | 说明 |
+|---|---|---|
+| 同名节点导致配置生成失败 | P0 | 拉两次订阅即复现，`duplicate outbound tag`，全站断网 |
+| `ss://` base64url 链接 | P0 | 报 `ss userinfo is not base64`，主流机场格式导不进 |
+| 节点测速超时误判可达 | P1 | 死地址也报 `reachable 3019 ms` |
+| 订阅去重 / 定时更新 | P1 | 无去重、无 cron、无增量 |
+| 面板节点启用 / 停用 | P1 | 只显示状态 |
+| 节点导出分享链接 | P2 | CLI 有 `node export`，面板无按钮 |
+| dae 内核 | P2 | 适配器标"开发中"，`easyproxy start` 会拒绝 |
+| 远程 SSH 管理 | P2 | 面板无此功能 |
+| 流量统计 | P2 | 接口写死 `br-lan`，取不到时静默画 0 |
+
+---
+
+## 三、代码在、但缺真机证据的部分
+
+以下在沙箱可跑通，真机尚未逐项留证：透明代理开关与入口绕过（需 nftables）、内核停止/重启/故障自动恢复（需 procd）、规则集更新、配置备份/恢复/重置、日志轮转、一键更新应用与失败回滚、节点测速的 nc 分支、从文件批量导入。
+
+**判据**：没有真机输出，不写"已实现"。
 
 ---
 
 ## 四、版本与发布现状
 
-- 版本序列：0.8.3 → （0.8.4 空号）→ 0.8.5 → 0.8.6 → 0.8.7 → 0.8.8 → 0.8.9（仅真机内部包，未发布）→ 0.8.10 → 0.8.11（`--exclude` 在 busybox tar 上无效）→ **0.8.12**
-- 规则：0.8.5 起递增，号码任何位置含 4 一律跳过
-- 发布方式：只推 main，CI 检测到 PKG_VERSION 高于最新 Release 即自动发布并建同号 tag
-- 测试数：866 通过 / 0 失败（16 套，4 套件因缺真内核 SKIP）；**注意：测试全绿不等于功能可用，见审计报告与真机验收报告**
-
-### 0.8.10 这一轮做了什么
-
-- 修掉**阻断全部升级**的缺陷：`update apply` 的版本自校验从 CLI 自身文件读 `EP_VERSION`，
-  而该文件里没有这行定义，`sed` 匹配到自己的源码行，得到 `\([^`，于是每次真实升级都判"校验失败"并自动回滚。
-  真机取证：0.8.7 → `update: installed \([^, expected 0.8.8` → `rolling back to 0.8.7`。
-  现改为从 `usr/lib/easyproxy/common.sh`（版本号唯一真源）读取，并做数字格式校验。
-- 修掉测试与产品版本号耦合：升级 fixture 固定到远离当前版本的 0.9.9；沙箱路径重写不再污染校验路径。
-- 真机 24 项验收全部跑过并留证：见 `docs/reports/EASYPROXY-REAL-DEVICE-ACCEPTANCE.md`
-  （19 PASS / 3 部分 / 1 诚实降级）。重启自动恢复、节点失效保护均为 PASS。
-- 撤销两条早前误判（如实记录）："坏配置 start 假成功"（busybox ps 截断导致误读）、
-  "透明代理 apply 报 applied 却 rc=1"（当时引擎未运行，属提前拒绝）。
-- 已实测的风险：`opkg install --force-reinstall` 会重置 `/etc/config/easyproxy`（节点表被清空）。
-
-### 0.8.11 这一轮做了什么（0.8.10 的补丁）
-
-- **升级不再覆盖用户配置**：CI 产出的 `easyproxy-<ver>-rootfs.tar.gz` 是整棵文件树，里面带着出厂默认
-  `/etc/config/easyproxy`。`update apply` 直接整包解到根目录，把用户自己的配置覆盖掉了。
-  真机取证：0.8.9（1 个节点、1471 字节、enabled=1）→ 升级成功后变成 0 个节点、4176 字节（默认模板）、enabled=0。
-  现在所有解包点（升级包、两处自动回滚、`update rollback`）统一加 `--exclude='*etc/config/*'`。
-- 测试：test-cli 的升级 fixture 现在带上 `etc/config/easyproxy`，并断言用户配置里的 `user_marker` 升级后仍在
-  （先看到 RED：1 失败，加 exclude 后 GREEN：96 通过 0 失败）。
-- 真机验证 0.8.10 的升级修复本身：把真机版本临时改成 0.8.9 后用新代码跑 `update apply`，
-  输出 `installed version reports 0.8.10` / `now running 0.8.10 (was 0.8.9)`、rc=0，不再误判回滚。
+- 线上只保留 **v0.8.13** 一个 Release 与一个 tag，0.8.12 及以下全部清除
+- 发版规则：`PKG_VERSION` 高于最新 Release 即自动构建发布；同号重复发布直接失败，不覆盖旧资产
+- 测试：**873 通过 / 0 失败**（16 套件，4 套因缺真内核 SKIP），`tests/run-all.sh` 是唯一计数来源
+- 构建产物一律不入库（`dist/*.ipk` 已忽略）
 
 ---
 
-## 五、下一阶段的顺序（不建议跳步）
+## 五、下一阶段顺序
 
-1. **先定性面板按钮**（P0）—— 不解决，任何后端能力在真机上都点不到
-2. **修同名节点**（P0）—— 这是会让整站断网的缺陷
-3. **修测速判定 + base64url**（P1）—— 两个都在"用户第一眼就会碰到"的位置
-4. **订阅去重 + 节点启停开关**（P1）—— 补齐核心操作
-5. **真机验收 18 项 B** —— 用一份清单逐项跑，留输出
-6. 之后再谈新增功能
+1. 同名节点去重（P0，会断网）
+2. `ss://` base64url 解析（P0，用户第一眼就撞）
+3. 测速判定修正（P1）
+4. 订阅去重 + 节点启停开关（P1）
+5. 逐项补真机证据
 
-新增功能暂停，直到第 1–2 项关闭。
-
-### 0.8.12 这一轮做了什么（0.8.11 的补丁）
-
-- **0.8.11 的修复在真机上是空转的**：它给四处解包加了 `--exclude='*etc/config/*'`，但这台
-  Kwrt 固件的 `tar` 是 BusyBox v1.37.0，实测直接报 `tar: unrecognized option: exclude=*etc/config/*`，
-  选项被忽略、解包照旧进行。真机 0.8.10 → 0.8.11 升级后仍是 4176 字节默认模板、节点 0、enabled=0。
-- **改为 busybox 支持的 `-X` 模式文件**：新增 `ep_extract_payload()`，把 `./etc/config/*` 写进临时文件后
-  `tar -xzf ... -X <file>`，四处解包点（升级包、两处自动回滚、`update rollback`）统一走它。
-- **模式前缀是实测出来的**：成员名是 `./etc/config/easyproxy`，`*etc/config/*` 匹配不到（仍覆盖），
-  只有 `./etc/config/*` 才能排除。这一点只有真机能测出来，单测里 GNU tar 两种都能过。
-
-### 0.8.12 的真机结论
-
-`0.8.11 → 0.8.12` 真实升级：升级前 1471 字节 / 1 节点 / enabled=1，升级后完全一致，
-`installed version reports 0.8.12`、`now running 0.8.12 (was 0.8.11)`、rc=0，
-起引擎后监听 7890、出网走 `outbound/shadowsocks[日本Z01]`、doctor 六项全 ok。
-**这是"升级不丢配置"第一次在真机上被证明。**
+新增功能继续暂停，直到 P0 两项关闭。
