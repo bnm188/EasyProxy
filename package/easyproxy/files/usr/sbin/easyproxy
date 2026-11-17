@@ -1177,18 +1177,32 @@ diag_collect() {
 # The app password never appears on the command line - `ps` is world-readable on
 # OpenWrt - so it is handed to curl through a private netrc file instead.
 diag_upload_webdav() {
-	local file url user pass pass_file dest code host netrc id
+	local file url user pass pass_file dest code host netrc id conf
 	file="$1"
-	url="${EP_DIAG_WEBDAV:-$(ep_get main diag_webdav '')}"
-	user="${EP_DIAG_USER:-$(ep_get main diag_user '')}"
+	# One 600 file can carry all three values (URL / account / password), which
+	# keeps the account out of uci: `/etc/config/easyproxy` is readable by any
+	# root shell, and a customer's mailbox is not something to leave there.
+	conf="${EP_DIAG_CONF:-/etc/easyproxy/diag.conf}"
+	url="${EP_DIAG_WEBDAV:-}"
+	user="${EP_DIAG_USER:-}"
+	pass=""
+	if [ -r "$conf" ]; then
+		url="${url:-$(sed -n '1p' "$conf" 2>/dev/null)}"
+		user="${user:-$(sed -n '2p' "$conf" 2>/dev/null)}"
+		pass="$(sed -n '3p' "$conf" 2>/dev/null)"
+	fi
+	url="${url:-$(ep_get main diag_webdav '')}"
+	user="${user:-$(ep_get main diag_user '')}"
 	pass_file="${EP_DIAG_PASS_FILE:-/etc/easyproxy/diag.pass}"
-	if [ ! -r "$pass_file" ]; then
+	if [ -z "$pass" ] && [ ! -r "$pass_file" ]; then
 		echo "diag: no password at $pass_file" >&2
 		echo "diag: save the WebDAV app password there, then chmod 600 it" >&2
 		return 3
 	fi
-	pass="$(tr -d ' \r\n' < "$pass_file")"
-	[ -n "$pass" ] || { echo "diag: the password file $pass_file is empty" >&2; return 3; }
+	if [ -z "$pass" ]; then
+		pass="$(tr -d ' \r\n' < "$pass_file")"
+		[ -n "$pass" ] || { echo "diag: the password file $pass_file is empty" >&2; return 3; }
+	fi
 	if ! command -v curl >/dev/null 2>&1; then
 		echo "diag: WebDAV upload needs curl; install it: opkg install curl" >&2
 		return 3
@@ -1222,7 +1236,8 @@ diag_upload() {
 	file="$1"
 	# A WebDAV target takes precedence: it needs no GitHub token, and a router
 	# that cannot hold a token is exactly the one that needs this path.
-	if [ -n "${EP_DIAG_WEBDAV:-}$(ep_get main diag_webdav '')" ]; then
+	if [ -n "${EP_DIAG_WEBDAV:-}$(ep_get main diag_webdav '')" ] \
+		|| [ -r "${EP_DIAG_CONF:-/etc/easyproxy/diag.conf}" ]; then
 		diag_upload_webdav "$file"
 		return $?
 	fi

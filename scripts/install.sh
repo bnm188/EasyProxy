@@ -112,15 +112,14 @@ configure_diag() {
 		DIAG_PASS=$(cat "$DIAG_PASS_FILE" 2>/dev/null)
 		[ -n "$DIAG_PASS" ] || die "--diag-pass-file is empty: $DIAG_PASS_FILE"
 	fi
-	uci set easyproxy.main.diag_webdav="$DIAG_WEBDAV" 2>/dev/null \
-		|| info "diag: could not set easyproxy.main.diag_webdav (is uci available?)"
-	uci set easyproxy.main.diag_user="$DIAG_USER" 2>/dev/null \
-		|| info "diag: could not set easyproxy.main.diag_user"
-	uci commit easyproxy 2>/dev/null || true
+	# One 600 file carries all three values. The account stays out of uci on
+	# purpose: /etc/config/easyproxy is world-readable to root, and a delivered
+	# machine should not hand the operator's mailbox to whoever opens a shell.
 	mkdir -p "$ROOT/etc/easyproxy" || die "cannot create $ROOT/etc/easyproxy"
-	( umask 077; printf '%s' "$DIAG_PASS" > "$ROOT/etc/easyproxy/diag.pass" ) \
-		|| die "cannot write $ROOT/etc/easyproxy/diag.pass"
-	chmod 600 "$ROOT/etc/easyproxy/diag.pass" 2>/dev/null || true
+	( umask 077
+	  printf '%s\n%s\n%s\n' "$DIAG_WEBDAV" "$DIAG_USER" "$DIAG_PASS" > "$ROOT/etc/easyproxy/diag.conf" ) \
+		|| die "cannot write $ROOT/etc/easyproxy/diag.conf"
+	chmod 600 "$ROOT/etc/easyproxy/diag.conf" 2>/dev/null || true
 	info "diag upload: configured (WebDAV $DIAG_WEBDAV)"
 }
 

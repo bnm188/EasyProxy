@@ -1,7 +1,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=easyproxy
-PKG_VERSION:=0.8.6
+PKG_VERSION:=0.8.7
 PKG_RELEASE:=1
 
 PKG_LICENSE:=MIT
@@ -26,6 +26,10 @@ define Package/easyproxy/description
  Stage 6 keeps LAN traffic direct and makes fail_closed real: when the CN rule
  sets are missing nothing is proxied instead of silently going full-tunnel.
  IPv6 is never captured silently: it is explicit `direct` or `block`.
+ 0.8.7 keeps the WebDAV account out of uci and off the install command: one 600
+ file (`/etc/easyproxy/diag.conf`) carries URL, account and password, and
+ `--diag-config` configures a delivered machine with a single file path -
+ nothing sensitive is typed, logged, or readable from `/etc/config/easyproxy`.
  0.8.6 sends the diagnostic bundle to the operator's own cloud over WebDAV
  (Nutstore, Nextcloud, Synology) as an alternative to a GitHub repository: the
  app password lives in a 600 file and reaches curl through netrc, so it never

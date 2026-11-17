@@ -310,6 +310,35 @@ printf '%s' "$out" | grep -qi 'credential' && ok "说明是凭据被拒" || no "
 [ -f "$SB/diag/out8.txt" ] && ok "凭据被拒后本地包仍保留" || no "凭据被拒后本地包保留" ""
 rm -f "$SB/diag/pass"
 
+# --- diag --upload from one 600 file (URL + account + password) --------------
+# The account itself must not have to live in uci: `uci show easyproxy` is one
+# command away for anyone with a root shell. One file, mode 600, carries all
+# three values instead.
+printf '%s\n%s\n%s\n' 'https://dav.conf.test/dav/EP/' 'me@conf.test' 'conf-pass-777' > "$SB/diag/conf"
+chmod 600 "$SB/diag/conf"
+: > "$SB/diag/wd.log"
+out="$(EP_TEST_LOG_WD="$SB/diag/wd.log" EP_DIAG_CONF="$SB/diag/conf" \
+	EP_DIAG_OUT="$SB/diag/out9.txt" "$EP" diag --upload 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && ok "diag.conf：仅凭 600 文件即可上传（返回 0）" || no "diag.conf：仅凭 600 文件上传" "rc=$rc $out"
+grep -q 'dav.conf.test/dav/EP/007/' "$SB/diag/wd.log" 2>/dev/null \
+	&& ok "diag.conf：地址取自第一行" || no "diag.conf：地址取自第一行" "$(cat "$SB/diag/wd.log" 2>/dev/null)"
+grep -q 'MKCOL' "$SB/diag/wd.log" 2>/dev/null \
+	&& ok "diag.conf：照样先建客户编号目录" || no "diag.conf：照样先建客户编号目录" "$(cat "$SB/diag/wd.log" 2>/dev/null)"
+grep -q 'conf-pass-777' "$SB/diag/wd.log" 2>/dev/null \
+	&& no "diag.conf：密码不进命令行" "" || ok "diag.conf：密码没有出现在命令行参数里"
+# the account must reach curl through netrc, never through argv
+grep -q 'me@conf.test' "$SB/diag/wd.log" 2>/dev/null \
+	&& no "diag.conf：账号不进命令行" "" || ok "diag.conf：账号没有出现在命令行参数里"
+
+# a truncated file must not silently fall back to some other credential source
+printf '%s\n%s\n' 'https://dav.conf.test/dav/EP/' 'me@conf.test' > "$SB/diag/conf"
+chmod 600 "$SB/diag/conf"; : > "$SB/diag/wd.log"
+out="$(EP_TEST_LOG_WD="$SB/diag/wd.log" EP_DIAG_CONF="$SB/diag/conf" \
+	EP_DIAG_PASS_FILE="$SB/diag/no-such-pass" EP_DIAG_OUT="$SB/diag/out10.txt" "$EP" diag --upload 2>&1)"; rc=$?
+[ "$rc" -eq 3 ] && ok "diag.conf：缺密码行时返回 3" || no "diag.conf：缺密码行时返回 3" "rc=$rc $out"
+[ -s "$SB/diag/wd.log" ] && no "diag.conf：缺密码时不发请求" "$(cat "$SB/diag/wd.log")" || ok "diag.conf：缺密码时没有发出请求"
+rm -f "$SB/diag/conf"
+
 out="$("$EP" diag --daily on 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && ok "diag --daily on 返回 0" || no "diag --daily on 返回 0" "rc=$rc $out"
 grep -q 'easyproxy diag --auto' "$EP_CRONTAB" 2>/dev/null && ok "crontab 写入每日任务" || no "crontab 写入每日任务" "$(cat "$EP_CRONTAB" 2>/dev/null)"
@@ -325,16 +354,16 @@ grep -q 'easyproxy diag --auto' "$EP_CRONTAB" 2>/dev/null && no "关闭后任务
 UP="$SB/update"
 mkdir -p "$UP/repo" "$UP/root/usr/sbin" "$UP/root/etc/init.d" \
 	"$UP/root/www/luci-static/resources/easyproxy" "$UP/backups"
-printf '{"tag_name": "v0.8.7"}\n' > "$UP/repo/rel.json"
+printf '{"tag_name": "v0.8.8"}\n' > "$UP/repo/rel.json"
 
 # payload that looks like an installed EasyProxy
 mkdir -p "$UP/pack/usr/sbin" "$UP/pack/etc/init.d" "$UP/pack/www/luci-static/resources/easyproxy"
-printf '#!/bin/sh\nEP_VERSION="0.8.7"\n' > "$UP/pack/usr/sbin/easyproxy"
+printf '#!/bin/sh\nEP_VERSION="0.8.8"\n' > "$UP/pack/usr/sbin/easyproxy"
 printf '#!/bin/sh\n' > "$UP/pack/etc/init.d/easyproxy"
 printf "'require baseclass'\nreturn baseclass.extend({});\n" > "$UP/pack/www/luci-static/resources/easyproxy/app.js"
-( cd "$UP/pack" && tar -czf "$UP/repo/easyproxy-0.8.7-rootfs.tar.gz" . )
-( cd "$UP/repo" && sha256sum easyproxy-0.8.7-rootfs.tar.gz > SHA256SUMS )
-printf 'deadbeefdeadbeef  easyproxy-0.8.7-rootfs.tar.gz\n' > "$UP/repo/SHA256SUMS.bad"
+( cd "$UP/pack" && tar -czf "$UP/repo/easyproxy-0.8.8-rootfs.tar.gz" . )
+( cd "$UP/repo" && sha256sum easyproxy-0.8.8-rootfs.tar.gz > SHA256SUMS )
+printf 'deadbeefdeadbeef  easyproxy-0.8.8-rootfs.tar.gz\n' > "$UP/repo/SHA256SUMS.bad"
 
 # one wget stub for both diag PUT and the update downloads
 cat > "$SB/bin/wget" <<'STUB'
@@ -362,7 +391,7 @@ case "$url" in
 	*api.github.com*) [ -n "${EP_TEST_API_BROKEN:-}" ] && exit 1; cp "$base/rel.json" "$out" || exit 1 ;;
 	*SHA256SUMS.bad*) cp "$base/SHA256SUMS.bad" "$out" || exit 1 ;;
 	*SHA256SUMS*) cp "$base/SHA256SUMS" "$out" || exit 1 ;;
-	*easyproxy-*-rootfs.tar.gz*) cp "$base/easyproxy-0.8.7-rootfs.tar.gz" "$out" || exit 1 ;;
+	*easyproxy-*-rootfs.tar.gz*) cp "$base/easyproxy-0.8.8-rootfs.tar.gz" "$out" || exit 1 ;;
 	*) exit 1 ;;
 esac
 STUB
@@ -371,7 +400,7 @@ chmod +x "$SB/bin/wget"
 # a pre-existing install: the backup must be able to archive it
 printf "'require baseclass'\nreturn baseclass.extend({ original: true });\n" \
 	> "$UP/root/www/luci-static/resources/easyproxy/app.js"
-printf '#!/bin/sh\nEP_VERSION="0.8.6"\n' > "$UP/root/usr/sbin/easyproxy"
+printf '#!/bin/sh\nEP_VERSION="0.8.7"\n' > "$UP/root/usr/sbin/easyproxy"
 printf '#!/bin/sh\n' > "$UP/root/etc/init.d/easyproxy"
 
 runup() { # runup <relbase> <args...>
@@ -386,7 +415,7 @@ runup() { # runup <relbase> <args...>
 
 out="$(runup "$UP/repo" check)"; rc=$?
 [ "$rc" -eq 0 ] && ok "update check 退出码 0" || no "update check 退出码 0" "rc=$rc $out"
-printf '%s' "$out" | grep -q 'latest:  0.8.7' && ok "update check 认出最新版本" || no "update check 认出最新版本" "$out"
+printf '%s' "$out" | grep -q 'latest:  0.8.8' && ok "update check 认出最新版本" || no "update check 认出最新版本" "$out"
 printf '%s' "$out" | grep -q 'update is available' && ok "提示可升级" || no "提示可升级" "$out"
 
 out="$(runup "$UP/repo" check --json)"
@@ -399,27 +428,27 @@ out="$(runup "$UP/nowhere" check)"; rc=$?
 # api.github.com allows 60 unauthenticated requests per hour per address, and a
 # router behind carrier NAT shares that budget with every neighbour. Version
 # detection must therefore work with the API answering 403.
-printf '<?xml version="1.0" encoding="UTF-8"?>\n<feed xmlns="http://www.w3.org/2005/Atom">\n  <title>Release notes from EasyProxy</title>\n  <entry>\n    <id>tag:github.com,2008:Repository/1458940874/v0.8.7</id>\n    <link rel="alternate" type="text/html" href="https://github.com/bnm188/EasyProxy/releases/tag/v0.8.7"/>\n    <title>EasyProxy 0.8.7</title>\n  </entry>\n</feed>\n' > "$UP/repo/atom.xml"
+printf '<?xml version="1.0" encoding="UTF-8"?>\n<feed xmlns="http://www.w3.org/2005/Atom">\n  <title>Release notes from EasyProxy</title>\n  <entry>\n    <id>tag:github.com,2008:Repository/1458940874/v0.8.8</id>\n    <link rel="alternate" type="text/html" href="https://github.com/bnm188/EasyProxy/releases/tag/v0.8.8"/>\n    <title>EasyProxy 0.8.8</title>\n  </entry>\n</feed>\n' > "$UP/repo/atom.xml"
 
 out="$(EP_TEST_API_BROKEN=1 runup "$UP/repo" check)"; rc=$?
 [ "$rc" -eq 0 ] && ok "API 被限流时仍能检查更新（走 atom）" || no "API 被限流时仍能检查更新（走 atom）" "rc=$rc $out"
-printf '%s' "$out" | grep -q 'latest:  0.8.7' \
+printf '%s' "$out" | grep -q 'latest:  0.8.8' \
 	&& ok "atom 解析出最新版本" || no "atom 解析出最新版本" "$out"
 out="$(EP_TEST_API_BROKEN=1 runup "$UP/repo" check --json)"
-printf '%s' "$out" | grep -q '"latest":"0.8.7"' \
+printf '%s' "$out" | grep -q '"latest":"0.8.8"' \
 	&& ok "atom 路径的 --json 输出可供面板解析" || no "atom 路径的 --json 输出" "$out"
 
 # checksum mismatch must abort before replacing anything
-out="$(runup "$UP/repo" apply 0.8.7 2>&1)"; rc=$?
+out="$(runup "$UP/repo" apply 0.8.8 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && ok "校验通过时升级成功" || no "校验通过时升级成功" "rc=$rc $out"
 printf '%s' "$out" | grep -q 'checksum verified' && ok "动手前先校验 sha256" || no "动手前先校验" "$out"
-[ -f "$UP/backups/rollback-0.8.6.tar.gz" ] && ok "升级前备份当前版本" || no "升级前备份当前版本" "$(ls -l "$UP/backups" 2>/dev/null)"
+[ -f "$UP/backups/rollback-0.8.7.tar.gz" ] && ok "升级前备份当前版本" || no "升级前备份当前版本" "$(ls -l "$UP/backups" 2>/dev/null)"
 [ -f "$UP/root/www/luci-static/resources/easyproxy/app.js" ] && ok "解包后面板文件就位" || no "解包后面板文件就位" "$out"
-printf '%s' "$out" | grep -q 'now running 0.8.7' && ok "报告新版本已生效" || no "报告新版本已生效" "$out"
+printf '%s' "$out" | grep -q 'now running 0.8.8' && ok "报告新版本已生效" || no "报告新版本已生效" "$out"
 
 # a bad SHA256SUMS entry must stop the install
 cp "$UP/repo/SHA256SUMS" "$UP/repo/SHA256SUMS.ok"; cp "$UP/repo/SHA256SUMS.bad" "$UP/repo/SHA256SUMS"
-out="$(runup "$UP/repo" apply 0.8.7 2>&1)"; rc=$?
+out="$(runup "$UP/repo" apply 0.8.8 2>&1)"; rc=$?
 printf '%s' "$out" | grep -q 'checksum mismatch' && ok "校验不符时拒绝安装" || no "校验不符时拒绝安装" "rc=$rc $out"
 [ "$rc" -ne 0 ] && ok "校验不符返回非 0" || no "校验不符返回非 0" "rc=$rc"
 cp "$UP/repo/SHA256SUMS.ok" "$UP/repo/SHA256SUMS"
