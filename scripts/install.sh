@@ -329,6 +329,29 @@ asset_from_api() {
 		| head -1
 }
 
+# A release can carry an older same-named asset: the publish step once uploaded
+# the whole dist/ directory, so 0.8.11 rode along inside the 0.8.12 release and
+# the API lists it before the real one. Picking the first match therefore
+# installed the stale package on a real router. This compares the version
+# numbers found in the asset names and returns the newest match instead.
+asset_newest_from_api() {
+	fetch_text "$API" 2>/dev/null \
+		| tr '{' '\n' \
+		| grep -o 'https://[^"]*' \
+		| grep -E "$1" \
+		| awk '
+			{
+				name = $0
+				sub(/^.*\//, "", name)
+				if (!match(name, /[0-9]+\.[0-9]+(\.[0-9]+)?/))
+					next
+				split(substr(name, RSTART, RLENGTH), p, ".")
+				score = (p[1] + 0) * 1000000 + (p[2] + 0) * 1000 + (p[3] + 0)
+				if (score >= best) { best = score; url = $0 }
+			}
+			END { if (url != "") print url }'
+}
+
 fallback_version() {
 	fetch_text "$RAW/package/easyproxy/Makefile" 2>/dev/null \
 		| sed -n 's/^PKG_VERSION:=//p' \
@@ -385,10 +408,18 @@ asset_sums_url() {
 release_component_version() {
 	local name v ver
 	name="$1"
+	# One release can carry an older same-named asset (see
+	# asset_newest_from_api), so the newest version wins instead of the first.
 	v="$(fetch_text "$API" 2>/dev/null \
 		| grep -o "\"name\": \"${name}_[0-9][0-9a-zA-Z._-]*\.ipk\"" \
-		| head -1 \
-		| sed "s|\"name\": \"${name}_||; s|\.ipk\"||; s|_[0-9a-z_]*$||")"
+		| sed "s|\"name\": \"${name}_||; s|\.ipk\"||; s|_[0-9a-z_]*$||" \
+		| awk '
+			{
+				split($0, p, ".")
+				score = (p[1] + 0) * 1000000 + (p[2] + 0) * 1000 + (p[3] + 0)
+				if (score >= best) { best = score; w = $0 }
+			}
+			END { if (w != "") print w }')"
 	if [ -n "$v" ]; then
 		printf '%s' "$v"
 		return 0
@@ -1123,9 +1154,9 @@ Use: sh install.sh --rootfs  (extracts the archive at / without a package manage
 				if opkg_accepts_all; then
 					accepts_all=1
 				fi
-				[ -n "$arch" ] && url="$(asset_from_api "easyproxy_[0-9][0-9a-zA-Z._-]*_${arch}\.ipk$" || true)"
+				[ -n "$arch" ] && url="$(asset_newest_from_api "easyproxy_[0-9][0-9a-zA-Z._-]*_${arch}\.ipk$" || true)"
 				if [ -z "${url:-}" ] && [ "$accepts_all" = 1 ]; then
-					url="$(asset_from_api 'easyproxy_[0-9][0-9a-zA-Z._-]*_all\.ipk$' || true)"
+					url="$(asset_newest_from_api 'easyproxy_[0-9][0-9a-zA-Z._-]*_all\.ipk$' || true)"
 				fi
 				if [ -z "${url:-}" ]; then
 					if [ "$accepts_all" != 1 ]; then
@@ -1135,7 +1166,7 @@ Use: sh install.sh --rootfs  (extracts the archive at / without a package manage
 						# architecture independent, so install the `_all.ipk` with
 						# --force-architecture; if even that is refused, the archive
 						# route below finishes the install. Kernels are never forced.
-						url="$(asset_from_api 'easyproxy_[0-9][0-9a-zA-Z._-]*_all\.ipk$' || true)"
+						url="$(asset_newest_from_api 'easyproxy_[0-9][0-9a-zA-Z._-]*_all\.ipk$' || true)"
 						[ -n "${url:-}" ] || url="$(asset_url 'easyproxy_[0-9][0-9a-zA-Z._-]*\.ipk$')" \
 							|| die "cannot resolve the ipk download URL (release API unreachable and no version in the Makefile)"
 						force_panel=1
@@ -1149,7 +1180,7 @@ Use: sh install.sh --rootfs  (extracts the archive at / without a package manage
 			info "downloading $(basename "$url")"
 			if ! fetch_verified "$url" "$file"; then
 				if [ "$MODE" = "ipk" ] && [ "$accepts_all" = 1 ]; then
-					alt="$(asset_from_api 'easyproxy_[0-9][0-9a-zA-Z._-]*_all\.ipk$' || true)"
+					alt="$(asset_newest_from_api 'easyproxy_[0-9][0-9a-zA-Z._-]*_all\.ipk$' || true)"
 					[ -n "$alt" ] || alt="$(asset_url 'easyproxy_[0-9][0-9a-zA-Z._-]*\.ipk$' 2>/dev/null || true)"
 					[ -n "$alt" ] || die "download failed: $url"
 					info "architecture-specific package unavailable, retrying $(basename "$alt")"

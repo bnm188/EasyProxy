@@ -37,6 +37,20 @@ cat > "$SB/fix/api.json" <<'JSON'
   ]
 }
 JSON
+
+# A release that still carries an older same-named asset (the publish step
+# uploaded dist/ wholesale once, so 0.8.11 rode along inside the 0.8.12
+# release). The older asset is listed first, exactly as the API returned it.
+cat > "$SB/fix/api-stale.json" <<'JSON'
+{
+  "tag_name": "v0.9.9",
+  "assets": [
+    { "name": "easyproxy_0.9.8-1_x86_64.ipk", "browser_download_url": "https://example.test/dl/easyproxy_0.9.8-1_x86_64.ipk" },
+    { "name": "easyproxy_0.9.9-1_x86_64.ipk", "browser_download_url": "https://example.test/dl/easyproxy_0.9.9-1_x86_64.ipk" },
+    { "name": "SHA256SUMS", "browser_download_url": "https://example.test/dl/SHA256SUMS" }
+  ]
+}
+JSON
 printf 'PKG_VERSION:=0.9.9\nPKG_RELEASE:=1\n' > "$SB/fix/Makefile"
 printf 'APK-BYTES\n' > "$SB/fix/asset.apk"
 { printf '!<arch>\n'; printf 'IPK-BYTES\n'; } > "$SB/fix/asset.ipk"
@@ -57,6 +71,11 @@ for n in easyproxy-0.5.0-rootfs.tar.gz easyproxy-0.9.9-rootfs.tar.gz; do
 	printf '%s  %s\n' "$h_tgz" "$n" >> "$SB/fix/SHA256SUMS"
 done
 sed 's/^[0-9a-f]/0/' "$SB/fix/SHA256SUMS" > "$SB/fix/SHA256SUMS.bad"
+
+# Sums for the release that carries both 0.9.8 and 0.9.9 of the same package:
+# everything the normal release publishes, plus the stale 0.9.8 entry.
+{ cat "$SB/fix/SHA256SUMS"
+  printf '%s  easyproxy_0.9.8-1_x86_64.ipk\n' "$h_ipk"; } > "$SB/fix/SHA256SUMS.stale"
 
 # A real 24.10+ ipk: a gzip-tar holding debian-binary + control.tar.gz +
 # data.tar.gz. scripts/make-ipk.sh emits this by default, so the installer's
@@ -308,6 +327,21 @@ sh "$INSTALL" > "$SB/out" 2>&1; rc=$?
 [ "$rc" -eq 0 ] && ok "API 不可用时仍能安装（走版本号兜底）" || no "API 不可用时仍能安装" "rc=$rc $(cat "$SB/out")"
 grep -q 'releases/download/v0\.9\.9/' "$EP_TEST_LOG/curl.urls" 2>/dev/null \
 	&& ok "兜底 URL 由 Makefile 版本拼出（0.9.9）" || no "兜底 URL 由 Makefile 版本拼出" "$(cat "$EP_TEST_LOG/curl.urls" 2>/dev/null)"
+
+# --- install: release also carries an older same-named asset -----------
+# 发布 v0.8.12 时把 dist/ 里 0.8.11 的 ipk 一起传了上去，API 按资产出现顺序
+# 返回旧包在前；安装器若只取第一个匹配，真机就装到了旧版本。
+reset
+EP_TEST_API_FIX="$SB/fix/api-stale.json" EP_TEST_SUMS="$SB/fix/SHA256SUMS.stale" \
+	sh "$INSTALL" > "$SB/out" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && ok "残留旧资产：安装仍然成功" || no "残留旧资产：安装仍然成功" "rc=$rc $(cat "$SB/out")"
+grep -q 'easyproxy_0\.9\.9-1_x86_64\.ipk' "$EP_TEST_LOG/curl.urls" 2>/dev/null \
+	&& ok "残留旧资产：下载的是版本号最大的 0.9.9" || no "残留旧资产：下载的是版本号最大的 0.9.9" "$(cat "$EP_TEST_LOG/curl.urls" 2>/dev/null)"
+if grep -q 'easyproxy_0\.9\.8' "$EP_TEST_LOG/curl.urls" 2>/dev/null; then
+	no "残留旧资产：不应下载旧包 0.9.8" "$(cat "$EP_TEST_LOG/curl.urls")"
+else
+	ok "残留旧资产：未下载旧包 0.9.8"
+fi
 
 # --- install: no package manager -------------------------------------
 reset
