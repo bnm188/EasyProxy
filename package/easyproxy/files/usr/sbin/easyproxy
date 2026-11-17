@@ -670,7 +670,7 @@ cmd_start() {
 	if [ -x /etc/init.d/easyproxy ]; then
 		/etc/init.d/easyproxy start >/dev/null 2>&1
 	else
-		nohttp=1
+		nohup "$SELF" run >> "$log" 2>&1 &
 	fi
 
 	# Wait for the wrapper to publish its pid file (engine startup is not instant)
