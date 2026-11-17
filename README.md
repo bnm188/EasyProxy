@@ -94,7 +94,7 @@ sh /tmp/install.sh
 安装器会做这些事：
 
 1. 检测固件：`ImmortalWrt` / `OpenWrt` 认 `VERSION_ID`，Kwrt 认 `DISTRIB_RELEASE`（它的镜像没有 `VERSION_ID`），两者都必须能解析出 OpenWrt 基线且不低于 21.02；包管理器（`opkg` / `apk`）两者都没有且没加 `--rootfs` 就停止；
-2. 从最新 Release 挑匹配本机架构的资产（opkg 优先架构包，拿不到再退 `_all.ipk`）；
+2. 从最新 Release 挑匹配本机架构的资产（opkg 优先架构包，拿不到再退 `_all.ipk`；若这个 opkg 根本不认 `Architecture: all`，就用 `--force-architecture` 装 `_all.ipk` —— 只对面板生效，内核包永不强制；连强制也被拒（如报 `Malformed package file`）时，改用已校验的 `-rootfs.tar.gz` 归档装面板，退出码仍为 0 并在日志里写明走了归档）；
 3. **每个下载都先过 `SHA256SUMS`**，校验不过最多重下 3 次（CDN 边缘可能给旧对象），仍不过就失败；
 4. 按「面板 → sing-box → dae」顺序安装，各自来自自己的 Release 资产；没有现成资产时用脚本内固定 sha256 的上游包，解开确认是真正的 ELF 再落到 `/usr/bin/`；
 5. 把装了什么记进 `/etc/easyproxy/owned/`，以后卸载只删这些，用户自己装的 sing-box/dae 不会被碰；
@@ -116,7 +116,8 @@ Kwrt（`dl.openwrt.ai` 上的构建）是基于 OpenWrt 的衍生固件，安装
 - 基线 ≥ 21.02：放行，日志写明 `firmware: Kwrt 25.12-SNAPSHOT (OpenWrt 25.12 derivative)`；
 - 基线 < 21.02（例如 19.07）：拒绝并写明低于 21.02；
 - 版本号解析不出来（如只有 `SNAPSHOT`）：拒绝并说明无法确认基线，不再默默放过；
-- 架构不在 `x86_64` / `aarch64` / `armv7`（例如 `mipsel_24kc`）：`_all.ipk` 面板照装，但会明确提示这个构建没有该架构的内核包；
+- 架构不在 `x86_64` / `aarch64` / `armv7`（例如 `mipsel_24kc`）：`_all.ipk` 面板照装（必要时 `--force-architecture`，再不行走 rootfs 归档），但会明确提示这个构建没有该架构的内核包；
+- opkg 拒绝 `all` 且发布里没有该架构 ipk（旧版会直接报 `no installable ipk for arch` 停住）：现在不再停住 —— 面板是纯脚本包，强制架构或用归档都能装；内核仍然只按架构给，不能跑的不硬装；
 - 确认过版本仍要强装：`EP_SKIP_COMPAT=1`（日志会标注是强制安装）。
 
 ### 装完还不能直接用（重要）
