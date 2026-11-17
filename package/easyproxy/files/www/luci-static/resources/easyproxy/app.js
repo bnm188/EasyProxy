@@ -747,7 +747,30 @@ function pageLogs(data) {
 					showOutput('EasyProxy 诊断', (r.stdout || '') + (r.stderr || ''));
 				});
 			})
-		], '日志文件 /var/log/easyproxy.log；超过 main.log_max_bytes 时轮转为 .1。')
+		], '日志文件 /var/log/easyproxy.log；超过 main.log_max_bytes 时轮转为 .1。'),
+		card('诊断上报', [
+			row('客户编号', textInput('ep-cust-id', '', '例如 001，按交付顺序分配'), '决定日志传到 diagnostics/ 下的哪个目录；只写本机，不进 UCI。'),
+			button('保存编号', '', function () {
+				var id = (valOf('ep-cust-id') || '').trim();
+				if (!id)
+					return notify('先填编号，例如 001', 'error');
+				return run(['diag', '--set-id', id]).then(function (r) {
+					notify(((r.stdout || '') + (r.stderr || '')).trim(), r.code === 0 ? 'success' : 'error');
+				});
+			}),
+			row('每天 03:17 自动上报', switchInput('ep-diag-daily', false), '开：本机每天自动传一份脱敏日志；关：只在点「立即上报」时传。'),
+			button('保存自动上报', '', function () {
+				var on = valOf('ep-diag-daily') === '1';
+				return run(['diag', '--daily', on ? 'on' : 'off']).then(function (r) {
+					notify(((r.stdout || '') + (r.stderr || '')).trim(), r.code === 0 ? 'success' : 'error');
+				});
+			}),
+			button('立即上报', 'ep-primary', function () {
+				return run(['diag', '--upload']).then(function (r) {
+					showOutput('诊断上报结果', (r.stdout || '') + (r.stderr || ''));
+				});
+			})
+		], '脱敏在路由器上完成：节点链接、订阅 token、UUID、JSON 里的密码都会先打码再上传。仓库是私有的，只有持有 token 的账号能读。')
 	]);
 }
 

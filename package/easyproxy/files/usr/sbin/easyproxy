@@ -45,7 +45,9 @@ Usage:
   easyproxy ruleset update         Re-download both CN rule sets
   easyproxy ruleset verify         Check both CN rule sets are real .srs files
   easyproxy doctor [--json]        One-shot diagnosis of everything that can fail
-  easyproxy diag [--upload]        Write a redacted support bundle (--upload sends it to GitHub)
+  easyproxy diag [--upload]        Write a redacted bundle (lands in /tmp unless --upload)
+  easyproxy diag --set-id 001      Tag this router, bundles go to diagnostics/001/
+  easyproxy diag --daily on|off    Upload one bundle a day at 03:17
   easyproxy start                  Start the managed runtime
   easyproxy stop                   Stop the managed runtime
   easyproxy restart                Restart the managed runtime
@@ -1026,6 +1028,71 @@ cmd_log() {
 
 
 # --- diagnostics -------------------------------------------------------------
+# Every customer machine files its bundles under its own number so a year of
+# reports stays a directory listing instead of a flat pile:
+#   diagnostics/001/<ts>-<host>.txt
+# The number is assigned at hand-over (`easyproxy diag --set-id 001`) and stored
+# in a 0600 file, never in UCI (UCI goes into the bundle itself).
+EP_DIAG_ID_FILE="${EP_DIAG_ID_FILE:-/etc/easyproxy/customer.id}"
+EP_CRONTAB="${EP_CRONTAB:-/etc/crontabs/root}"
+EP_DIAG_CRON_TAG="# easyproxy-daily-diag"
+
+diag_customer_id() {
+	[ -r "$EP_DIAG_ID_FILE" ] || return 0
+	tr -d ' \r\n' < "$EP_DIAG_ID_FILE" 2>/dev/null | head -n 1
+}
+
+diag_set_id() {
+	local id
+	id="$(printf '%s' "$1" | tr -d ' \r\n')"
+	case "$id" in
+		''|*[!0-9]*) echo "diag: customer id must be digits only, e.g. 001" >&2; return 2 ;;
+	esac
+	[ "${#id}" -le 6 ] || { echo "diag: customer id is too long" >&2; return 2; }
+	mkdir -p "$(dirname "$EP_DIAG_ID_FILE")" 2>/dev/null
+	( umask 077; printf '%s\n' "$id" > "$EP_DIAG_ID_FILE" ) || {
+		echo "diag: cannot write $EP_DIAG_ID_FILE" >&2; return 1; }
+	chmod 600 "$EP_DIAG_ID_FILE" 2>/dev/null || true
+	echo "diag: customer id set to $id ($EP_DIAG_ID_FILE)"
+	echo "diag: bundles will go to diagnostics/$id/ in ${EP_DIAG_REPO:-bnm188/EasyProxy-Diag}"
+	return 0
+}
+
+# One upload a day keeps the repository readable: the router's own log is the
+# live view, the repository is the archive. cron is busybox crond on OpenWrt.
+diag_daily() {
+	local state line
+	state="$1"
+	case "$state" in
+		on|enable|1|"") ;;
+		off|disable|0)
+			mkdir -p "$(dirname "$EP_CRONTAB")" 2>/dev/null
+			[ -f "$EP_CRONTAB" ] || { echo "diag: no daily job configured"; return 0; }
+			# grep exits 1 when every line matched (nothing left), which is not a
+			# failure: the file must still be replaced.
+			grep -v -e 'easyproxy diag --auto' "$EP_CRONTAB" > "$EP_CRONTAB.tmp" 2>/dev/null || true
+			mv -f "$EP_CRONTAB.tmp" "$EP_CRONTAB"
+			echo "diag: daily upload disabled"
+			/etc/init.d/cron restart >/dev/null 2>&1 || true
+			return 0 ;;
+		*)
+			echo "diag: --daily takes on or off" >&2; return 2 ;;
+	esac
+	mkdir -p "$(dirname "$EP_CRONTAB")" 2>/dev/null || {
+		echo "diag: cannot create $(dirname "$EP_CRONTAB")" >&2; return 1; }
+	if [ -f "$EP_CRONTAB" ]; then
+		grep -v 'easyproxy diag --auto' "$EP_CRONTAB" > "$EP_CRONTAB.tmp" 2>/dev/null || true
+		mv -f "$EP_CRONTAB.tmp" "$EP_CRONTAB"
+	fi
+	line="17 3 * * * /usr/sbin/easyproxy diag --auto >/dev/null 2>&1 $EP_DIAG_CRON_TAG"
+	printf '%s\n' "$line" >> "$EP_CRONTAB"
+	chmod 600 "$EP_CRONTAB" 2>/dev/null || true
+	/etc/init.d/cron enable >/dev/null 2>&1 || true
+	/etc/init.d/cron restart >/dev/null 2>&1 || true
+	echo "diag: daily upload enabled (03:17 every day)"
+	return 0
+}
+
 # A bundle a human can read on GitHub. Everything that carries a credential is
 # masked before the file leaves the router: share links put the secret in the
 # URL, subscriptions put a token in the query string, node configs put the
@@ -1103,11 +1170,15 @@ diag_collect() {
 # assumed on a router, so busybox wget is the fallback. A token is required and
 # is kept in a 0600 file - never in UCI, where it would land in the bundle.
 diag_upload() {
-	local file token token_file repo branch name api payload tmp rc
+	local file token token_file repo branch name api payload tmp rc id
 	file="$1"
+	id="$(diag_customer_id)"
+	[ -n "$id" ] || id="unassigned"
 	token_file="${EP_DIAG_TOKEN_FILE:-/etc/easyproxy/diag.token}"
-	repo="${EP_DIAG_REPO:-bnm188/EasyProxy}"
-	branch="${EP_DIAG_BRANCH:-diag}"
+	# Target is a private repository: a bundle carries the customer's host name,
+	# its address table and its engine errors. Overridable per device.
+	repo="${EP_DIAG_REPO:-$(ep_get main diag_repo bnm188/EasyProxy-Diag)}"
+	branch="${EP_DIAG_BRANCH:-$(ep_get main diag_branch main)}"
 
 	if [ ! -r "$token_file" ]; then
 		echo "diag: no token at $token_file" >&2
@@ -1122,7 +1193,7 @@ diag_upload() {
 		return 4
 	fi
 
-	name="diagnostics/$(date -u '+%Y%m%dT%H%M%SZ')-$(uname -n 2>/dev/null | tr -c 'A-Za-z0-9_.-' '_').txt"
+	name="diagnostics/${id}/$(date -u '+%Y%m%dT%H%M%SZ')-$(uname -n 2>/dev/null | tr -c 'A-Za-z0-9_.-' '_').txt"
 	api="https://api.github.com/repos/$repo/contents/$name"
 	tmp="$(mktemp 2>/dev/null || echo /tmp/easyproxy-diag.json)"
 	payload="$(printf '{"message":"diag %s","branch":"%s","content":"%s"}' \
@@ -1160,12 +1231,23 @@ diag_upload() {
 }
 
 cmd_diag() {
-	local upload path rc
+	local upload path rc auto
 	upload=0
-	[ "$SUB" = "--upload" ] && upload=1
+	auto=0
+	case "$SUB" in
+		--set-id|set-id|id)
+			[ -n "$SUB2" ] || { echo "diag: --set-id needs a number, e.g. 001" >&2; return 2; }
+			diag_set_id "$SUB2"; return $? ;;
+		--daily|daily)
+			diag_daily "$SUB2"; return $? ;;
+		--upload) upload=1 ;;
+		--auto) upload=1; auto=1 ;;
+		"") ;;
+		*) echo "Unknown diag option: $SUB" >&2; return 2 ;;
+	esac
 	path="${EP_DIAG_OUT:-/tmp/easyproxy-diag-$(date -u '+%Y%m%dT%H%M%SZ').txt}"
 	diag_collect "$path" >/dev/null 2>&1
-	echo "diagnostic bundle: $path ($(wc -c < "$path" 2>/dev/null | tr -d ' ') bytes)"
+	[ "$auto" = 1 ] || echo "diagnostic bundle: $path ($(wc -c < "$path" 2>/dev/null | tr -d ' ') bytes)"
 	if [ "$upload" = 1 ]; then
 		diag_upload "$path" || return $?
 		return 0

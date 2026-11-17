@@ -231,6 +231,43 @@ printf '%s' "$out" | grep -q 'raw: https://raw.githubusercontent.com/bnm188/Easy
 	&& ok "打印可直接读取的 raw 链接" || no "打印 raw 链接" "$out"
 grep -qE 'method=PUT|-X PUT' "$SB/diag/gh.log" 2>/dev/null && ok "确实发出了 PUT 请求" || no "确实发出了 PUT 请求" "$(cat "$SB/diag/gh.log")"
 
+# --- customer numbering, private repo default, daily job -------------------
+# Each machine files its bundles under its own number: diagnostics/001/...
+export EP_DIAG_ID_FILE="$SB/diag/customer.id"
+export EP_CRONTAB="$SB/diag/crontab"
+rm -f "$EP_DIAG_ID_FILE" "$EP_CRONTAB"
+out="$("$EP" diag --set-id 007 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && ok "diag --set-id 接受纯数字编号" || no "diag --set-id 接受纯数字编号" "rc=$rc $out"
+[ "$(cat "$EP_DIAG_ID_FILE" 2>/dev/null)" = "007" ] && ok "客户编号写入文件" || no "客户编号写入文件" "$(cat "$EP_DIAG_ID_FILE" 2>/dev/null)"
+[ "$(stat -c %a "$EP_DIAG_ID_FILE" 2>/dev/null)" = "600" ] && ok "客户编号文件权限 600" || no "客户编号文件权限 600" ""
+out="$("$EP" diag --set-id abc 2>&1)"; rc=$?
+[ "$rc" -eq 2 ] && ok "非数字编号被拒绝" || no "非数字编号被拒绝" "rc=$rc $out"
+
+: > "$SB/diag/gh2.log"
+out="$(EP_TEST_LOG_GH="$SB/diag/gh2.log" EP_DIAG_TOKEN_FILE="$SB/diag/token" EP_DIAG_OUT="$SB/diag/out4.txt" \
+	"$EP" diag --upload 2>&1)"
+grep -q 'diagnostics/007/' "$SB/diag/gh2.log" && ok "上传路径按客户编号分目录" || no "上传路径按客户编号分目录" "$(cat "$SB/diag/gh2.log")"
+
+# default target is the private archive repository, not the public one
+printf '%s' "$out" | grep -q 'raw: https://raw.githubusercontent.com/bnm188/EasyProxy-Diag/' \
+	&& ok "默认上传到私有仓库 EasyProxy-Diag" || no "默认私有仓库" "$out"
+
+# without a number the bundle still goes out, but under unassigned/
+rm -f "$EP_DIAG_ID_FILE"
+: > "$SB/diag/gh3.log"
+EP_TEST_LOG_GH="$SB/diag/gh3.log" EP_DIAG_TOKEN_FILE="$SB/diag/token" EP_DIAG_OUT="$SB/diag/out5.txt" \
+	"$EP" diag --upload >/dev/null 2>&1
+grep -q 'diagnostics/unassigned/' "$SB/diag/gh3.log" && ok "未设编号时落到 unassigned/" || no "未设编号时落到 unassigned/" "$(cat "$SB/diag/gh3.log")"
+
+out="$("$EP" diag --daily on 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && ok "diag --daily on 返回 0" || no "diag --daily on 返回 0" "rc=$rc $out"
+grep -q 'easyproxy diag --auto' "$EP_CRONTAB" 2>/dev/null && ok "crontab 写入每日任务" || no "crontab 写入每日任务" "$(cat "$EP_CRONTAB" 2>/dev/null)"
+grep -q '17 3 \* \* \*' "$EP_CRONTAB" 2>/dev/null && ok "每日任务固定在 03:17" || no "每日任务时间" "$(cat "$EP_CRONTAB" 2>/dev/null)"
+out="$("$EP" diag --daily on 2>&1)"
+[ "$(grep -c 'easyproxy diag --auto' "$EP_CRONTAB" 2>/dev/null)" = "1" ] && ok "重复开启不会写两条" || no "重复开启只有一条" "$(cat "$EP_CRONTAB")"
+out="$("$EP" diag --daily off 2>&1)"
+grep -q 'easyproxy diag --auto' "$EP_CRONTAB" 2>/dev/null && no "关闭后任务仍在" "" || ok "--daily off 移除任务"
+
 # --- 7. engine subcommand --------------------------------------------------
 out="$("$EP" engine 2>&1)"
 printf '%s' "$out" | grep -q 'sing-box' && ok "engine 打印所选内核" || no "engine 打印所选内核"

@@ -1101,6 +1101,17 @@ post_install() {
 		"$RPCD" restart >/dev/null 2>&1 || true
 	fi
 	rm -f "$LUCI_INDEX"* 2>/dev/null || true
+	# Diagnostics: a bundle only goes out if a token was planted, so enabling the
+	# daily job here is harmless on a machine that has none - it fails silently
+	# into the log until one is written, and never blocks the install.
+	if [ -x "$BIN" ]; then
+		if [ -s /etc/easyproxy/diag.token ] || [ -s "$ROOT/etc/easyproxy/diag.token" ]; then
+			"$BIN" diag --daily on >/dev/null 2>&1 || true
+			info "diagnostics: daily upload enabled (03:17); set the customer number with: easyproxy diag --set-id 001"
+		else
+			info "diagnostics: put a GitHub token in /etc/easyproxy/diag.token, then run: easyproxy diag --daily on"
+		fi
+	fi
 	if [ -x "$BIN" ]; then
 		info "service: $("$BIN" status 2>/dev/null | head -1 || true)"
 	else
