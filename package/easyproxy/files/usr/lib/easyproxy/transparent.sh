@@ -18,6 +18,11 @@ EP_NFT_BIN="${EP_NFT_BIN:-nft}"
 EP_IP_BIN="${EP_IP_BIN:-ip}"
 EP_NFT_FILE="${EP_NFT_FILE:-/etc/easyproxy/nftables.conf}"
 
+# Entry bypass (M1, 0.8.2): released in nft before tproxy. Loaded best-effort so
+# a missing module never takes the capture down with it.
+EP_BYPASS_LIB="${EP_BYPASS_LIB:-/usr/lib/easyproxy/bypass.sh}"
+[ -r "$EP_BYPASS_LIB" ] && . "$EP_BYPASS_LIB"
+
 ep_transparent_enabled() {
 	[ "$(ep_bool "$(ep_get transparent enabled 0)")" = "1" ]
 }
@@ -350,10 +355,22 @@ ep_transparent_render() {
 		printf '\t\tflags interval\n'
 		printf '\t\telements = { %s }\n' "$(ep_transparent_bypass)"
 		printf '\t}\n'
+		if command -v ep_bypass_enabled >/dev/null 2>&1 && ep_bypass_enabled && ep_bypass_cidr_ready; then
+			printf '\t# entry bypass: China IPv4 released before tproxy (never enters sing-box)\n'
+			printf '\t# %s entries from %s\n' "$(ep_bypass_cidr_count)" "$(ep_bypass_cidr_file)"
+			printf '\tset cn_ipv4 {\n'
+			printf '\t\ttype ipv4_addr\n'
+			printf '\t\tflags interval\n'
+			printf '\t\telements = { %s }\n' "$(ep_bypass_elements)"
+			printf '\t}\n'
+		fi
 		printf '\tchain prerouting {\n'
 		printf '\t\ttype filter hook prerouting priority mangle; policy accept;\n'
 		printf '\t\tiifname != %s return\n' "$expr"
 		printf '\t\tip daddr @bypass_ipv4 return\n'
+		if command -v ep_bypass_enabled >/dev/null 2>&1 && ep_bypass_enabled && ep_bypass_cidr_ready; then
+			printf '\t\tip daddr @cn_ipv4 return\n'
+		fi
 		printf '\t\t# a non-first fragment has no L4 header, tproxy cannot take it\n'
 		printf '\t\tip frag-off & 0x1fff != 0 return\n'
 		printf '\t\ttcp dport %s return\n' "$listen_port"
