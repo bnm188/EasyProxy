@@ -1,7 +1,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=easyproxy
-PKG_VERSION:=0.8.7
+PKG_VERSION:=0.8.8
 PKG_RELEASE:=1
 
 PKG_LICENSE:=MIT
@@ -26,6 +26,10 @@ define Package/easyproxy/description
  Stage 6 keeps LAN traffic direct and makes fail_closed real: when the CN rule
  sets are missing nothing is proxied instead of silently going full-tunnel.
  IPv6 is never captured silently: it is explicit `direct` or `block`.
+ 0.8.8 hands a machine over already reporting: installing with a diagnostic
+ target switches the schedule on (every 15 days at 03:17, not nightly), so
+ nobody has to run a second command and the 1 GB monthly upload quota stays
+ almost entirely unused.
  0.8.7 keeps the WebDAV account out of uci and off the install command: one 600
  file (`/etc/easyproxy/diag.conf`) carries URL, account and password, and
  `--diag-config` configures a delivered machine with a single file path -

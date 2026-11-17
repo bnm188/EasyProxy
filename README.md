@@ -2,8 +2,8 @@
 
 **OpenWrt / ImmortalWrt 上的中文代理管理系统。装一次，导入订阅就能用。**
 
-![version](https://img.shields.io/badge/version-0.8.7-blue)
-![tests](https://img.shields.io/badge/tests-812%20passed-brightgreen)
+![version](https://img.shields.io/badge/version-0.8.8-blue)
+![tests](https://img.shields.io/badge/tests-815%20passed-brightgreen)
 ![firmware](https://img.shields.io/badge/firmware-OpenWrt%20%7C%20ImmortalWrt%20%7C%20Kwrt-informational)
 ![license](https://img.shields.io/badge/license-MIT-green)
 
@@ -78,7 +78,7 @@ LuCI「服务 → EasyProxy」共 10 个中文页面：总览、节点、订阅�
 
 ## 测试
 
-15 套 **812 项**，`tests/run-all.sh` 是唯一计数来源；CI 会下载并校验 pinned sing-box，用真实内核跑 `check`，失败即停、不会发布。
+15 套 **815 项**，`tests/run-all.sh` 是唯一计数来源；CI 会下载并校验 pinned sing-box，用真实内核跑 `check`，失败即停、不会发布。
 
 ```sh
 EP_SING_BOX_BIN=/usr/bin/sing-box sh tests/run-all.sh

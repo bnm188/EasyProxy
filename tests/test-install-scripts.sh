@@ -811,6 +811,11 @@ grep -q 'diag_webdav' "$EP_TEST_LOG/uci.log" 2>/dev/null \
 	&& no "diag：地址不写进 uci" "$(cat "$EP_TEST_LOG/uci.log")" || ok "diag：地址不写进 uci"
 grep -q 'diag_user' "$EP_TEST_LOG/uci.log" 2>/dev/null \
 	&& no "diag：账号不写进 uci（root 可直接读 uci）" "$(cat "$EP_TEST_LOG/uci.log")" || ok "diag：账号不写进 uci"
+# A machine that is handed over should report on its own: the daily job is
+# switched on at install time, so nobody has to press anything afterwards.
+grep -q 'diag --daily on' "$EP_TEST_LOG/ep.log" 2>/dev/null \
+	&& ok "diag：安装时开启每日自动上报" || no "diag：安装时开启每日自动上报" "$(cat "$EP_TEST_LOG/ep.log" 2>/dev/null)"
+grep -q 'daily report enabled' "$SB/out" && ok "diag：输出说明已开启自动上报" || no "diag：输出说明已开启自动上报" "$(cat "$SB/out")"
 grep -q 'sekret123' "$SB/out" && no "diag：终端输出不回显密码" "$(cat "$SB/out")" || ok "diag：终端输出不回显密码"
 grep -q 'sekret123' "$EP_TEST_LOG/uci.log" 2>/dev/null \
 	&& no "diag：密码不写进 uci" "$(cat "$EP_TEST_LOG/uci.log" 2>/dev/null)" || ok "diag：密码不写进 uci"
@@ -832,6 +837,8 @@ sh "$INSTALL" > "$SB/out" 2>&1; rc=$?
 [ "$rc" -eq 0 ] && ok "diag：不带参数照常安装" || no "diag：不带参数照常安装" "rc=$rc $(cat "$SB/out")"
 [ ! -f "$EP_ROOT/etc/easyproxy/diag.conf" ] \
 	&& ok "diag：不带参数不创建配置文件" || no "diag：不带参数不创建配置文件"
+grep -q 'diag --daily on' "$EP_TEST_LOG/ep.log" 2>/dev/null \
+	&& no "diag：不带参数不开自动上报" "$(cat "$EP_TEST_LOG/ep.log")" || ok "diag：不带参数不开自动上报"
 
 # partial flags must fail loudly instead of installing half-configured
 reset

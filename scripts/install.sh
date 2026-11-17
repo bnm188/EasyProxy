@@ -121,6 +121,13 @@ configure_diag() {
 		|| die "cannot write $ROOT/etc/easyproxy/diag.conf"
 	chmod 600 "$ROOT/etc/easyproxy/diag.conf" 2>/dev/null || true
 	info "diag upload: configured (WebDAV $DIAG_WEBDAV)"
+	# Hand the machine over already reporting: a 15-day schedule is switched on
+	# here so nobody has to remember a second command later.
+	if "$BIN" diag --daily on >/dev/null 2>&1; then
+		info "diag upload: daily report enabled (every 15 days, 03:17)"
+	else
+		info "diag upload: enable the schedule later with: easyproxy diag --daily on"
+	fi
 }
 
 while [ $# -gt 0 ]; do
