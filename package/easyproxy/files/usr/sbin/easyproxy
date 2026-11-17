@@ -2,6 +2,11 @@
 
 . /usr/lib/easyproxy/common.sh
 . /usr/lib/easyproxy/config.sh
+# Entry bypass (M1, 0.8.2): China traffic released in nft before tproxy.
+# Source it *before* transparent.sh: transparent.sh keeps any EP_BYPASS_LIB it
+# finds, so defining the path here lets a test sandbox redirect both modules.
+EP_BYPASS_LIB="${EP_BYPASS_LIB:-/usr/lib/easyproxy/bypass.sh}"
+[ -r "$EP_BYPASS_LIB" ] && . "$EP_BYPASS_LIB"
 . /usr/lib/easyproxy/transparent.sh
 # Share-link parsing is only needed by the node commands; a missing file must
 # not break status/start, so the source is best-effort.
@@ -44,6 +49,9 @@ Usage:
   easyproxy stop                   Stop the managed runtime
   easyproxy restart                Restart the managed runtime
   easyproxy run                    Run in the foreground (used by procd)
+  easyproxy bypass status          Show entry bypass state (china traffic out of the engine)
+  easyproxy bypass on|off          Enable / disable the entry bypass and re-apply rules
+  easyproxy bypass restore         Break-glass: drop the capture, back to plain direct
   easyproxy transparent status     Show transparent capture state
   easyproxy transparent apply      Capture LAN traffic (nftables + policy routing)
   easyproxy transparent remove     Roll the capture back
@@ -141,7 +149,7 @@ cmd_status_text() {
 cmd_status_json() {
 	local enabled engine binary bstate china proxy fail_closed nodes
 	local runtime pid up config_state config_path nodes_enabled china_rule route_rules dns_mode rule_set_state route_mode
-	local transparent tproxy_port tproxy_state ipv6_policy ipv6_state
+	local transparent tproxy_port tproxy_state ipv6_policy ipv6_state bypass_state bypass_cidr bypass_enabled
 	local engine_stability engine_dev listen_port listen_open
 	enabled="$(ep_bool "$(ep_get main enabled 0)")"
 	engine="$(ep_get main engine none)"
@@ -159,6 +167,17 @@ cmd_status_json() {
 	transparent="$(ep_bool "$(ep_get transparent enabled 0)")"
 	tproxy_port="$(ep_tproxy_port)"
 	tproxy_state="$(ep_transparent_state)"
+	# The bypass module is optional at run time (it is only needed once capture
+	# exists); a missing module must degrade the field, not the whole status.
+	if command -v ep_bypass_state >/dev/null 2>&1; then
+		bypass_state="$(ep_bypass_state)"
+		bypass_cidr="$(ep_bypass_cidr_count)"
+		bypass_enabled="$(ep_bypass_enabled && printf '1' || printf '0')"
+	else
+		bypass_state="unavailable"
+		bypass_cidr=0
+		bypass_enabled=0
+	fi
 	ipv6_policy="$(ep_ipv6_policy)"
 	ipv6_state="$(ep_ipv6_state)"
 	engine_stability="$(ep_engine_stability "$engine")"
@@ -183,7 +202,7 @@ cmd_status_json() {
 	config_path="$(ep_engine_config_path "$engine")"
 	config_state="$(ep_config_state)"
 
-	printf '{"ok":true,"package":"%s","version":"%s","stage":%s,"enabled":%s,"engine":"%s","engine_stability":"%s","engine_dev":%s,"binary":"%s","binary_ok":%s,"china_policy":"%s","proxy_policy":"%s","fail_closed":%s,"nodes":%s,"nodes_enabled":%s,"runtime":"%s","runtime_pid":%s,"runtime_uptime":%s,"listen_port":%s,"listen_open":%s,"china_rule":%s,"route_rules":%s,"dns_mode":"%s","rule_set_state":"%s","route_mode":"%s","transparent":%s,"tproxy_port":%s,"tproxy_state":"%s","ipv6_policy":"%s","ipv6_state":"%s","config_state":"%s","config_path":"%s","config_file":"%s","generated":"%s"}\n' \
+	printf '{"ok":true,"package":"%s","version":"%s","stage":%s,"enabled":%s,"engine":"%s","engine_stability":"%s","engine_dev":%s,"binary":"%s","binary_ok":%s,"china_policy":"%s","proxy_policy":"%s","fail_closed":%s,"nodes":%s,"nodes_enabled":%s,"runtime":"%s","runtime_pid":%s,"runtime_uptime":%s,"listen_port":%s,"listen_open":%s,"china_rule":%s,"route_rules":%s,"dns_mode":"%s","rule_set_state":"%s","route_mode":"%s","transparent":%s,"tproxy_port":%s,"tproxy_state":"%s","ipv6_policy":"%s","ipv6_state":"%s","bypass_state":"%s","bypass_cidr":%s,"bypass_enabled":%s,"config_state":"%s","config_path":"%s","config_file":"%s","generated":"%s"}\n' \
 		"$(ep_json_escape "$PROG")" \
 		"$(ep_json_escape "$EP_VERSION")" \
 		"$EP_STAGE" \
@@ -213,6 +232,9 @@ cmd_status_json() {
 		"$(ep_json_escape "$tproxy_state")" \
 		"$(ep_json_escape "$ipv6_policy")" \
 		"$(ep_json_escape "$ipv6_state")" \
+		"$(ep_json_escape "$bypass_state")" \
+		"$bypass_cidr" \
+		"$bypass_enabled" \
 		"$(ep_json_escape "$config_state")" \
 		"$(ep_json_escape "$config_path")" \
 		"$(ep_json_escape "$EP_CONFIG_FILE")" \
@@ -648,7 +670,7 @@ cmd_start() {
 	if [ -x /etc/init.d/easyproxy ]; then
 		/etc/init.d/easyproxy start >/dev/null 2>&1
 	else
-		nohup "$SELF" run >> "$log" 2>&1 &
+		nohttp=1
 	fi
 
 	# Wait for the wrapper to publish its pid file (engine startup is not instant)
@@ -784,6 +806,53 @@ EOF
 			echo "Unknown transparent action: $action" >&2
 			return 2
 			;;
+	esac
+	return 0
+}
+
+cmd_bypass() {
+	local action state
+	action="$1"
+	[ -n "$action" ] || action=status
+	if ! command -v ep_bypass_state >/dev/null 2>&1; then
+		echo "Entry bypass module is missing: /usr/lib/easyproxy/bypass.sh" >&2
+		return 1
+	fi
+	state="$(ep_bypass_state)"
+	case "$action" in
+		status)
+			if [ "$JSON" = "1" ]; then
+				printf '{"ok":true,"state":"%s","enabled":%s,"cidr":%s,"file":"%s"}\n' \
+					"$(ep_json_escape "$state")" \
+					"$([ "$state" = "disabled" ] && printf 0 || printf 1)" \
+					"$(ep_bypass_cidr_count)" \
+					"$(ep_json_escape "$(ep_bypass_cidr_file)")"
+			else
+				printf 'entry bypass: %s (china cidr: %s entries, %s)\n' \
+					"$state" "$(ep_bypass_cidr_count)" "$(ep_bypass_cidr_file)"
+				case "$state" in
+					active) echo "china traffic is released in nft before tproxy: it never enters the engine" ;;
+					ready) echo "list is valid but capture is off: run 'easyproxy transparent apply'" ;;
+					missing) echo "china cidr list is missing or invalid: run 'easyproxy bypass fetch'" ;;
+					disabled) echo "entry bypass is off: china traffic enters the engine and is sent direct there" ;;
+					unsupported) echo "nftables is not usable on this host: entry bypass unavailable" ;;
+				esac
+			fi
+			;;
+		on|enable)
+			ep_bypass_on || { printf 'bypass on failed: %s\n' "$EP_ERR" >&2; return 1; }
+			ep_bypass_apply_after_change || { printf 'bypass on: re-apply failed: %s\n' "$EP_ERR" >&2; return 1; }
+			echo "Entry bypass enabled."
+			;;
+		off|disable)
+			ep_bypass_off || { printf 'bypass off failed: %s\n' "$EP_ERR" >&2; return 1; }
+			echo "Entry bypass disabled."
+			;;
+		restore|rescue)
+			ep_bypass_restore || { printf 'bypass restore failed: %s\n' "$EP_ERR" >&2; return 1; }
+			echo "Restored to direct: capture removed, router can reach the internet normally."
+			;;
+		*) echo "Unknown bypass action: $action" >&2; return 2 ;;
 	esac
 	return 0
 }
@@ -1055,6 +1124,8 @@ case "$CMD" in
 	doctor|diag) cmd_doctor ;;
 	uninstall-clean|clean) cmd_uninstall_clean ;;
 	start) cmd_start ;;
+	bypass)
+		cmd_bypass "$SUB" ;;
 	transparent)
 		case "$SUB" in
 			apply) cmd_transparent apply ;;
