@@ -34,9 +34,33 @@ IPK="$(ls "$OUT"/*.ipk 2>/dev/null | head -1)"
 [ -n "$IPK" ] && ok "产物是 .ipk（$(basename "$IPK")" || no "产物是 .ipk" "$(ls "$OUT")"
 
 mkdir -p "$OUT/x"
-( cd "$OUT/x" && ar x "$IPK" ) >/dev/null 2>&1
+# Two layouts are legal: the historical `ar` archive older opkg reads, and the
+# gzip tar 24.10+ expects. Unpack whichever this build produced.
+if head -c 8 "$IPK" | grep -q '!<arch>'; then
+	FORMAT=ar
+	( cd "$OUT/x" && ar x "$IPK" ) >/dev/null 2>&1
+else
+	FORMAT=tar
+	tar -xzf "$IPK" -C "$OUT/x" >/dev/null 2>&1
+fi
+ok "ipk 布局可解包（$FORMAT）"
+[ -f "$OUT/x/debian-binary" ] && ok "ipk 内含 debian-binary" || no "ipk 内含 debian-binary"
 [ -f "$OUT/x/data.tar.gz" ] && ok "ipk 内含 data.tar.gz" || no "ipk 内含 data.tar.gz"
 [ -f "$OUT/x/control.tar.gz" ] && ok "ipk 内含 control.tar.gz" || no "ipk 内含 control.tar.gz"
+
+# Default build must be the modern layout, and --ar must still be available for
+# firmware whose opkg rejects it.
+if head -c 8 "$IPK" | grep -q '!<arch>'; then
+	no "默认产物是新版 gzip-tar 布局" "头部是 ar"
+else
+	ok "默认产物是新版 gzip-tar 布局"
+fi
+if IPK_FORMAT=ar sh "$SRC/scripts/make-ipk.sh" "$SRC/package/easyproxy" "$OUT/ar" >"$OUT/ar.log" 2>&1 \
+	&& head -c 8 "$OUT/ar"/*.ipk | grep -q '!<arch>'; then
+	ok "--ar 仍能打旧版布局"
+else
+	no "--ar 仍能打旧版布局" "$(cat "$OUT/ar.log" 2>/dev/null)"
+fi
 
 tar tzf "$OUT/x/data.tar.gz" > "$OUT/list" 2>/dev/null
 tar tvzf "$OUT/x/data.tar.gz" > "$OUT/detail" 2>/dev/null
@@ -117,7 +141,12 @@ fi
 XIPK="$(ls "$OUT/x86"/*_x86_64.ipk 2>/dev/null | head -1)"
 [ -n "$XIPK" ] && ok "x86_64 产物文件名带 _x86_64" || no "x86_64 产物文件名带 _x86_64" "$(ls "$OUT/x86")"
 if [ -n "$XIPK" ]; then
-	mkdir -p "$OUT/x86u" && ( cd "$OUT/x86u" && ar x "$XIPK" ) >/dev/null 2>&1
+	mkdir -p "$OUT/x86u"
+	if head -c 8 "$XIPK" | grep -q '!<arch>'; then
+		( cd "$OUT/x86u" && ar x "$XIPK" ) >/dev/null 2>&1
+	else
+		tar -xzf "$XIPK" -C "$OUT/x86u" >/dev/null 2>&1
+	fi
 	tar xzf "$OUT/x86u/control.tar.gz" -C "$OUT/x86u" >/dev/null 2>&1
 	grep -q '^Architecture: x86_64$' "$OUT/x86u/control" 2>/dev/null \
 		&& ok "x86_64 包 Architecture 字段正确" || no "x86_64 包 Architecture 字段" "$(grep Architecture "$OUT/x86u/control" 2>/dev/null)"

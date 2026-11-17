@@ -774,6 +774,83 @@ function pageLogs(data) {
 	]);
 }
 
+function pageUpdate(data) {
+	injectStyle();
+	var st = (data && data.status) || {};
+	var cur = st.version || 'unknown';
+	var repo = 'bnm188/EasyProxy';
+
+	function setInfo(txt) {
+		var el = document.getElementById('ep-up-info');
+		if (!el)
+			return;
+		while (el.firstChild)
+			el.removeChild(el.firstChild);
+		el.appendChild(E('pre', { class: 'ep-pre' }, txt));
+	}
+
+	return E('div', { class: 'ep-wrap' }, [
+		hero('版本更新', '检查新版本并直接安装；升级前自动备份当前程序，失败自动回滚。', [
+			E('span', { class: 'ep-tag' }, 'v' + cur),
+			E('span', { class: 'ep-tag' }, '通道 stable')
+		]),
+		card('当前状态', [
+			E('div', { class: 'ep-grid' }, [
+				tile('当前版本', 'v' + cur, 'ep-ok'),
+				tile('最新版本', '点「检查更新」获取', 'ep-off'),
+				tile('可升级', '未知', 'ep-off'),
+				tile('回滚包', '读取中…', 'ep-off')
+			]),
+			E('div', { id: 'ep-up-info' }, E('pre', { class: 'ep-pre' }, '尚未检查。点下面的按钮向 GitHub 查询最新版本。'))
+		], '只对比版本号，不上传任何本机信息。'),
+		card('操作', [
+			button('检查更新', '', function () {
+				setInfo('正在查询 GitHub…');
+				return cliJson(['update', 'check']).then(function (r) {
+					if (!r) {
+						setInfo('无法读取 Release 信息。常见原因：路由器访问不了 api.github.com。\n改用 SSH 手动升级：easyproxy update apply');
+						return notify('检查更新失败', 'error');
+					}
+					setInfo('当前 v' + r.current + ' / 最新 v' + r.latest
+						+ (r.available ? '\n可升级到 v' + r.latest : '\n已是最新版本'));
+					notify(r.available ? ('有新版本 v' + r.latest) : '已是最新版本',
+						r.available ? 'warning' : 'success');
+				});
+			}),
+			button('立即更新', 'ep-primary', function () {
+				if (!window.confirm('将下载并安装最新版本。\n\n· 升级前自动备份当前程序\n· 只替换程序文件，节点/配置/日志不动\n· 面板会重启，本页会断开约 10-20 秒\n\n确认现在升级？'))
+					return;
+				setInfo('正在下载并校验，请勿关闭页面…');
+				return run(['update', 'apply']).then(function (r) {
+					var text = ((r.stdout || '') + (r.stderr || '')).trim() || '(无输出)';
+					setInfo(text);
+					showOutput(r.code === 0 ? '升级完成' : '升级失败（已检查回滚）', text);
+					if (r.code === 0)
+						notify('升级完成，刷新页面查看新版本', 'success');
+					else
+						notify('升级失败，详见弹窗', 'error');
+				});
+			}),
+			button('查看更新说明', '', function () {
+				window.open('https://github.com/' + repo + '/releases', '_blank');
+			}),
+			button('回滚到上一版', 'ep-danger', function () {
+				if (!window.confirm('用最近一次备份覆盖当前程序？只在升级出问题时使用。'))
+					return;
+				return run(['update', 'rollback']).then(function (r) {
+					showOutput('回滚结果', ((r.stdout || '') + (r.stderr || '')).trim());
+					notify(r.code === 0 ? '已回滚，刷新页面' : '回滚失败', r.code === 0 ? 'success' : 'error');
+				});
+			})
+		], '升级走 GitHub Releases 资产，先校验 SHA256 再解包；校验不过不动任何文件。'),
+		card('安全说明', E('div', { class: 'ep-hint', style: 'margin:0' },
+			'① 下载后先比对 SHA256SUMS，不符直接中止；'
+			+ '② 覆盖前把当前程序打包到 /etc/easyproxy/backups/，只保留最近一份；'
+			+ '③ 装完检查面板文件与 CLI 版本，任一不对就自动还原；'
+			+ '④ /etc/config/easyproxy 与 /etc/easyproxy/（节点、规则集、token）全程不碰。'))
+	]);
+}
+
 function pageBackup(data) {
 	injectStyle();
 	var files = (data && data.files) || [];
@@ -953,6 +1030,7 @@ return baseclass.extend({
 	pageDns: pageDns,
 	pageRules: pageRules,
 	pageLogs: pageLogs,
+	pageUpdate: pageUpdate,
 	pageBackup: pageBackup,
 	pageSettings: pageSettings
 });

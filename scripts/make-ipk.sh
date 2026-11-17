@@ -4,8 +4,11 @@
 #   sh scripts/make-ipk.sh [PACKAGE_DIR] [OUT_DIR] [ARCH]
 #   ARCH=x86_64 sh scripts/make-ipk.sh package/easyproxy dist
 #
-# OpenWrt's opkg is an `ar` archive holding debian-binary + control.tar.gz +
-# data.tar.gz. The SDK build on CI already produces the native package for the
+# Two layouts exist. Firmware built on 24.10+ expects a *gzip tar* holding
+# ./debian-binary, ./control.tar.gz and ./data.tar.gz; older opkg wants the
+# historical `ar` archive with the same three members. The modern layout is the
+# default and `--ar` (or IPK_FORMAT=ar) switches back, because an ipk the
+# target opkg calls "Malformed" is useless. The SDK build on CI already produces the native package for the
 # target it was built against (apk on ImmortalWrt 25.x); this script produces
 # the opkg-readable twin from the same files, so older opkg firmware can install
 # the same release. Every file comes straight from package/easyproxy/files --
@@ -16,6 +19,14 @@
 # the control member while the payload stays identical.
 
 set -eu
+
+FORMAT="${IPK_FORMAT:-tar}"
+for a in "$@"; do
+	case "$a" in
+		--ar) FORMAT=ar ;;
+		--tar) FORMAT=tar ;;
+	esac
+done
 
 SRC_DIR="${1:-package/easyproxy}"
 OUT_DIR="${2:-dist}"
@@ -96,25 +107,41 @@ tar --owner=0 --group=0 --numeric-owner -czf "$STAGE/data.tar.gz" -C "$D" .
 printf '2.0\n' > "$STAGE/debian-binary"
 
 mkdir -p "$OUT_DIR"
-# argparse-free ar writer: opkg wants the three members in this exact order and
-# no symbol table, which GNU ar may add.
-python3 - "$STAGE" "$IPK" <<'PY'
-import os, sys, time
-stage, out = sys.argv[1], sys.argv[2]
+python3 - "$STAGE" "$IPK" "$FORMAT" <<'PYWRITE'
+import os, sys, time, tarfile
+stage, out, fmt = sys.argv[1], sys.argv[2], sys.argv[3]
 members = ["debian-binary", "control.tar.gz", "data.tar.gz"]
-with open(out, "wb") as f:
-    f.write(b"!<arch>\n")
-    for m in members:
-        path = os.path.join(stage, m)
-        size = os.path.getsize(path)
-        header = (m + "/").ljust(16).encode() + str(int(time.time())).ljust(12).encode() \
-            + b"0".ljust(6) + b"0".ljust(6) + b"100644".ljust(8) \
-            + str(size).ljust(10).encode() + b"`\n"
-        f.write(header)
-        with open(path, "rb") as g:
-            f.write(g.read())
-        if size % 2:
-            f.write(b"\n")
-PY
 
-echo "built $IPK (architecture ${ARCH})"
+if fmt == "ar":
+    # argparse-free ar writer: opkg wants the three members in this exact order
+    # and no symbol table, which GNU ar may add.
+    with open(out, "wb") as f:
+        f.write(b"!<arch>\n")
+        for m in members:
+            path = os.path.join(stage, m)
+            size = os.path.getsize(path)
+            header = (m + "/").ljust(16).encode() + str(int(time.time())).ljust(12).encode() \
+                + b"0".ljust(6) + b"0".ljust(6) + b"100644".ljust(8) \
+                + str(size).ljust(10).encode() + b"`\n"
+            f.write(header)
+            with open(path, "rb") as g:
+                f.write(g.read())
+            if size % 2:
+                f.write(b"\n")
+else:
+    # modern layout: an outer gzip tar holding the same three members, which
+    # is what opkg on 24.10+ reads. control/data are already compressed, so
+    # they go in as-is rather than being gzipped twice.
+    with tarfile.open(out, "w:gz") as t:
+        for m in members:
+            path = os.path.join(stage, m)
+            info = t.gettarinfo(path, arcname="./" + m)
+            info.uid = info.gid = 0
+            info.uname = info.gname = "root"
+            info.mtime = int(time.time())
+            info.mode = 0o644
+            with open(path, "rb") as g:
+                t.addfile(info, g)
+PYWRITE
+
+echo "built $IPK (architecture ${ARCH}, format ${FORMAT})"

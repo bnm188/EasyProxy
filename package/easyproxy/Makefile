@@ -1,7 +1,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=easyproxy
-PKG_VERSION:=0.8.2
+PKG_VERSION:=0.8.3
 PKG_RELEASE:=1
 
 PKG_LICENSE:=MIT
@@ -26,6 +26,10 @@ define Package/easyproxy/description
  Stage 6 keeps LAN traffic direct and makes fail_closed real: when the CN rule
  sets are missing nothing is proxied instead of silently going full-tunnel.
  IPv6 is never captured silently: it is explicit `direct` or `block`.
+ 0.8.3 adds panel-driven self update (check/apply/rollback with a SHA256 gate),
+ log files that are actually written (0600, rotated), a diag bundle filed under
+ a per-customer number and uploaded daily, and an installer that adopts an
+ existing sing-box and warns about a conflicting proxy stack.
  0.8.2 adds the entry bypass: China IPv4 destinations are released in nft
  before tproxy, so domestic traffic never enters the sing-box process.
 endef
@@ -72,6 +76,7 @@ define Package/easyproxy/install
 	$(INSTALL_DATA) ./files/www/luci-static/resources/view/easyproxy/logs.js $(1)/www/luci-static/resources/view/easyproxy/logs.js
 	$(INSTALL_DATA) ./files/www/luci-static/resources/view/easyproxy/backup.js $(1)/www/luci-static/resources/view/easyproxy/backup.js
 	$(INSTALL_DATA) ./files/www/luci-static/resources/view/easyproxy/settings.js $(1)/www/luci-static/resources/view/easyproxy/settings.js
+	$(INSTALL_DATA) ./files/www/luci-static/resources/view/easyproxy/update.js $(1)/www/luci-static/resources/view/easyproxy/update.js
 	$(INSTALL_DIR) $(1)/usr/share/luci/menu.d
 	$(INSTALL_DATA) ./files/usr/share/luci/menu.d/luci-app-easyproxy.json $(1)/usr/share/luci/menu.d/luci-app-easyproxy.json
 	$(INSTALL_DIR) $(1)/usr/share/rpcd/acl.d

@@ -175,6 +175,12 @@ jobs:
           mkdir -p dist
           VER="$(sed -n 's/^PKG_VERSION:=//p' package/easyproxy/Makefile | head -1)"
           [ -n "$VER" ] || { echo "::error::cannot read PKG_VERSION"; exit 1; }
+          # Git stores no exec bit for these on checkout in every configuration,
+          # and a 0644 /etc/init.d/easyproxy is a service procd refuses to run.
+          # Fix the modes on the tree before archiving, not after installing.
+          chmod 755 package/easyproxy/files/etc/init.d/easyproxy \
+                    package/easyproxy/files/etc/hotplug.d/iface/95-easyproxy \
+                    package/easyproxy/files/usr/sbin/easyproxy
           tar --owner=0 --group=0 --numeric-owner \
             -czf "dist/easyproxy-${VER}-rootfs.tar.gz" -C package/easyproxy/files .
           ls -l dist

@@ -48,6 +48,9 @@ Usage:
   easyproxy diag [--upload]        Write a redacted bundle (lands in /tmp unless --upload)
   easyproxy diag --set-id 001      Tag this router, bundles go to diagnostics/001/
   easyproxy diag --daily on|off    Upload one bundle a day at 03:17
+  easyproxy update check           Ask GitHub for the latest release
+  easyproxy update apply [ver]     Download, verify, install, verify, rollback on failure
+  easyproxy update rollback        Restore the archived previous version
   easyproxy start                  Start the managed runtime
   easyproxy stop                   Stop the managed runtime
   easyproxy restart                Restart the managed runtime
@@ -1256,6 +1259,251 @@ cmd_diag() {
 	return 0
 }
 
+# --- self update -------------------------------------------------------------
+# The panel can pull a newer release and install it without SSH. Three things
+# make that safe enough to expose to a customer: the download is verified
+# against SHA256SUMS before anything is replaced, the current program is
+# archived first, and /etc/config/easyproxy plus /etc/easyproxy/* are never
+# touched - an update cannot wipe a customer's nodes or their numbers.
+EP_UPDATE_REPO="${EP_UPDATE_REPO:-}"
+EP_UPDATE_BACKUP_DIR="${EP_UPDATE_BACKUP_DIR:-/etc/easyproxy/backups}"
+EP_UPDATE_MIRRORS="${EP_UPDATE_MIRRORS:-}"
+# Overridable so the regression suite can point the whole flow at a sandbox root.
+EP_UPDATE_ROOT="${EP_UPDATE_ROOT:-/}"
+EP_UPDATE_APP_JS="${EP_UPDATE_APP_JS:-/www/luci-static/resources/easyproxy/app.js}"
+EP_UPDATE_MENU_JSON="${EP_UPDATE_MENU_JSON:-/usr/share/luci/menu.d/luci-app-easyproxy.json}"
+
+update_repo() {
+	[ -n "$EP_UPDATE_REPO" ] && { printf '%s' "$EP_UPDATE_REPO"; return 0; }
+	ep_get main update_repo bnm188/EasyProxy
+}
+
+# Mirrors are a prefix, the way ghproxy works: <prefix>https://github.com/...
+update_mirrors() {
+	local list
+	[ -n "$EP_UPDATE_MIRRORS" ] && { printf '%s' "$EP_UPDATE_MIRRORS"; return 0; }
+	list="$(ep_get main update_mirror '')"
+	[ -n "$list" ] || list="https://ghproxy.net/,https://ghfast.top/"
+	printf '%s' "$list"
+}
+
+# Fetch with the mirror list as fallback: a router behind a polluted DNS still
+# has a chance of getting the archive through a proxy prefix.
+update_fetch() {
+	local url out m original
+	url="$1"; out="$2"
+	if wget -q -T 30 -O "$out" "$url" 2>/dev/null && [ -s "$out" ]; then
+		return 0
+	fi
+	original="$url"
+	for m in $(printf '%s' "$(update_mirrors)" | tr ',' ' '); do
+		[ -n "$m" ] || continue
+		if wget -q -T 30 -O "$out" "${m}${original}" 2>/dev/null && [ -s "$out" ]; then
+			echo "update: fetched through mirror $m" >&2
+			return 0
+		fi
+	done
+	rm -f "$out" 2>/dev/null
+	return 1
+}
+
+ver_cmp() {
+	awk -v a="${1#v}" -v b="${2#v}" 'BEGIN{
+		split(a,x,"."); split(b,y,".")
+		n=(length(x)>length(y)?length(x):length(y))
+		for(i=1;i<=n;i++){p=x[i]+0;q=y[i]+0;if(p>q){print 1;exit}if(p<q){print -1;exit}}
+		print 0
+	}'
+}
+
+update_latest_version() {
+	local repo tmp tag
+	repo="$(update_repo)"
+	tmp="$(mktemp 2>/dev/null || echo /tmp/easyproxy-rel.json)"
+	if update_fetch "https://api.github.com/repos/$repo/releases/latest" "$tmp"; then
+		tag="$(sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$tmp" | head -n 1)"
+	fi
+	rm -f "$tmp"
+	[ -n "${tag:-}" ] || return 1
+	printf '%s' "${tag#v}"
+}
+
+update_current_version() { printf '%s' "$EP_VERSION"; }
+
+cmd_update_check() {
+	local latest cur json
+	cur="$(update_current_version)"
+	latest="$(update_latest_version)" || {
+		echo "update: cannot reach the release API (api.github.com); check network or dns" >&2
+		return 4
+	}
+	if [ "${1:-}" = "--json" ]; then
+		if [ "$(ver_cmp "$latest" "$cur")" = "1" ]; then
+			printf '{"current":"%s","latest":"%s","available":true,"repo":"%s"}\n' "$cur" "$latest" "$(update_repo)"
+		else
+			printf '{"current":"%s","latest":"%s","available":false,"repo":"%s"}\n' "$cur" "$latest" "$(update_repo)"
+		fi
+		return 0
+	fi
+	echo "current: $cur"
+	echo "latest:  $latest"
+	if [ "$(ver_cmp "$latest" "$cur")" = "1" ]; then
+		echo "an update is available: easyproxy update apply"
+		return 0
+	fi
+	echo "already up to date"
+	return 0
+}
+
+update_backup() {
+	local cur dir
+	cur="$(update_current_version)"
+	dir="$EP_UPDATE_BACKUP_DIR"
+	mkdir -p "$dir" 2>/dev/null || { echo "update: cannot create $dir" >&2; return 1; }
+	EP_UPDATE_ARCHIVE="$dir/rollback-$cur.tar.gz"
+	# Only paths that exist are archived: a tree without the view directory is
+	# not a reason to refuse the upgrade.
+	set -- usr/sbin/easyproxy usr/lib/easyproxy usr/share/luci/menu.d/luci-app-easyproxy.json \
+		usr/share/rpcd/acl.d/luci-app-easyproxy.json \
+		www/luci-static/resources/easyproxy www/luci-static/resources/view/easyproxy
+	existing=""
+	for p in "$@"; do
+		[ -e "$EP_UPDATE_ROOT/$p" ] && existing="$existing $p"
+	done
+	[ -n "$existing" ] || { echo "update: nothing to archive at $EP_UPDATE_ROOT" >&2; return 1; }
+	# shellcheck disable=SC2086
+	tar -czf "$EP_UPDATE_ARCHIVE" -C "$EP_UPDATE_ROOT" $existing 2>/dev/null || {
+		echo "update: cannot archive the current program" >&2; return 1; }
+	chmod 600 "$EP_UPDATE_ARCHIVE" 2>/dev/null || true
+	echo "update: current $cur archived as $(basename "$EP_UPDATE_ARCHIVE")"
+	return 0
+}
+
+# Panel files are plain JS: if a half-written file were served, LuCI would show
+# the factory error instead of this page. Check the markers a real file has.
+update_verify_install() {
+	local app menu v
+	app="$EP_UPDATE_APP_JS"
+	menu="$EP_UPDATE_MENU_JSON"
+	[ -s "$app" ] || { echo "update: app.js is missing or empty" >&2; return 1; }
+	grep -q 'baseclass.extend' "$app" || { echo "update: app.js is not the expected module" >&2; return 1; }
+	grep -q 'easyproxy/update' "$menu" 2>/dev/null || true
+	[ -x "$SELF" ] || { echo "update: CLI is not executable" >&2; return 1; }
+	# Read the version baked into the file that was just installed. Asking the
+	# running CLI would report the old build, which is exactly what this check
+	# exists to catch.
+	v="$(sed -n 's/.*EP_VERSION="\([^"]*\)".*/\1/p' "$EP_UPDATE_ROOT/usr/sbin/easyproxy" 2>/dev/null | head -n 1)"
+	[ -n "$v" ] || { echo "update: the installed CLI carries no version" >&2; return 1; }
+	[ -z "${1:-}" ] || { [ "$v" = "$1" ] || { echo "update: installed $v, expected $1" >&2; return 1; }; }
+	echo "update: installed version reports $v"
+	return 0
+}
+
+update_restart_panel() {
+	rm -f /tmp/luci-indexcache* 2>/dev/null
+	[ -x /etc/init.d/rpcd ] || return 0
+	/etc/init.d/rpcd stop >/dev/null 2>&1 || true
+	sleep 2
+	/etc/init.d/rpcd start >/dev/null 2>&1 || true
+}
+
+cmd_update_apply() {
+	local repo ver cur tmp sums archive want got
+	repo="$(update_repo)"
+	ver="${1:-}"
+	[ -n "$ver" ] || ver="$(update_latest_version)" || {
+		echo "update: cannot reach the release API; nothing was changed" >&2; return 4; }
+	ver="${ver#v}"
+	cur="$(update_current_version)"
+	if [ "$(ver_cmp "$ver" "$cur")" != "1" ]; then
+		echo "update: $ver is not newer than $cur; nothing to do"
+		return 0
+	fi
+	tmp="$(mktemp -d 2>/dev/null || echo /tmp/easyproxy-update)"
+	mkdir -p "$tmp" 2>/dev/null
+	sums="$tmp/SHA256SUMS"
+	archive="$tmp/easyproxy-$ver-rootfs.tar.gz"
+	base="https://github.com/$repo/releases/download/v$ver"
+	echo "update: downloading $ver from $repo"
+	update_fetch "$base/SHA256SUMS" "$sums" || { echo "update: cannot download SHA256SUMS; nothing was changed" >&2; rm -rf "$tmp"; return 4; }
+	update_fetch "$base/easyproxy-$ver-rootfs.tar.gz" "$archive" || {
+		echo "update: cannot download the archive; nothing was changed" >&2; rm -rf "$tmp"; return 4; }
+	# Verify before touching a single file on the box.
+	want="$(grep -F " easyproxy-$ver-rootfs.tar.gz" "$sums" 2>/dev/null | awk '{print $1}' | head -n 1)"
+	[ -n "$want" ] || { echo "update: SHA256SUMS has no entry for this archive; refusing" >&2; rm -rf "$tmp"; return 5; }
+	got="$(sha256sum "$archive" 2>/dev/null | awk '{print $1}')"
+	[ "$got" = "$want" ] || {
+		echo "update: checksum mismatch (want $want, got $got); refusing" >&2; rm -rf "$tmp"; return 5; }
+	echo "update: checksum verified"
+
+	update_backup || { rm -rf "$tmp"; return 1; }
+	if ! tar -xzf "$archive" -C "$EP_UPDATE_ROOT" 2>/dev/null; then
+		echo "update: extraction failed; rolling back" >&2
+		tar -xzf "$EP_UPDATE_ARCHIVE" -C "$EP_UPDATE_ROOT" 2>/dev/null
+		update_restart_panel
+		rm -rf "$tmp"
+		return 6
+	fi
+	chmod 755 "$EP_UPDATE_ROOT/usr/sbin/easyproxy" "$EP_UPDATE_ROOT/etc/init.d/easyproxy" 2>/dev/null || true
+	update_restart_panel
+	if ! update_verify_install "$ver"; then
+		echo "update: the new version did not verify; rolling back to $cur" >&2
+		tar -xzf "$EP_UPDATE_ARCHIVE" -C "$EP_UPDATE_ROOT" 2>/dev/null
+		chmod 755 "$EP_UPDATE_ROOT/usr/sbin/easyproxy" "$EP_UPDATE_ROOT/etc/init.d/easyproxy" 2>/dev/null || true
+		update_restart_panel
+		rm -rf "$tmp"
+		return 6
+	fi
+	# One rollback archive is enough: the previous version is always the useful
+	# one, and a growing pile of them would eat the customer's flash.
+	for old in "$EP_UPDATE_BACKUP_DIR"/rollback-*.tar.gz; do
+		[ -e "$old" ] || continue
+		[ "$old" = "$EP_UPDATE_ARCHIVE" ] && continue
+		rm -f "$old" 2>/dev/null || true
+	done
+	rm -rf "$tmp"
+	echo "update: now running $ver (was $cur). Reload the page."
+	echo "update: if anything looks wrong: easyproxy update rollback"
+	return 0
+}
+
+cmd_update_rollback() {
+	local last
+	last="$(ls -1 "$EP_UPDATE_BACKUP_DIR"/rollback-*.tar.gz 2>/dev/null | tail -n 1)"
+	[ -n "$last" ] || { echo "update: no rollback archive in $EP_UPDATE_BACKUP_DIR" >&2; return 3; }
+	echo "update: restoring $(basename "$last")"
+	tar -xzf "$last" -C "$EP_UPDATE_ROOT" 2>/dev/null || { echo "update: cannot extract $last" >&2; return 1; }
+	chmod 755 "$EP_UPDATE_ROOT/usr/sbin/easyproxy" "$EP_UPDATE_ROOT/etc/init.d/easyproxy" 2>/dev/null || true
+	update_restart_panel
+	echo "update: rolled back; reload the page"
+	return 0
+}
+
+update_backup_list() {
+	local f
+	for f in "$EP_UPDATE_BACKUP_DIR"/rollback-*.tar.gz; do
+		[ -e "$f" ] || continue
+		basename "$f"
+	done
+}
+
+cmd_update() {
+	case "${1:-}" in
+		check|status)
+			# --json is a global flag this CLI already parses ($JSON)
+			if [ "${JSON:-0}" = "1" ]; then
+				cmd_update_check --json
+			else
+				cmd_update_check
+			fi
+			;;
+		apply|upgrade|install) cmd_update_apply "${2:-}" ;;
+		rollback|back) cmd_update_rollback ;;
+		backups|list) update_backup_list ;;
+		*) echo "Unknown update action: ${1:-}" >&2; return 2 ;;
+	esac
+}
+
 # --- panel entry points -------------------------------------------------------
 # The panel's rpcd ACL grants exec on this CLI and nothing else, so the two
 # helpers the panel needs are exposed as fixed verbs instead of `sh <script>`.
@@ -1363,6 +1611,7 @@ case "$CMD" in
 		;;
 	doctor) cmd_doctor ;;
 	diag) cmd_diag ;;
+	update|upgrade) cmd_update "$SUB" "$SUB2" ;;
 	uninstall-clean|clean) cmd_uninstall_clean ;;
 	start) cmd_start ;;
 	bypass)

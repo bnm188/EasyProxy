@@ -2,7 +2,7 @@
 
 **OpenWrt / ImmortalWrt 上的中文代理管理系统。装一次，导入订阅就能用。**
 
-![version](https://img.shields.io/badge/version-0.8.2-blue)
+![version](https://img.shields.io/badge/version-0.8.3-blue)
 ![tests](https://img.shields.io/badge/tests-672%20passed-brightgreen)
 ![firmware](https://img.shields.io/badge/firmware-OpenWrt%20%7C%20ImmortalWrt%20%7C%20Kwrt-informational)
 ![license](https://img.shields.io/badge/license-MIT-green)
@@ -83,7 +83,7 @@ LuCI「服务 → EasyProxy」共 10 个中文页面：总览、节点、订阅�
 
 ---
 
-## 已知限制（0.8.2）
+## 已知限制（0.8.3）
 
 - **换节点会断连**：改配置 + 重载，没有 clash API 热切换 → 计划 0.8.3。
 - **平台分流只有三个开关**：YouTube / Netflix / TikTok，且共用同一个 `proxy` 组 → 计划 0.8.5。
@@ -115,7 +115,7 @@ EP_SING_BOX_BIN=/usr/bin/sing-box sh tests/run-all.sh
 | 版本 | 里程碑 |
 |---|---|
 | 0.8.2 | 入口旁路：国内流量不进内核 ✅ |
-| 0.8.3 | 无缝热切换：clash API，换节点不断连 |
+| 0.8.3 | 面板一键更新（SHA256 校验 + 自动回滚）、日志真正落盘并 600、客户诊断按编号归档每天上传 ✅ ｜ 无缝热切换（clash API）待做 |
 | 0.8.4 | 引擎接口 v2 + dae 条件化加载 |
 | 0.8.5 | 十个平台分流 + 可绑定地区组 |
 | 0.8.6 | 架构矩阵扩展 |

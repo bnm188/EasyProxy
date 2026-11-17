@@ -2,8 +2,8 @@
 
 EP_CONFIG="easyproxy"
 EP_CONFIG_FILE="${EP_CONFIG_FILE:-/etc/config/easyproxy}"
-EP_VERSION="0.8.2"
-EP_STAGE="6"
+EP_VERSION="0.8.3"
+EP_STAGE="7"
 
 EP_RUNTIME_DIR="${EP_RUNTIME_DIR:-/var/run/easyproxy}"
 EP_PID_FILE="$EP_RUNTIME_DIR/easyproxy.pid"
