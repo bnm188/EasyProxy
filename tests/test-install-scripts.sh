@@ -227,7 +227,7 @@ export EP_LUCI_CACHE="$SB/opt/luci-indexcache"
 export EP_BACKUP_DIR="$SB/backup"
 export EP_SING_BOX_SHA="$h_sb"
 export EP_DAE_SHA="$h_dae"
-mkdir -p "$EP_TMP" "$EP_STATE_DIR" "$EP_ROOT/usr/sbin" "$EP_ROOT/etc/init.d"
+mkdir -p "$EP_TMP" "$EP_STATE_DIR" "$EP_ROOT/usr/sbin" "$EP_ROOT/etc/init.d" "$EP_ROOT/var/log"
 touch "$EP_CFG"
 touch "$EP_LUCI_CACHE"
 
@@ -255,6 +255,9 @@ grep -q '\.ipk$' "$EP_TEST_LOG/curl.urls" 2>/dev/null \
 grep -q 'init enable' "$EP_TEST_LOG/init.log" 2>/dev/null && ok "安装后注册开机启动" || no "安装后注册开机启动"
 grep -q 'rpcd restart' "$EP_TEST_LOG/rpcd.log" 2>/dev/null && ok "安装后重启 rpcd" || no "安装后重启 rpcd"
 grep -q 'easyproxy status' "$EP_TEST_LOG/ep.log" 2>/dev/null && ok "安装后打印状态" || no "安装后打印状态"
+# The log can quote a node URL, and /var/log is world-readable on OpenWrt.
+[ "$(stat -c %a "$EP_ROOT/var/log/easyproxy.log" 2>/dev/null)" = "600" ] \
+	&& ok "安装后日志文件权限为 600" || no "安装后日志文件权限为 600" "$(ls -l "$EP_ROOT/var/log" 2>/dev/null)"
 
 # --- install: apk-only host -------------------------------------------
 reset

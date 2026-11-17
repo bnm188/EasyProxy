@@ -139,6 +139,28 @@ out="$("$EP" start 2>&1)"; rc=$?
 printf '%s' "$out" | grep -qi 'disabled' && ok "拒绝原因明确（disabled）" || no "拒绝原因明确（disabled）"
 sed -i 's/^easyproxy.main.enabled=.*/easyproxy.main.enabled=1/' "$SB/etc/uci.db"
 
+# --- log file: written, locked down, rotated --------------------------------
+# ep_log used to go to syslog only, so the file the panel reads stayed empty.
+# Sourced directly: the point is the helper, not which CLI verb logs.
+mkdir -p "$SB/diag"
+export EP_LOG_FILE="$SB/diag/easyproxy.log"
+rm -f "$EP_LOG_FILE" "$EP_LOG_FILE.1"
+( PATH="$SB/bin:$PATH"; . "$SB/usr/lib/easyproxy/common.sh"; ep_log "unit-test line" )
+[ -f "$EP_LOG_FILE" ] && ok "ep_log 写出了日志文件" || no "ep_log 写出了日志文件" "$(ls -l "$SB/diag")"
+[ "$(stat -c %a "$EP_LOG_FILE" 2>/dev/null)" = "600" ] \
+	&& ok "日志文件权限为 600" || no "日志文件权限为 600" "$(stat -c %a "$EP_LOG_FILE" 2>/dev/null)"
+grep -q 'easyproxy: unit-test line' "$EP_LOG_FILE" 2>/dev/null && ok "日志行带标记写入" || no "日志行格式" "$(cat "$EP_LOG_FILE")"
+grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2} ' "$EP_LOG_FILE" 2>/dev/null \
+	&& ok "日志行有时间戳" || no "日志行有时间戳" "$(cat "$EP_LOG_FILE")"
+
+# rotation: exceed the 1 MiB default, then log once more
+head -c 1200000 /dev/zero | tr '\0' 'x' > "$EP_LOG_FILE"
+chmod 600 "$EP_LOG_FILE"
+( PATH="$SB/bin:$PATH"; . "$SB/usr/lib/easyproxy/common.sh"; ep_log "after-rotation line" )
+[ -f "$EP_LOG_FILE.1" ] && ok "超过上限后轮转为 .1" || no "超过上限后轮转为 .1" "$(ls -l "$SB/diag")"
+[ "$(stat -c %a "$EP_LOG_FILE" 2>/dev/null)" = "600" ] && ok "轮转后新文件仍是 600" || no "轮转后新文件仍是 600" ""
+grep -q 'after-rotation line' "$EP_LOG_FILE" && ok "轮转后新行写进新文件" || no "轮转后新行写进新文件" ""
+
 # --- diagnostics bundle -----------------------------------------------------
 # A secret in a log must never reach GitHub. These cases feed the collector a
 # log full of credentials and then grep the bundle for the originals.

@@ -10,8 +10,41 @@ EP_PID_FILE="$EP_RUNTIME_DIR/easyproxy.pid"
 EP_LOG_FILE="${EP_LOG_FILE:-/var/log/easyproxy.log}"
 EP_LIB_DIR="${EP_LIB_DIR:-/usr/lib/easyproxy}"
 
+# Two sinks on purpose: syslog (so `logread -e easyproxy` works and procd keeps
+# it after a reboot) and a file the panel and `doctor` can read. The file is
+# created 0600 - a log line can quote a node URL or a subscription token, and
+# /var/log is world-readable on OpenWrt by default.
 ep_log() {
-	logger -t easyproxy "$*"
+	local msg
+	msg="$*"
+	logger -t easyproxy "$msg" 2>/dev/null || true
+	[ -n "${EP_LOG_FILE:-}" ] || return 0
+	[ -d "$(dirname "$EP_LOG_FILE")" ] || return 0
+	if [ ! -e "$EP_LOG_FILE" ]; then
+		( umask 077; : >> "$EP_LOG_FILE" ) 2>/dev/null || return 0
+		chmod 600 "$EP_LOG_FILE" 2>/dev/null || true
+	fi
+	ep_log_maybe_rotate
+	printf '%s easyproxy: %s\n' "$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null || printf '-')" "$msg" \
+		>> "$EP_LOG_FILE" 2>/dev/null || return 0
+	return 0
+}
+
+# Rotate at the configured size before the file grows without bound. Called from
+# every log write because that is the only place that knows the log is filling.
+ep_log_maybe_rotate() {
+	local max size
+	[ -n "${EP_LOG_FILE:-}" ] || return 0
+	[ -s "$EP_LOG_FILE" ] || return 0
+	max="$(ep_get main log_max_bytes 1048576)"
+	case "$max" in ''|*[!0-9]*) max=1048576 ;; esac
+	size="$(wc -c < "$EP_LOG_FILE" 2>/dev/null | tr -d ' ')"
+	case "$size" in ''|*[!0-9]*) return 0 ;; esac
+	[ "$size" -le "$max" ] && return 0
+	mv -f "$EP_LOG_FILE" "$EP_LOG_FILE.1" 2>/dev/null || return 0
+	( umask 077; : >> "$EP_LOG_FILE" ) 2>/dev/null
+	chmod 600 "$EP_LOG_FILE" 2>/dev/null || true
+	return 0
 }
 
 ep_get() {

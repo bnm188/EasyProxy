@@ -963,6 +963,18 @@ mkwork() {
 	trap 'rm -rf "$work"' EXIT
 }
 
+# Permissions that must not depend on the caller's umask: the log can quote a
+# node URL or a subscription token and /var/log is world-readable on OpenWrt,
+# and /etc/easyproxy holds the node links themselves.
+harden_paths() {
+	if [ -d "$ROOT/var/log" ]; then
+		[ -e "$ROOT/var/log/easyproxy.log" ] || : >> "$ROOT/var/log/easyproxy.log" 2>/dev/null || true
+		chmod 600 "$ROOT/var/log/easyproxy.log" 2>/dev/null || true
+	fi
+	[ -d "$ROOT/etc/easyproxy" ] && chmod 700 "$ROOT/etc/easyproxy" 2>/dev/null || true
+	return 0
+}
+
 # The package manager is not the only way to lay the panel down: the same tree
 # is published as a rootfs archive. `--rootfs` uses it directly, and the ipk
 # branch falls back to it when opkg refuses the package (`Malformed package
@@ -977,6 +989,7 @@ install_rootfs() {
 	info "extracting at $ROOT (no package manager involved)"
 	tar -xzf "$file" -C "$ROOT" || die "cannot extract $file at $ROOT"
 	chmod 755 "$ROOT/usr/sbin/easyproxy" "$ROOT/etc/init.d/easyproxy" 2>/dev/null || true
+	harden_paths
 }
 
 install_package() {
@@ -1080,6 +1093,7 @@ Use: sh install.sh --rootfs  (extracts the archive at / without a package manage
 }
 
 post_install() {
+	harden_paths
 	if [ -x "$INIT" ]; then
 		"$INIT" enable >/dev/null 2>&1 || true
 	fi

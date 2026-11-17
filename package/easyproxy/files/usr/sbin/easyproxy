@@ -882,7 +882,15 @@ cmd_run() {
 	trap 'cleanup; exit 0' INT TERM
 
 	ep_log "starting $engine with $binary"
-	"$binary" run -c "$cfg" &
+	# The engine's own log lands in the same file the panel reads. procd already
+	# captures stdout to syslog, but a file is what "日志中心" and `doctor` look at.
+	if [ -n "${EP_LOG_FILE:-}" ] && [ -d "$(dirname "$EP_LOG_FILE")" ]; then
+		[ -e "$EP_LOG_FILE" ] || { ( umask 077; : >> "$EP_LOG_FILE" ); chmod 600 "$EP_LOG_FILE" 2>/dev/null; }
+		echo "=== $(date '+%Y-%m-%d %H:%M:%S') engine start: $binary ===" >> "$EP_LOG_FILE" 2>/dev/null
+		"$binary" run -c "$cfg" >> "$EP_LOG_FILE" 2>&1 &
+	else
+		"$binary" run -c "$cfg" &
+	fi
 	child=$!
 	wait "$child"
 	rc=$?
