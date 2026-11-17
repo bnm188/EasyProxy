@@ -374,11 +374,21 @@ check_package_file() {
 }
 
 install_pkg() {
-	local pm file
+	local pm file force
 	pm="$1"
 	file="$2"
+	force="${3:-0}"
 	case "$pm" in
-		opkg) opkg install "$file" ;;
+		opkg)
+			# --force-architecture is used for the EasyProxy panel alone. The
+			# panel is pure shell + LuCI assets with no compiled object, so its
+			# payload is valid on every architecture; a kernel package is never
+			# forced, because a wrong-architecture binary cannot run.
+			if [ "$force" = 1 ]; then
+				opkg install --force-architecture "$file"
+			else
+				opkg install "$file"
+			fi ;;
 		apk) apk add --allow-untrusted "$file" ;;
 		*) die "no package manager matched ($pm)" ;;
 	esac
@@ -820,10 +830,27 @@ mkwork() {
 	trap 'rm -rf "$work"' EXIT
 }
 
+# The package manager is not the only way to lay the panel down: the same tree
+# is published as a rootfs archive. `--rootfs` uses it directly, and the ipk
+# branch falls back to it when opkg refuses the package (`Malformed package
+# file`, an architecture it does not accept, ...). Verified assets only.
+install_rootfs() {
+	local url file
+	url="$(asset_url '\.tar\.gz$')" \
+		|| die "cannot resolve the rootfs archive URL (release API unreachable and no version in the Makefile)"
+	file="$work/$(basename "$url")"
+	info "downloading $(basename "$url")"
+	fetch_verified "$url" "$file" || die "download failed or unverified: $url"
+	info "extracting at $ROOT (no package manager involved)"
+	tar -xzf "$file" -C "$ROOT" || die "cannot extract $file at $ROOT"
+	chmod 755 "$ROOT/usr/sbin/easyproxy" "$ROOT/etc/init.d/easyproxy" 2>/dev/null || true
+}
+
 install_package() {
-	local arch accepts_all url alt file
+	local arch accepts_all url alt file force_panel pmout refused
 	arch=""
 	accepts_all=0
+	force_panel=0
 	if [ -z "$MODE" ]; then
 		pm="$(detect_pm)" || die "found neither opkg nor apk; this firmware has no supported package manager.
 Use: sh install.sh --rootfs  (extracts the archive at / without a package manager)"
@@ -852,10 +879,20 @@ Use: sh install.sh --rootfs  (extracts the archive at / without a package manage
 				fi
 				if [ -z "${url:-}" ]; then
 					if [ "$accepts_all" != 1 ]; then
-						die "no installable ipk for ${arch:-unknown}: this opkg does not accept 'all' and the release has no _${arch}.ipk (nothing was installed)"
+						# This opkg accepts only the architecture it was built for, and
+						# the release carries no ipk stamped with it (Kwrt 25.12-SNAPSHOT
+						# on riscv64, mipsel_24kc, ...). The panel payload is
+						# architecture independent, so install the `_all.ipk` with
+						# --force-architecture; if even that is refused, the archive
+						# route below finishes the install. Kernels are never forced.
+						url="$(asset_from_api '_all\.ipk$' || true)"
+						[ -n "${url:-}" ] || url="$(asset_url '\.ipk$')" \
+							|| die "cannot resolve the ipk download URL (release API unreachable and no version in the Makefile)"
+						force_panel=1
+					else
+						url="$(asset_url '\.ipk$' "$arch")" \
+							|| die "cannot resolve the ipk download URL (release API unreachable and no version in the Makefile)"
 					fi
-					url="$(asset_url '\.ipk$' "$arch")" \
-						|| die "cannot resolve the ipk download URL (release API unreachable and no version in the Makefile)"
 				fi
 			fi
 			file="$work/$(basename "$url")"
@@ -874,21 +911,34 @@ Use: sh install.sh --rootfs  (extracts the archive at / without a package manage
 				fi
 			fi
 			check_package_file "$url" "$file"
+			if [ "$force_panel" = 1 ]; then
+				info "warning: this opkg rejects Architecture: all and the release has no _${arch:-unknown}.ipk; installing $(basename "$url") with --force-architecture (panel only, never a kernel)"
+			fi
 			info "installing with $(detect_pm || printf '%s' 'package manager')"
-			if ! install_pkg "$(detect_pm || printf '%s' opkg)" "$file"; then
-				info "the package manager refused $(basename "$url"); nothing was installed"
-				return 1
+			pmout="$work/pm.out"
+			if install_pkg "$(detect_pm || printf '%s' opkg)" "$file" "$force_panel" > "$pmout" 2>&1; then
+				:
+			else
+				cat "$pmout"
+				# The archive route replaces the package manager only when the
+				# package itself was refused (no architecture this opkg takes, or
+				# an ipk its parser calls malformed). A failure in the middle of an
+				install - the kind an upgrade rolls back - is reported as a failure
+				so the caller can restore the previous package.
+				refused=0
+				[ "$force_panel" = 1 ] && refused=1
+				grep -qi 'malformed package file\|invalid package file\|unknown package arch' "$pmout" && refused=1
+				if [ "$MODE" = "ipk" ] && [ "$refused" = 1 ]; then
+					info "the package manager refused $(basename "$url"); falling back to the rootfs archive"
+					install_rootfs || return 1
+				else
+					info "the package manager refused $(basename "$url"); nothing was installed"
+					return 1
+				fi
 			fi
 			;;
 		rootfs)
-			url="$(asset_url '\.tar\.gz$')" \
-				|| die "cannot resolve the rootfs archive URL (release API unreachable and no version in the Makefile)"
-			file="$work/$(basename "$url")"
-			info "downloading $(basename "$url")"
-			fetch_verified "$url" "$file" || die "download failed or unverified: $url"
-			info "extracting at $ROOT (no package manager involved)"
-			tar -xzf "$file" -C "$ROOT" || die "cannot extract $file at $ROOT"
-			chmod 755 "$ROOT/usr/sbin/easyproxy" "$ROOT/etc/init.d/easyproxy" 2>/dev/null || true
+			install_rootfs
 			;;
 		*)
 			die "unknown mode: $MODE"
