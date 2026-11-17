@@ -161,8 +161,21 @@ detect_pm() {
 host_ipk_arch() {
 	local a
 	if command -v opkg >/dev/null 2>&1; then
-		a="$(opkg print-architecture 2>/dev/null \
-			| awk 'NF >= 2 && $1 != "all" && $1 != "noarch" { print $1; exit }')"
+		# Some firmware answer `print-architecture` with a placeholder line that
+		# is literally "arch" ahead of the real target (Kwrt does), so the first
+		# line is not trustworthy. Drop the placeholders, then prefer the entry
+		# that agrees with uname instead of taking whatever came first.
+		a="$(opkg print-architecture 2>/dev/null | awk '{ print $1 }' \
+			| grep -vx -e 'arch' -e 'all' -e 'noarch' || true)"
+		case "$(uname -m 2>/dev/null)" in
+			x86_64|amd64)  a="$(printf '%s\n' "$a" | grep -m1 -E 'x86_64|amd64|corei' || true)" ;;
+			aarch64|arm64) a="$(printf '%s\n' "$a" | grep -m1 -E 'aarch64|arm64' || true)" ;;
+			armv7l|armv7)  a="$(printf '%s\n' "$a" | grep -m1 -E 'armv7|arm_cortex' || true)" ;;
+		esac
+		if [ -z "$a" ]; then
+			a="$(opkg print-architecture 2>/dev/null | awk '{ print $1 }' \
+				| grep -vx -e 'arch' -e 'all' -e 'noarch' | head -1 || true)"
+		fi
 		if [ -n "$a" ]; then
 			printf '%s' "$a"
 			return 0
@@ -174,6 +187,14 @@ host_ipk_arch() {
 		armv7l|armv7)   printf '%s' armv7 ;;
 		*)              printf '%s' '' ;;
 	esac
+}
+
+# Whether this opkg has the --force-architecture option at all. Kwrt 25.12's
+# opkg does not, and calling it there aborts the install with a usage dump, so
+# the option is probed instead of assumed.
+opkg_supports_force_arch() {
+	command -v opkg >/dev/null 2>&1 || return 1
+	opkg 2>&1 </dev/null | grep -q -- '--force-architecture'
 }
 
 # Whether this opkg accepts `Architecture: all`. Asked, not assumed: some builds
@@ -384,9 +405,10 @@ install_pkg() {
 			# panel is pure shell + LuCI assets with no compiled object, so its
 			# payload is valid on every architecture; a kernel package is never
 			# forced, because a wrong-architecture binary cannot run.
-			if [ "$force" = 1 ]; then
+			if [ "$force" = 1 ] && opkg_supports_force_arch; then
 				opkg install --force-architecture "$file"
 			else
+				[ "$force" = 1 ] && info "this opkg has no --force-architecture; installing $(basename "$file") normally"
 				opkg install "$file"
 			fi ;;
 		apk) apk add --allow-untrusted "$file" ;;
@@ -575,11 +597,15 @@ install_kernel() {
 				url=""
 			else
 				info "$name: installing $(basename "$url") with $pm"
-				if ! install_pkg "$pm" "$file"; then
-					info "$name: install failed: $pm refused $(basename "$url")"
-					return 1
+				if install_pkg "$pm" "$file"; then
+					via_ipk=1
+				else
+					# opkg here calls our kernel ipk "Malformed package file" (its
+					# parser rejects the archive) - the official pinned binary still
+					# installs, so fall through to that route instead of failing.
+					info "$name: $pm refused $(basename "$url") as unreadable; using the official archive"
+					url=""
 				fi
-				via_ipk=1
 			fi
 		fi
 	fi
@@ -685,13 +711,22 @@ ensure_kernel() {
 
 # --- package component ----------------------------------------------------
 package_version() {
+	local v
 	command -v opkg >/dev/null 2>&1 || {
 		command -v apk >/dev/null 2>&1 || return 1
 		apk info -e easyproxy >/dev/null 2>&1 || return 1
 		apk list --installed 2>/dev/null | sed -n 's/^easyproxy-\([0-9][0-9a-zA-Z._-]*\)-[a-z0-9_]*\.apk.*/\1/p' | head -1
 		return 0
 	}
-	opkg list-installed easyproxy 2>/dev/null | awk '{ print $3 }' | head -1
+	v="$(opkg list-installed easyproxy 2>/dev/null | awk '{ print $3 }' | head -1)"
+	[ -n "$v" ] && { printf '%s' "$v"; return 0; }
+	# A rootfs-archive install (Kwrt, or any opkg that refuses our ipk) is not
+	# registered with the package manager, so ask the binary itself instead of
+	# reporting "unknown".
+	if [ -x "$BIN" ]; then
+		"$BIN" status 2>/dev/null | head -1 \
+			| sed -n 's/.*EasyProxy \([0-9][0-9]*\.[0-9][0-9.]*\).*/\1/p'
+	fi
 }
 
 # --- host checks ----------------------------------------------------------
@@ -923,8 +958,8 @@ Use: sh install.sh --rootfs  (extracts the archive at / without a package manage
 				# The archive route replaces the package manager only when the
 				# package itself was refused (no architecture this opkg takes, or
 				# an ipk its parser calls malformed). A failure in the middle of an
-				install - the kind an upgrade rolls back - is reported as a failure
-				so the caller can restore the previous package.
+				# install - the kind an upgrade rolls back - is reported as a
+				# failure, so the caller can restore the previous package.
 				refused=0
 				[ "$force_panel" = 1 ] && refused=1
 				grep -qi 'malformed package file\|invalid package file\|unknown package arch' "$pmout" && refused=1

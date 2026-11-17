@@ -153,6 +153,14 @@ cat > "$SB/bin/opkg" <<'STUB'
 printf 'opkg %s\n' "$*" >> "$EP_TEST_LOG/pm.log"
 printf 'pm %s\n' "$*" >> "$EP_TEST_LOG/timeline"
 case "$1" in
+	"")
+		# Bare `opkg` prints usage; the installer probes it for --force-architecture
+		# because Kwrt 25.12 has no such option and calling it aborts the install.
+		printf 'usage: opkg [options...] sub-command [arguments...]\n'
+		if [ -n "${EP_TEST_OPKG_FORCE_ARCH:-}" ]; then
+			printf '        --force-architecture  Install packages of foreign architecture\n'
+		fi
+		exit 1 ;;
 	install)
 		# Some builds refuse an ipk outright, e.g. "Malformed package file". EP_TEST_OPKG_REJECT makes this
 		# stub do exactly that so the installer's fallback can be exercised.
@@ -347,7 +355,8 @@ cat > "$SB/fix/api-only-all.json" <<'JSON'
   ]
 }
 JSON
-EP_TEST_API_FIX="$SB/fix/api-only-all.json" EP_TEST_OPKG_ARCH="$SB/fix/opkg.arch.noall" sh "$INSTALL" > "$SB/out" 2>&1; rc=$?
+EP_TEST_API_FIX="$SB/fix/api-only-all.json" EP_TEST_OPKG_ARCH="$SB/fix/opkg.arch.noall" EP_TEST_OPKG_FORCE_ARCH=1 \
+	sh "$INSTALL" > "$SB/out" 2>&1; rc=$?
 [ "$rc" -eq 0 ] && ok "opkg 不收 all 时仍然装上面板（退出码 0）" || no "opkg 不收 all 时仍然装上面板" "rc=$rc $(cat "$SB/out")"
 grep -q -- '--force-architecture' "$EP_TEST_LOG/pm.log" 2>/dev/null \
 	&& ok "面板包用 --force-architecture 安装" || no "面板包用 --force-architecture 安装" "$(cat "$EP_TEST_LOG/pm.log" 2>/dev/null)"
@@ -361,6 +370,20 @@ if grep -q -- '--force-architecture' "$EP_TEST_LOG/pm.log" 2>/dev/null; then
 else
 	no "内核包从不使用 --force-architecture" "没有强制架构的调用，断言无从校验"
 fi
+
+# --- install: an opkg with no --force-architecture (Kwrt 25.12) ----------
+# The option does not exist there; passing it makes opkg print usage and abort,
+# which the router showed. The installer must detect that and never pass it.
+reset
+EP_TEST_API_FIX="$SB/fix/api-only-all.json" EP_TEST_OPKG_ARCH="$SB/fix/opkg.arch.noall" \
+	sh "$INSTALL" > "$SB/out" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && ok "opkg 无 --force-architecture 时仍然装上面板（退出码 0）" || no "opkg 无 --force-architecture 时仍然装上面板" "rc=$rc $(cat "$SB/out")"
+if grep -q -- '--force-architecture' "$EP_TEST_LOG/pm.log" 2>/dev/null; then
+	no "opkg 不支持时不传 --force-architecture" "$(cat "$EP_TEST_LOG/pm.log")"
+else
+	ok "opkg 不支持时不传 --force-architecture"
+fi
+grep -qi 'rootfs' "$SB/out" && ok "不支持强制架构时改走 rootfs 归档" || no "不支持强制架构时改走 rootfs 归档" "$(cat "$SB/out")"
 
 # --- install: --force-architecture refused, fall back to the archive -----
 reset
