@@ -178,7 +178,12 @@ grep -q 'scripts/release-gc.sh' "$WF" && ok "工作流用 release-gc.sh 做保�
 # published. The release intent is now resolved once (tag / dispatch version /
 # .release-request file) and every publish step uses that one tag.
 grep -q "steps.intent.outputs.tag != ''" "$WF" && ok "发布由统一的发布意图决定（tag、手动版本号或发布请求文件）" || no "发布由统一的发布意图决定（tag、手动版本号或发布请求文件）"
-grep -q '.release-request' "$WF" && ok "支持 .release-request 发布请求文件（GITHUB_TOKEN 无法派发工作流）" || no "支持 .release-request 发布请求文件（GITHUB_TOKEN 无法派发工作流）"
+# Report 010: the .release-request file was replaced by the version number
+# itself (commit 6aeb4e2). A push to main whose PKG_VERSION is higher than the
+# newest published release publishes on its own, so the assertion now covers
+# that contract instead of the removed request file.
+grep -q 'PKG_VERSION' "$WF" && ok "发布意图读 PKG_VERSION（版本号即发版命令）" || no "发布意图读 PKG_VERSION"
+grep -q 'newest release' "$WF" && ok "与最新 Release 比较，高于它才发布" || no "与最新 Release 比较"
 grep -q 'GITHUB_REF_TYPE' "$WF" && ok "手工 push 的 v* tag 仍然触发发布" || no "手工 push 的 v* tag 仍然触发发布"
 grep -q 'must be greater\|必须递增\|版本号必须' "$WF" && ok "工作流要求版本号递增（同版本不允许再发）" || no "工作流要求版本号递增（同版本不允许再发）"
 if grep -q 'gh release create' "$WF"; then

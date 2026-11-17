@@ -88,7 +88,7 @@ ep_bypass_fetch() {
 ep_bypass_elements() {
 	[ -r "$EP_CN_CIDR_FILE" ] || return 0
 	grep -E '^[0-9]{1,3}(\.[0-9]{1,3}){3}(/[0-9]{1,2})?$' "$EP_CN_CIDR_FILE" 2>/dev/null |
-		awk 'BEGIN { first = 1 } { if (!first) printf ", "; printf "%%s", $0; first = 0 }'
+		awk 'BEGIN { first = 1 } { if (!first) printf ", "; printf "%s", $0; first = 0 }'
 }
 
 # active | ready | missing | disabled | unsupported

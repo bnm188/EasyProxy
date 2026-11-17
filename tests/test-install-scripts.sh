@@ -153,7 +153,14 @@ cat > "$SB/bin/opkg" <<'STUB'
 printf 'opkg %s\n' "$*" >> "$EP_TEST_LOG/pm.log"
 printf 'pm %s\n' "$*" >> "$EP_TEST_LOG/timeline"
 case "$1" in
-	install) : > "$EP_TEST_LOG/installed" ;;
+	install)
+		# Some builds refuse an ipk outright, e.g. "Malformed package file". EP_TEST_OPKG_REJECT makes this
+		# stub do exactly that so the installer's fallback can be exercised.
+		if [ -n "${EP_TEST_OPKG_REJECT:-}" ]; then
+			printf 'Collected errors:\n * pkg_init_from_file: Malformed package file %s.\n' "${3:-$2}" >&2
+			exit 1
+		fi
+		: > "$EP_TEST_LOG/installed" ;;
 	print-architecture) cat "${EP_TEST_OPKG_ARCH:-$EP_TEST_FIX/opkg.arch}" ;;
 	list-installed) printf 'easyproxy - %s\n' "${EP_TEST_PKG_VER:-0.5.0-1}" ;;
 	remove) : ;;
@@ -326,7 +333,10 @@ EP_TEST_API_FIX="$SB/fix/api-two.json" EP_TEST_OPKG_ARCH="$SB/fix/opkg.arch.arm"
 grep -q '_all\.ipk$' "$EP_TEST_LOG/curl.urls" 2>/dev/null \
 	&& ok "退回的是 all 包" || no "退回的是 all 包" "$(cat "$EP_TEST_LOG/curl.urls" 2>/dev/null)"
 
-# --- install: never install a package this opkg would reject -----------
+# --- install: an opkg that rejects all still gets the panel -------------
+# Kwrt 25.12-SNAPSHOT ships an opkg that accepts only its own architecture
+# (`riscv64` here) and refuses `Architecture: all`. The panel is a pure script
+# package, so it installs with --force-architecture instead of failing.
 reset
 printf 'riscv64 10\n' > "$SB/fix/opkg.arch.noall"
 cat > "$SB/fix/api-only-all.json" <<'JSON'
@@ -338,9 +348,34 @@ cat > "$SB/fix/api-only-all.json" <<'JSON'
 }
 JSON
 EP_TEST_API_FIX="$SB/fix/api-only-all.json" EP_TEST_OPKG_ARCH="$SB/fix/opkg.arch.noall" sh "$INSTALL" > "$SB/out" 2>&1; rc=$?
-[ "$rc" -ne 0 ] && ok "opkg 不收 all 且无对应架构包时拒绝安装" || no "不收 all 时拒绝安装" "rc=$rc $(cat "$SB/out")"
-grep -qi 'no installable ipk' "$SB/out" && ok "拒绝原因说明没有可装的包" || no "拒绝原因说明没有可装的包" "$(cat "$SB/out")"
-[ -f "$EP_TEST_LOG/installed" ] && no "拒绝时不应调用包管理器" || ok "拒绝时不调用包管理器"
+[ "$rc" -eq 0 ] && ok "opkg 不收 all 时仍然装上面板（退出码 0）" || no "opkg 不收 all 时仍然装上面板" "rc=$rc $(cat "$SB/out")"
+grep -q -- '--force-architecture' "$EP_TEST_LOG/pm.log" 2>/dev/null \
+	&& ok "面板包用 --force-architecture 安装" || no "面板包用 --force-architecture 安装" "$(cat "$EP_TEST_LOG/pm.log" 2>/dev/null)"
+grep -qi 'force-architecture' "$SB/out" && ok "安装器说明了为什么强制架构" || no "安装器说明了为什么强制架构" "$(cat "$SB/out")"
+if grep -q -- '--force-architecture' "$EP_TEST_LOG/pm.log" 2>/dev/null; then
+	if grep -- '--force-architecture' "$EP_TEST_LOG/pm.log" | grep -qE 'sing-box|dae'; then
+		no "内核包从不使用 --force-architecture" "$(grep -- '--force-architecture' "$EP_TEST_LOG/pm.log")"
+	else
+		ok "内核包从不使用 --force-architecture"
+	fi
+else
+	no "内核包从不使用 --force-architecture" "没有强制架构的调用，断言无从校验"
+fi
+
+# --- install: --force-architecture refused, fall back to the archive -----
+reset
+EP_TEST_API_FIX="$SB/fix/api-only-all.json" EP_TEST_OPKG_ARCH="$SB/fix/opkg.arch.noall" EP_TEST_OPKG_REJECT=1 \
+	sh "$INSTALL" > "$SB/out" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && ok "opkg 拒绝强制架构后改用 rootfs 归档（退出码 0）" || no "opkg 拒绝强制架构后改用 rootfs 归档" "rc=$rc $(cat "$SB/out")"
+grep -qi 'rootfs' "$SB/out" && ok "回退时说明了走 rootfs 归档" || no "回退时说明了走 rootfs 归档" "$(cat "$SB/out")"
+grep -q 'easyproxy-.*-rootfs\.tar\.gz$' "$EP_TEST_LOG/curl.urls" 2>/dev/null \
+	&& ok "回退时下载了 rootfs 归档" || no "回退时下载了 rootfs 归档" "$(cat "$EP_TEST_LOG/curl.urls" 2>/dev/null)"
+
+# --- install: an ipk the opkg parser calls malformed, replaced by the archive
+reset
+EP_TEST_OPKG_REJECT=1 sh "$INSTALL" > "$SB/out" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && ok "opkg 判 ipk 为 Malformed 时改用 rootfs 归档（退出码 0）" || no "opkg 判 Malformed 时改用 rootfs 归档" "rc=$rc $(cat "$SB/out")"
+grep -qi 'rootfs archive' "$SB/out" && ok "回退时说明改走 rootfs 归档" || no "回退时说明改走 rootfs 归档" "$(cat "$SB/out")"
 
 # --- install: never install a bad download ----------------------------
 reset
