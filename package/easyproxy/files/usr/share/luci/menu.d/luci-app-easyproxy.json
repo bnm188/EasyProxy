@@ -2,31 +2,73 @@
 	"admin/services/easyproxy": {
 		"title": "EasyProxy",
 		"order": 55,
-		"action": { "type": "view", "path": "easyproxy/overview" }
+		"action": {
+			"type": "view",
+			"path": "easyproxy/overview"
+		}
 	},
 	"admin/services/easyproxy/overview": {
 		"title": "概览",
 		"order": 1,
-		"action": { "type": "view", "path": "easyproxy/overview" }
+		"action": {
+			"type": "view",
+			"path": "easyproxy/overview"
+		}
 	},
-	"admin/services/easyproxy/proxy": {
-		"title": "代理",
+	"admin/services/easyproxy/nodes": {
+		"title": "节点中心",
 		"order": 2,
-		"action": { "type": "view", "path": "easyproxy/proxy" }
+		"action": {
+			"type": "view",
+			"path": "easyproxy/nodes"
+		}
 	},
-	"admin/services/easyproxy/connect": {
-		"title": "连接",
+	"admin/services/easyproxy/split": {
+		"title": "智能分流",
 		"order": 3,
-		"action": { "type": "view", "path": "easyproxy/connect" }
+		"action": {
+			"type": "view",
+			"path": "easyproxy/split"
+		}
 	},
-	"admin/services/easyproxy/dns": {
-		"title": "DNS",
+	"admin/services/easyproxy/dnsnet": {
+		"title": "DNS 与网络",
 		"order": 4,
-		"action": { "type": "view", "path": "easyproxy/dns" }
+		"action": {
+			"type": "view",
+			"path": "easyproxy/dnsnet"
+		}
+	},
+	"admin/services/easyproxy/kernel": {
+		"title": "内核管理",
+		"order": 5,
+		"action": {
+			"type": "view",
+			"path": "easyproxy/kernel"
+		}
+	},
+	"admin/services/easyproxy/monitor": {
+		"title": "连接与监控",
+		"order": 6,
+		"action": {
+			"type": "view",
+			"path": "easyproxy/monitor"
+		}
 	},
 	"admin/services/easyproxy/settings": {
-		"title": "设置",
-		"order": 5,
-		"action": { "type": "view", "path": "easyproxy/settings" }
+		"title": "系统设置",
+		"order": 7,
+		"action": {
+			"type": "view",
+			"path": "easyproxy/settings"
+		}
+	},
+	"admin/services/easyproxy/update": {
+		"title": "更新与诊断",
+		"order": 8,
+		"action": {
+			"type": "view",
+			"path": "easyproxy/update"
+		}
 	}
 }

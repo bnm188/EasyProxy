@@ -6,15 +6,17 @@ return view.extend({
 	load: function () {
 		return Promise.all([
 			app.loadCfg(),
-			app.cliJson(['rule', 'list'])
+			app.loadStatus()
 		]).then(function (r) {
-			return { cfg: r[0], rules: (r[1] && r[1].rules) || [] };
+			return { cfg: r[0], status: r[1] };
 		});
 	},
 	render: function (d) {
-		return E('div', { class: 'ep-stack' }, [
-			app.pageDns({ cfg: d.cfg }),
-			app.pageRules({ rules: d.rules })
+		app.injectStyle();
+		return E('div', { class: 'ep-wrap' }, [
+			app.tabs([
+				['dns', 'DNS 与网络', app.pageDns({ cfg: d.cfg, status: d.status })]
+			])
 		]);
 	}
 });

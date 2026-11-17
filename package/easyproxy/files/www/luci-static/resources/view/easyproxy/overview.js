@@ -7,6 +7,11 @@ return view.extend({
 		return app.loadStatus();
 	},
 	render: function (status) {
-		return app.pageOverview(status);
+		app.injectStyle();
+		return E('div', { class: 'ep-wrap' }, [
+			app.clockBar(),
+			app.kpiLive(status),
+			app.pageOverview(status)
+		]);
 	}
 });

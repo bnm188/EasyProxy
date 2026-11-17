@@ -1,0 +1,339 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EasyProxy · LuCI 渲染预览</title>
+<style>
+:root{--bg:#f2f5f9;--ink:#16283f;--muted:#6c7d90;--line:rgba(120,145,175,.22)}
+*{box-sizing:border-box}
+body{margin:0;background:radial-gradient(120% 80% at 10% -10%,#eef6ff 0%,#f4f7fb 46%,#eef1f6 100%);
+  font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Noto Sans SC","Segoe UI",system-ui,sans-serif;color:var(--ink);min-height:100vh}
+.shim-bar{background:rgba(15,139,255,.10);border-bottom:1px solid rgba(15,139,255,.18);color:#0b63c5;
+  font-size:12px;padding:8px 20px;text-align:center}
+.luci-top{display:flex;flex-wrap:wrap;align-items:center;gap:14px;padding:14px 20px 10px;max-width:1280px;margin:0 auto}
+.brand{display:flex;align-items:center;gap:8px;font-size:15px;font-weight:650;letter-spacing:-.2px}
+.brand i{width:8px;height:8px;border-radius:50%;background:#0f8bff;box-shadow:0 0 0 4px rgba(15,139,255,.14);display:inline-block}
+.brand span{font-size:10.5px;color:var(--muted);font-weight:400;margin-left:4px}
+nav{display:flex;flex-wrap:wrap;gap:6px}
+nav button{border:1px solid rgba(255,255,255,.8);background:rgba(255,255,255,.55);color:#41505f;border-radius:999px;
+  padding:7px 15px;font-size:12.5px;cursor:pointer;font-family:inherit;transition:all .18s}
+nav button:hover{background:#fff;color:var(--ink)}
+nav button.on{background:linear-gradient(180deg,#0f8bff,#0a6ee0);color:#fff;border-color:transparent;box-shadow:0 6px 16px rgba(10,132,255,.24)}
+main{max-width:1280px;margin:0 auto;padding:6px 20px 40px}
+.view-wrap{background:linear-gradient(155deg,rgba(230,240,251,.7) 0%,rgba(234,242,247,.7) 30%,rgba(242,240,251,.7) 62%,rgba(248,243,236,.7) 100%);
+  border-radius:20px;border:1px solid rgba(255,255,255,.8);box-shadow:0 18px 46px rgba(22,60,110,.10);padding:4px}
+#toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%);display:flex;flex-direction:column;gap:8px;z-index:60;align-items:center}
+.toast-item{background:rgba(22,40,63,.92);color:#fff;font-size:13px;padding:10px 18px;border-radius:999px;box-shadow:0 10px 30px rgba(10,30,60,.28);max-width:80vw}
+.toast-item.err{background:rgba(176,54,45,.94)}
+.toast-item.ok{background:rgba(9,110,72,.94)}
+.err-box{background:rgba(255,243,242,.8);border:1px solid #f0c8c4;color:#8d2b23;border-radius:14px;padding:14px 16px;font-size:13px;line-height:1.7}
+.ep-modal{position:fixed;inset:0;background:rgba(20,30,45,.34);display:flex;align-items:center;justify-content:center;z-index:80;padding:20px}
+.ep-modal-card{background:rgba(255,255,255,.94);border-radius:18px;max-width:520px;width:100%;padding:20px;box-shadow:0 24px 60px rgba(16,40,80,.24);max-height:80vh;overflow:auto}
+.ep-modal-card h4{margin:0 0 10px;font-size:15px}
+@media (max-width:640px){main{padding:4px 10px 30px}.luci-top{padding:12px 12px 8px}}
+</style>
+</head>
+<body>
+<div class="shim-bar">本页直接加载路由器上的真实 LuCI 页面代码（app.js + view/*.js），数据为演示值 · 端口与命令与真机一致</div>
+<header class="luci-top">
+  <div class="brand"><i></i>EasyProxy<span>LuCI 控制台 · v0.8.13</span></div>
+  <nav id="menu"></nav>
+</header>
+<main id="view"></main>
+<div id="toast"></div>
+
+<script>
+'use strict';
+
+/* ============ 最小 LuCI 运行时（仅供静态预览） ============ */
+var FAKE_STATUS = {
+	version: '0.8.13', engine: 'sing-box', engine_dev: 0, runtime: 'running', runtime_pid: 2318,
+	enabled: 1, route_mode: 'split', nodes: 3, nodes_enabled: 2, rule_set_state: 'ready',
+	tproxy_state: 'active', transparent: 1, binary_ok: 1, listen: '0.0.0.0', listen_port: 7890,
+	listen_open: 1, config_state: 'ok', ipv6_policy: 'block', uptime: '3d 04:12',
+	dns_local: '223.5.5.5', dns_remote: 'https://1.1.1.1/dns-query', tproxy_port: 7891,
+	config_path: '/etc/easyproxy/config.json', bypass_state: 'active', bypass_cidr: 8600, binary: '/opt/open-box/bin/sing-box',
+	binary_ver: '1.14.4-openbox-45', rule_sets: 2, route_mode_label: '智能分流'
+};
+
+var FAKE_NODES = {
+	groups: ['日本', '美国', '新加坡'],
+	nodes: [
+		{ section: 'jp01', name: '示例节点JP', type: 'shadowsocks', server: 'jp01.node.example.com', port: 443,
+		  region: 'JP', group: '日本', enabled: true, latency_ms: 62, score: 92, health: 'ok' },
+		{ section: 'us02', name: '示例节点US', type: 'shadowsocks', server: 'us02.node.example.com', port: 443,
+		  region: 'US', group: '美国', enabled: true, latency_ms: 148, score: 78, health: 'ok' },
+		{ section: 'sg03', name: '示例节点SG', type: 'shadowsocks', server: 'sg03.node.example.com', port: 443,
+		  region: 'SG', group: '新加坡', enabled: false, latency_ms: 0, score: 0, health: 'disabled' }
+	],
+	subscriptions: [
+		{ name: '演示订阅', count: 3, updated: '2026-11-18 03:17', traffic: '已用 42.6 GB / 200 GB', url: 'https://sub.example.com/api/v1/client/subscribe' }
+	]
+};
+
+var FAKE_RULES = { rules: [
+	{ section: 'youtube', name: 'YouTube', target: '→ 示例节点JP', hits: 1284, enabled: true },
+	{ section: 'netflix', name: 'Netflix', target: '→ 示例节点US', hits: 321, enabled: true },
+	{ section: 'tiktok', name: 'TikTok', target: '→ direct', hits: 87, enabled: false },
+	{ section: 'cn', name: '国内站点', target: '→ direct', hits: 154210, enabled: true }
+]};
+
+var FAKE_DOCTOR = { checks: [
+	{ name: '内核二进制', ok: true, detail: '/opt/open-box/bin/sing-box 可执行' },
+	{ name: '配置校验', ok: true, detail: 'config.json 通过 sing-box check' },
+	{ name: '规则集', ok: true, detail: 'geosite-cn.srs / geoip-cn.srs 就绪' },
+	{ name: '监听端口', ok: true, detail: '7890 / 7891 已监听' },
+	{ name: 'DNS', ok: true, detail: '本地 223.5.5.5 · 远端 DoH' },
+	{ name: '透明代理', ok: true, detail: 'nftables tproxy 已接管' },
+	{ name: '节点', ok: true, detail: '2 / 3 启用' },
+	{ name: '进程守护', ok: true, detail: 'procd 实例 easyproxy 运行中' },
+	{ name: '磁盘', ok: true, detail: '/etc/easyproxy 剩余 1.8 GB' },
+	{ name: '时间同步', ok: true, detail: 'NTP 偏差 0.4s' }
+]};
+
+var FAKE_CFG = {
+	enabled: '1', listen: '0.0.0.0', listen_port: '7890', log_level: 'info', probe_timeout: '30000',
+	rule_set_update_days: '15', youtube: 'proxy', netflix: 'proxy', tiktok: 'direct',
+	local: '223.5.5.5', remote: 'https://1.1.1.1/dns-query', transparent: '1',
+	lan_ifaces: 'br-lan', tproxy_port: '7891', ipv6_policy: 'block', engine: 'sing-box'
+};
+
+var FAKE_LOG = [
+	'[2026-11-18 06:12:41] main: starting easyproxy 0.8.13 (sing-box 1.14.4-openbox-45)',
+	'[2026-11-18 06:12:41] config: generated /etc/easyproxy/config.json (2262 B)',
+	'[2026-11-18 06:12:41] check: sing-box check rc=0',
+	'[2026-11-18 06:12:42] start: pid 2318, inbounds 7890 (mixed) 7891 (tproxy)',
+	'[2026-11-18 06:12:44] route: cn -> direct, foreign -> group(proxy)',
+	'[2026-11-18 06:13:02] node: jp01 latency 62ms, us02 latency 148ms',
+	'[2026-11-18 06:16:54] traffic: rx 1.8 MB/s tx 0.4 MB/s (demo)'
+].join('\n');
+
+/* --- E() --- */
+function E(tag, attrs, children) {
+	var el = document.createElement(tag);
+	if (typeof attrs === 'string') {
+		el.className = attrs;
+	} else if (attrs) {
+		Object.keys(attrs).forEach(function (k) {
+			var v = attrs[k];
+			if (v === null || v === undefined) return;
+			if (k === 'class' || k === 'className') { el.className = v; return; }
+			if (k === 'style') { el.style.cssText = v; return; }
+			if (k === 'checked') { el.checked = !!v; return; }
+			if (k === 'value') { el.value = v; return; }
+			if (typeof v === 'function') { el.addEventListener(k.indexOf('on') === 0 ? k.slice(2) : k, v); return; }
+			try { el.setAttribute(k, v); } catch (e) {}
+		});
+	}
+	function add(c) {
+		if (c === null || c === undefined || c === false) return;
+		if (Array.isArray(c)) { c.forEach(add); return; }
+		el.appendChild(c instanceof Node ? c : document.createTextNode(String(c)));
+	}
+	add(children);
+	return el;
+}
+window.E = E;
+
+/* --- 假 /proc --- */
+var PROC = {};
+PROC['/proc/meminfo'] = 'MemTotal: 1996800 kB\nMemFree: 412300 kB\nMemAvailable: 1302400 kB\nBuffers: 38000 kB\n';
+PROC['/proc/stat'] = 'cpu  0 0 0 0 0 0 0 0\ncpu0 120 0 40 980 12 0 8 0\n';
+PROC['/proc/net/dev'] = 'Inter-|   Receive                                                |  Transmit\n face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed\n    lo: 1200 10 0 0 0 0 0 0 1200 10 0 0 0 0 0 0\n br-lan: 1240800 900 0 0 0 0 0 0 410200 620 0 0 0 0 0 0\n';
+
+/* --- 动态 /proc（让 KPI 动起来） --- */
+var CPU_ACC = { total: 2000, idle: 1400 };
+var NET_ACC = { rx: 1200000, tx: 380000 };
+function dynProc(p) {
+	if (p === '/proc/stat') {
+		CPU_ACC.total += 140 + Math.floor(Math.random() * 90);
+		CPU_ACC.idle += 52 + Math.floor(Math.random() * 46);
+		var user = Math.floor(CPU_ACC.total * 0.62), sys = Math.floor(CPU_ACC.total * 0.18) - CPU_ACC.idle;
+		if (sys < 0) sys = 0;
+		return 'cpu  ' + user + ' 0 ' + sys + ' ' + CPU_ACC.idle + ' 0 0 0 0\n';
+	}
+	if (p === '/proc/net/dev') {
+		NET_ACC.rx += Math.floor(Math.random() * 2600000);
+		NET_ACC.tx += Math.floor(Math.random() * 900000);
+		return 'Inter-|   Receive |  Transmit\n face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed\n' +
+			'    lo: 1200 10 0 0 0 0 0 0 1200 10 0 0 0 0 0 0\n' +
+			' br-lan: ' + NET_ACC.rx + ' 900 0 0 0 0 0 0 ' + NET_ACC.tx + ' 620 0 0 0 0 0 0\n';
+	}
+	return null;
+}
+
+/* --- fs --- */
+function fakeCmd(args) {
+	var a = args.filter(function (x) { return x !== '--json'; });
+	var j = function (o) { return JSON.stringify(o); };
+	if (a[0] === 'status') return j(FAKE_STATUS);
+	if (a[0] === 'node' && a[1] === 'list') return j(FAKE_NODES);
+	if (a[0] === 'node' && a[1] === 'test') return j({ nodes: [{ section: 'jp01', latency_ms: 58 }, { section: 'us02', latency_ms: 151 }] });
+	if (a[0] === 'rule' && a[1] === 'list') return j(FAKE_RULES);
+	if (a[0] === 'doctor') return j(FAKE_DOCTOR);
+	if (a[0] === 'engine' && a[1] === 'list') return 'sing-box  1.14.4-openbox-45  默认\n';
+	if (a[0] === 'engine' && a[1] === 'health') return j({ ok: true, engine: 'sing-box', version: '1.14.4-openbox-45', config: 'ok' });
+	if (a[0] === 'log') return FAKE_LOG;
+	if (a[0] === 'traffic') return j({ ok: true, iface: 'br-lan', rx: 1887436, tx: 424673 });
+	if (a[0] === 'auth') return a[1] === 'set' ? '' : 'easyproxy auth: 需要 0.8.14 后端支持\n';
+	return 'easyproxy 0.8.13 (preview)\n';
+}
+
+var FS = {
+	read: function (p) { return Promise.resolve(dynProc(p) || PROC[p] || ''); },
+	read_direct: function (p) { return Promise.resolve(PROC[p] || ''); },
+	write: function () { return Promise.resolve(true); },
+	exec: function (bin, args) {
+		return Promise.resolve({ code: 0, stdout: fakeCmd(args || []), stderr: '' });
+	},
+	list: function () { return Promise.resolve([]); },
+	lstat: function () { return Promise.resolve({ size: 0, mode: 0o644, mtime: 0 }); },
+	mkdir: function () { return Promise.resolve(true); },
+	stat: function () { return Promise.resolve({ size: 0, mtime: 0 }); },
+	warn: function (m) { console.warn(m); }
+};
+
+var UBUS = {
+	call: function () { return Promise.reject(new Error('ubus not available in preview')); },
+	list: function () { return Promise.resolve({}); }
+};
+
+var UCI = {
+	load: function () { return Promise.resolve(true); },
+	unload: function () { return Promise.resolve(true); },
+	get: function (c, s, o) { return FAKE_CFG[o] !== undefined ? FAKE_CFG[o] : null; },
+	set: function () {}, save: function () { return Promise.resolve(true); },
+	changes: function () { return {}; }, apply: function () { return Promise.resolve(true); },
+	sections: function () { return ['main', 'routing', 'transparent']; },
+	showModal: function () {}
+};
+
+var UI = {
+	showModal: function (title, content, opts) {
+		var overlay = document.getElementById('ep-modal');
+		if (overlay) overlay.remove();
+		overlay = document.createElement('div');
+		overlay.id = 'ep-modal'; overlay.className = 'ep-modal';
+		var card = document.createElement('div');
+		card.className = 'ep-modal-card';
+		card.appendChild(E('h4', {}, title || ''));
+		if (Array.isArray(content)) content.forEach(function (c) { if (c) card.appendChild(c); });
+		else if (content) card.appendChild(content);
+		overlay.appendChild(card);
+		overlay.addEventListener('click', function (ev) { if (ev.target === overlay) overlay.remove(); });
+		document.body.appendChild(overlay);
+		return '';
+	},
+	hideModal: function () { var m = document.getElementById('ep-modal'); if (m) m.remove(); },
+	addNotification: function (title, node, level) {
+		var wrap = document.getElementById('toast');
+		var item = document.createElement('div');
+		item.className = 'toast-item' + (level === 'error' ? ' err' : (level === 'success' ? ' ok' : ''));
+		item.textContent = node && node.textContent ? node.textContent : String(title || '');
+		wrap.appendChild(item);
+		setTimeout(function () { item.remove(); }, 2600);
+		return item;
+	},
+	addIconBadge: function () {},
+};
+
+var BASECLASS = {
+	extend: function (obj) {
+		function C() { if (obj.init) obj.init.apply(this, arguments); }
+		Object.keys(obj).forEach(function (k) { C.prototype[k] = obj[k]; });
+		C.extend = BASECLASS.extend;
+		return C;
+	}
+};
+
+var VIEW = {
+	extend: function (obj) {
+		function C() {}
+		Object.keys(obj).forEach(function (k) { C.prototype[k] = obj[k]; });
+		return C;
+	}
+};
+
+/* ============ 加载真实 LuCI 模块 ============ */
+var APP = null;
+
+function loadModule(url, app) {
+	return fetch(url, { cache: 'no-cache' }).then(function (r) {
+		if (!r.ok) throw new Error('HTTP ' + r.status + ' · ' + url);
+		return r.text();
+	}).then(function (src) {
+		var fn = new Function('fs', 'ubus', 'uci', 'ui', 'baseclass', 'view', 'E', 'document', 'window', 'app', src);
+		return fn(FS, UBUS, UCI, UI, BASECLASS, VIEW, E, document, window, app || null);
+	});
+}
+
+function boot() {
+	var pages = [
+		['overview', '概览', 'view/overview.js'],
+		['nodes', '节点中心', 'view/nodes.js'],
+		['split', '智能分流', 'view/split.js'],
+		['dnsnet', 'DNS 与网络', 'view/dnsnet.js'],
+		['kernel', '内核管理', 'view/kernel.js'],
+		['monitor', '连接与监控', 'view/monitor.js'],
+		['settings', '系统设置', 'view/settings.js'],
+		['update', '更新与诊断', 'view/update.js']
+	];
+
+	return loadModule('app.js').then(function (cls) {
+		APP = new cls();
+				var nav = document.getElementById('menu');
+		pages.forEach(function (p) {
+			var b = E('button', { type: 'button' }, p[1]);
+			b.dataset.key = p[0];
+			b.addEventListener('click', function () { open(p); });
+			nav.appendChild(b);
+		});
+		var hash = (location.hash || '').replace('#', '');
+		var cur = pages.filter(function (p) { return p[0] === hash; })[0] || pages[0];
+		open(cur);
+	});
+}
+
+function open(p) {
+	Array.prototype.forEach.call(document.querySelectorAll('#menu button'), function (b) {
+		b.classList.toggle('on', b.dataset.key === p[0]);
+	});
+	location.hash = p[0];
+
+	var view = document.getElementById('view');
+	view.innerHTML = '<div class="view-wrap" style="padding:30px;text-align:center;color:#6c7d90;font-size:13px">加载 ' + p[1] + ' …</div>';
+
+	loadModule(p[2], APP).then(function (Cls) {
+		var v = new Cls();
+		return Promise.resolve(v.load()).then(function (data) { return v.render(data); });
+	}).then(function (node) {
+		view.innerHTML = '';
+		var wrap = document.createElement('div');
+		wrap.className = 'view-wrap';
+		wrap.appendChild(node);
+		view.appendChild(wrap);
+		if (APP && APP.injectStyle) APP.injectStyle();
+		var want = new URLSearchParams(location.search).get('t');
+		if (want !== null) {
+			var tb = wrap.querySelectorAll('.ep-tab');
+			var idx = parseInt(want, 10);
+			if (tb[idx]) tb[idx].click();
+		}
+	}).catch(function (e) {
+		view.innerHTML = '';
+		var box = document.createElement('div');
+		box.className = 'err-box';
+		box.textContent = '渲染失败：' + (e && e.message ? e.message : e);
+		view.appendChild(box);
+		console.error(e);
+	});
+}
+
+boot().catch(function (e) {
+	document.getElementById('view').innerHTML = '<div class="err-box">无法加载 LuCI 模块：' + (e && e.message ? e.message : e) + '</div>';
+	console.error(e);
+});
+</script>
+</body>
+</html>

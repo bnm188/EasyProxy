@@ -298,10 +298,10 @@ body.setup-open{overflow:hidden}
       <div><b>EasyProxy</b><span>路由器代理管理系统 · 首次使用</span></div>
     </div>
     <h1>设置管理密码</h1>
-    <p class="setup-sub">这台路由器第一次运行 EasyProxy，需要先设置管理密码。密码仅用于本机校验，不上传、不写入任何配置。</p>
+    <p class="setup-sub">这台路由器第一次运行 EasyProxy，需要先设置管理密码——密码由你自己定义，长度不限上限，只需两次一致。密码仅用于本机校验，不上传、不写入任何配置。</p>
     <div class="setup-field">
       <label for="pw1">管理密码</label>
-      <input type="password" id="pw1" autocomplete="new-password" placeholder="至少 8 位，建议字母 + 数字">
+      <input type="password" id="pw1" autocomplete="new-password" placeholder="自定义，至少 8 位（字母/数字/符号）">
     </div>
     <div class="setup-field">
       <label for="pw2">确认密码</label>
@@ -821,6 +821,14 @@ function pageSettings(){
       '<label class="switch-row"><input type="checkbox" class="sw" data-sw="autoRecover" '+(STATE.autoRecover?'checked':'')+'><span><span class="sw-lab">内核异常自动恢复</span><span class="sw-sub">退出后 10 秒内重启一次，连续失败停止重试并记录日志</span></span></label>'+
     '</div></div>'),
 
+    sec('pw',
+    '<div class="card"><div class="card-hd"><h3>管理密码</h3><span class="hd-note">/etc/easyproxy/auth · 600</span></div><div class="card-bd">'+
+      '<div class="field"><label for="npw1">新管理密码</label><input type="password" id="npw1" placeholder="自定义，至少 8 位，可用字母/数字/符号"><div class="hint">密码只在本机校验，不上传、不写入节点配置；真机版由 0.8.14 的 easyproxy auth set 落盘。</div></div>'+
+      '<div class="field"><label for="npw2">确认新密码</label><input type="password" id="npw2" placeholder="再输入一次"></div>'+
+      '<div class="hint" id="pw-err" style="color:#c63b40;min-height:16px"></div>'+
+      '<div class="bar"><button class="btn primary" data-act="pw-save">保存管理密码</button><button class="btn ghost" data-act="reset-init">重置初始化状态</button></div></div>'+
+    resultBox('r-pw')),
+
     sec('auto',
     '<div class="card"><div class="card-hd"><h3>自动更新</h3><span class="hd-note">面板与规则集分开控制</span></div><div class="grid">'+
       cell('更新通道','稳定','stable · 只有正式版本')+
@@ -1182,6 +1190,25 @@ function bindPage(){
       if(a==='chk-update'){ act(btn,'检查中…',function(){ logResult('release check → v0.8.13 为最新，无可用更新','ok'); }); return; }
       if(a==='cfg-backup'){ act(btn,'导出中…',function(){ logResult('export → easyproxy-config-0.8.13.tar.gz, 1.4 KB, 含全部 uci 段','ok'); }); return; }
       if(a==='cfg-restore'){ logResult('打开文件选择器：选择 .tar.gz 备份包','blank'); return; }
+      if(a==='pw-save'){
+        var n1=(document.getElementById('npw1')||{}).value||'';
+        var n2=(document.getElementById('npw2')||{}).value||'';
+        n1=n1.trim(); n2=n2.trim();
+        var pe=document.getElementById('pw-err');
+        if(n1.length<8){ if(pe) pe.textContent='密码至少 8 位'; return; }
+        if(!/[0-9a-zA-Z]/.test(n1)){ if(pe) pe.textContent='建议包含字母或数字，避免纯符号'; }
+        if(n1!==n2){ if(pe) pe.textContent='两次输入的密码不一致'; return; }
+        if(pe) pe.textContent='';
+        act(btn,'保存中…',function(){
+          try{ localStorage.setItem('ep_pw', n1); }catch(e){}
+          try{ sessionStorage.setItem('ep_pw', n1); }catch(e){}
+          window.__epPw = n1;
+          logResult('管理密码已更新（本机校验，长度 '+n1.length+' 位）','ok');
+          var q1=document.getElementById('npw1'); if(q1) q1.value='';
+          var q2=document.getElementById('npw2'); if(q2) q2.value='';
+        });
+        return;
+      }
       if(a==='reset-init'){
         act(btn,'清除中…',function(){
           try{ localStorage.removeItem('ep_init'); }catch(e){}
@@ -1334,6 +1361,7 @@ function initSetup(){
     if(a !== b){ err.textContent = '两次输入的密码不一致'; p2.focus(); return; }
     err.textContent = '';
     epMarkInit();
+    try{ localStorage.setItem('ep_pw', a); }catch(e){}
     box.hidden = true;
     document.body.classList.remove('setup-open');
     var mod = document.getElementById('su-mode').value;

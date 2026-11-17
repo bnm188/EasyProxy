@@ -71,7 +71,26 @@ var CSS = [
 '.ep-stack>.ep-wrap>.ep-hero{padding:6px 4px 10px;background:none;border:0;box-shadow:none;-webkit-backdrop-filter:none;backdrop-filter:none}',
 '.ep-stack>.ep-wrap>.ep-hero h2{font-size:16px;color:#2b3846}',
 '.ep-stack>.ep-wrap>*{margin-bottom:12px}',
-'@media (prefers-reduced-transparency: reduce){.ep-card,.ep-hero,.ep-tile{background:#fff;-webkit-backdrop-filter:none;backdrop-filter:none}}'
+'@media (prefers-reduced-transparency: reduce){.ep-card,.ep-hero,.ep-tile{background:#fff;-webkit-backdrop-filter:none;backdrop-filter:none}}',
+'.ep-subnav{display:flex;gap:8px;flex-wrap:wrap;margin:2px 2px 14px}',
+'.ep-tabs .ep-tab{background:rgba(255,255,255,.52);border:1px solid rgba(255,255,255,.8);color:#41505f;border-radius:999px;padding:6px 15px;font-size:12.5px;cursor:pointer;margin:0 8px 8px 0;box-shadow:none;transition:background .18s,color .18s}',
+'.ep-tabs .ep-tab:hover{background:#fff;color:#16202a}',
+'.ep-tabs .ep-tab.on{background:linear-gradient(180deg,#0f8bff,#0a6ee0);color:#fff;border-color:transparent;box-shadow:0 6px 16px rgba(10,132,255,.26)}',
+'.ep-kpis{display:grid;grid-template-columns:1fr;gap:12px;margin-bottom:14px}',
+'@media(min-width:700px){.ep-kpis{grid-template-columns:repeat(2,1fr)}}',
+'@media(min-width:1040px){.ep-kpis{grid-template-columns:repeat(4,1fr)}}',
+'.ep-kpi{background:rgba(255,255,255,.46);-webkit-backdrop-filter:blur(36px) saturate(180%);backdrop-filter:blur(36px) saturate(180%);border:1px solid rgba(255,255,255,.72);border-radius:18px;box-shadow:0 12px 32px rgba(22,60,110,.09),inset 0 1px 0 rgba(255,255,255,.9);padding:14px 16px;min-width:0}',
+'.ep-kpi .ep-lab{font-size:11.5px;color:#5e6d7d;margin-bottom:6px}',
+'.ep-kpi .ep-val{font-size:21px;font-weight:600;letter-spacing:-.4px;color:#16202a;line-height:1.25;word-break:break-all}',
+'.ep-kpi .ep-lab2{font-size:10.5px;color:#8494a6;margin-top:5px;font-family:ui-monospace,Menlo,Consolas,monospace}',
+'.ep-bar{height:4px;background:rgba(120,145,175,.18);border-radius:99px;margin-top:10px;overflow:hidden}',
+'.ep-bar-in{height:100%;width:0;border-radius:99px;background-color:#22c55e;transition:width .85s cubic-bezier(.2,.8,.2,1),background-color .3s linear}',
+'.ep-clock{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 12px;font-size:12px;color:#4c5b6a}',
+'.ep-clock b{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:15px;color:#16202a;letter-spacing:.4px}',
+'.ep-clock .ep-dot-live{width:7px;height:7px;border-radius:50%;background:#0f8bff;display:inline-block;box-shadow:0 0 0 3px rgba(15,139,255,.16)}',
+'.ep-pw{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end}',
+'.ep-pw .ep-in{min-width:180px}',
+'@media (prefers-reduced-transparency: reduce){.ep-kpi{background:#fff;-webkit-backdrop-filter:none;backdrop-filter:none}}'
 ].join('\n');
 
 function injectStyle() {
@@ -349,6 +368,224 @@ function bypassHint(state) {
 	case 'unavailable': return '未找到 bypass 模块（/usr/lib/easyproxy/bypass.sh），请重装本包。';
 	default: return '本机 nftables 不可用，入口旁路无法启用。';
 	}
+}
+
+
+/* ===== 子导航：页内二级目录 ===== */
+function tabs(items) {
+	var cur = 0;
+	var btns = [];
+	var panels = [];
+	var nav = E('div', { class: 'ep-subnav' });
+
+	items.forEach(function (it, i) {
+		var b = E('button', {
+			class: 'ep-tab' + (i === 0 ? ' on' : ''),
+			type: 'button',
+			click: function (ev) {
+				if (ev && ev.preventDefault) ev.preventDefault();
+				cur = i;
+				apply();
+			}
+		}, it[1]);
+		btns.push(b);
+		nav.appendChild(b);
+
+		var panel = E('div', { class: 'ep-panel' }, it[2]);
+		if (i > 0) panel.style.display = 'none';
+		panels.push(panel);
+	});
+
+	function apply() {
+		btns.forEach(function (b, i) { b.classList.toggle('on', i === cur); });
+		panels.forEach(function (p, i) { p.style.display = (i === cur) ? '' : 'none'; });
+	}
+
+	return E('div', { class: 'ep-tabs' }, [nav, E('div', { class: 'ep-subbody' }, panels)]);
+}
+
+/* ===== 北京时间时钟 ===== */
+function clockBar() {
+	var time = E('b', {}, '--:--:--');
+	var dateEl = E('span', {}, '');
+	var zone = E('span', { class: 'ep-tag' }, '北京时间 UTC+8');
+
+	function tick() {
+		try {
+			var now = new Date();
+			var opt = { timeZone: 'Asia/Shanghai', hour12: false };
+			time.textContent = now.toLocaleTimeString('zh-CN', {
+				timeZone: 'Asia/Shanghai', hour12: false,
+				hour: '2-digit', minute: '2-digit', second: '2-digit'
+			});
+			dateEl.textContent = '· ' + now.toLocaleDateString('zh-CN', {
+				timeZone: 'Asia/Shanghai',
+				year: 'numeric', month: '2-digit', day: '2-digit', weekday: 'short'
+			}).replace(/\//g, '-');
+			if (opt) return;
+		} catch (e) {
+			time.textContent = new Date().toTimeString().slice(0, 8);
+		}
+	}
+	tick();
+	window.setInterval(tick, 1000);
+
+	return E('div', { class: 'ep-clock' }, [
+		E('span', { class: 'ep-dot-live' }, ''),
+		E('span', {}, '当前时间'), time, dateEl, zone
+	]);
+}
+
+/* ===== 实时硬件与流量（真实 /proc 采样） ===== */
+function kpiLive(status) {
+	var cpuVal = E('div', { class: 'ep-val' }, '—');
+	var cpuSub = E('div', { class: 'ep-lab2' }, '');
+	var cpuBar = E('div', { class: 'ep-bar-in' });
+	var cpuBox = E('div', { class: 'ep-kpi' }, [
+		E('div', { class: 'ep-lab' }, 'CPU 使用'), cpuVal, cpuSub,
+		E('div', { class: 'ep-bar' }, cpuBar)
+	]);
+
+	var memVal = E('div', { class: 'ep-val' }, '—');
+	var memSub = E('div', { class: 'ep-lab2' }, '');
+	var memBar = E('div', { class: 'ep-bar-in' });
+	var memBox = E('div', { class: 'ep-kpi' }, [
+		E('div', { class: 'ep-lab' }, '内存'), memVal, memSub,
+		E('div', { class: 'ep-bar' }, memBar)
+	]);
+
+	var rxVal = E('div', { class: 'ep-val' }, '—');
+	var rxSub = E('div', { class: 'ep-lab2' }, '');
+	var rxBar = E('div', { class: 'ep-bar-in' });
+	var rxBox = E('div', { class: 'ep-kpi' }, [
+		E('div', { class: 'ep-lab' }, '实时下行'), rxVal, rxSub,
+		E('div', { class: 'ep-bar' }, rxBar)
+	]);
+
+	var txVal = E('div', { class: 'ep-val' }, '—');
+	var txSub = E('div', { class: 'ep-lab2' }, '');
+	var txBar = E('div', { class: 'ep-bar-in' });
+	var txBox = E('div', { class: 'ep-kpi' }, [
+		E('div', { class: 'ep-lab' }, '实时上行'), txVal, txSub,
+		E('div', { class: 'ep-bar' }, txBar)
+	]);
+
+	var K = {
+		cpu: { val: cpuVal, sub: cpuSub, bar: cpuBar },
+		mem: { val: memVal, sub: memSub, bar: memBar },
+		rx: { val: rxVal, sub: rxSub, bar: rxBar },
+		tx: { val: txVal, sub: txSub, bar: txBar }
+	};
+
+	var cpuPrev = null, netPrev = null, sessionRx = 0, sessionTx = 0;
+
+	function setBar(node, pct, color) {
+		pct = Math.max(0, Math.min(100, pct));
+		node.bar.style.width = pct.toFixed(1) + '%';
+		if (color) node.bar.style.backgroundColor = color;
+	}
+
+	function fmtBytes(v) {
+		if (v >= 1073741824) return (v / 1073741824).toFixed(2) + ' GB';
+		if (v >= 1048576) return (v / 1048576).toFixed(1) + ' MB';
+		if (v >= 1024) return (v / 1024).toFixed(0) + ' KB';
+		return v + ' B';
+	}
+
+	function sample() {
+		Promise.all([
+			fs.read('/proc/stat').catch(function () { return null; }),
+			fs.read('/proc/meminfo').catch(function () { return null; }),
+			fs.read('/proc/net/dev').catch(function () { return null; })
+		]).then(function (r) {
+			var line = r[0] ? String(r[0]).split('\n')[0] : '';
+			var m = /^cpu\s+(.+)$/.exec(line);
+			if (m) {
+				var parts = m[1].trim().split(/\s+/).map(Number);
+				var idle = (parts[3] || 0) + (parts[4] || 0);
+				var total = 0;
+				parts.forEach(function (x) { total += x; });
+				if (cpuPrev) {
+					var dt = total - cpuPrev.total, di = idle - cpuPrev.idle;
+					if (dt > 0) {
+						var used = Math.max(0, Math.min(100, 100 * (dt - di) / dt));
+						cpuVal.textContent = used.toFixed(0) + '%';
+						cpuSub.textContent = '核数 ' + (navigator.hardwareConcurrency || 1) + ' · 采样 1.5s';
+						setBar(K.cpu, used, used < 50 ? '#22c55e' : (used <= 80 ? '#f59e0b' : '#ef4444'));
+					}
+				}
+				cpuPrev = { idle: idle, total: total };
+			}
+
+			if (r[1]) {
+				var t = /MemTotal:\s+(\d+)/.exec(r[1]);
+				var a = /MemAvailable:\s+(\d+)/.exec(r[1]);
+				if (t) {
+					var totalMb = (+t[1]) / 1024;
+					var availMb = a ? (+a[1]) / 1024 : 0;
+					var usedMb = totalMb - availMb;
+					memVal.textContent = usedMb.toFixed(0) + ' MB';
+					memSub.textContent = (totalMb ? (usedMb / totalMb * 100).toFixed(0) : '0') + '% · 共 ' + totalMb.toFixed(0) + ' MB';
+					setBar(K.mem, totalMb ? usedMb / totalMb * 100 : 0, '#22c55e');
+				}
+			}
+
+			if (r[2]) {
+				var sum = { rx: 0, tx: 0 };
+				String(r[2]).split('\n').slice(2).forEach(function (l) {
+					var mm = /^\s*([^:]+):\s*(\d+)(?:\s+\d+){6}\s+(\d+)/.exec(l);
+					if (!mm || mm[1].trim() === 'lo') return;
+					sum.rx += +mm[2];
+					sum.tx += +mm[3];
+				});
+				if (netPrev) {
+					var drx = Math.max(0, sum.rx - netPrev.rx);
+					var dtx = Math.max(0, sum.tx - netPrev.tx);
+					sessionRx += drx; sessionTx += dtx;
+					var rateRx = drx / 1.5, rateTx = dtx / 1.5;
+					rxVal.textContent = fmtBytes(rateRx) + '/s';
+					txVal.textContent = fmtBytes(rateTx) + '/s';
+					rxSub.textContent = '会话累计 ' + fmtBytes(sessionRx);
+					txSub.textContent = '会话累计 ' + fmtBytes(sessionTx);
+					setBar(K.rx, Math.min(100, rateRx / 1048576 * 25), '#22c55e');
+					setBar(K.tx, Math.min(100, rateTx / 1048576 * 25), '#22c55');
+				}
+				netPrev = sum;
+			}
+		}).catch(function () {});
+	}
+
+	sample();
+	window.setInterval(sample, 1500);
+
+	return E('div', { class: 'ep-kpis' }, [cpuBox, memBox, rxBox, txBox]);
+}
+
+/* ===== 管理密码 ===== */
+function pageSafety() {
+	var p1 = textInput('ep-pw-new', '', '新管理密码（至少 8 位）');
+	p1.type = 'password';
+	var p2 = textInput('ep-pw-rep', '', '再输入一次');
+	p2.type = 'password';
+
+	var body = [
+		E('div', { class: 'ep-hint', style: 'margin:0 0 10px' }, '管理密码用于进入本面板；密码以 600 权限存放在 /etc/easyproxy/auth，不上传、不写入节点配置。'),
+		E('div', { class: 'ep-pw' }, [p1, p2,
+			button('保存密码', 'ep-primary', function () {
+				var a = (valOf('ep-pw-new') || ''), b = (valOf('ep-pw-rep') || '');
+				if (a.length < 8) { notify('密码至少 8 位', 'error'); return; }
+				if (a !== b) { notify('两次输入的密码不一致', 'error'); return; }
+				return run(['auth', 'set', a]).then(function (r) {
+					var ok = r.code === 0;
+					notify(ok ? '管理密码已更新' : ((r.stderr || r.stdout || '设置失败').trim()), ok ? 'success' : 'error');
+					if (ok) { p1.value = ''; p2.value = ''; }
+				});
+			})
+		]),
+		E('div', { class: 'ep-hint', style: 'margin-top:10px' }, '需要 easyproxy auth set（0.8.14 起由后端提供）；当前版本执行会在下方回显中提示未支持。')
+	];
+
+	return card('管理密码', body);
 }
 
 function pageOverview(status) {
@@ -1151,5 +1388,9 @@ return baseclass.extend({
 	pageUpdate: pageUpdate,
 	pageBackup: pageBackup,
 	pageConn: pageConn,
-	pageSettings: pageSettings
+	pageSettings: pageSettings,
+	tabs: tabs,
+	clockBar: clockBar,
+	kpiLive: kpiLive,
+	pageSafety: pageSafety
 });

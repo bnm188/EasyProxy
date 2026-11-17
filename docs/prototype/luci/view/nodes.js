@@ -13,10 +13,13 @@ return view.extend({
 		});
 	},
 	render: function (d) {
-		return E('div', { class: 'ep-stack' }, [
-			app.pageNodes({ list: d.list }),
-			app.pageSubscription(),
-			app.pageSplit({ status: d.status, cfg: d.cfg })
+		app.injectStyle();
+		return E('div', { class: 'ep-wrap' }, [
+			app.tabs([
+				['nodes', '节点管理', app.pageNodes({ list: d.list })],
+				['sub', '订阅管理', app.pageSubscription()],
+				['split', '分流策略', app.pageSplit({ status: d.status, cfg: d.cfg })]
+			])
 		]);
 	}
 });
