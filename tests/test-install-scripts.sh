@@ -341,6 +341,29 @@ EP_TEST_API_FIX="$SB/fix/api-two.json" EP_TEST_OPKG_ARCH="$SB/fix/opkg.arch.arm"
 grep -q '_all\.ipk$' "$EP_TEST_LOG/curl.urls" 2>/dev/null \
 	&& ok "退回的是 all 包" || no "退回的是 all 包" "$(cat "$EP_TEST_LOG/curl.urls" 2>/dev/null)"
 
+# --- install: the release also carries dae/sing-box ipks ---------------
+# Every kernel is published as `_x86_64.ipk` too, so a panel lookup that only
+# matches `_x86_64.ipk$` picks dae's package first - the router downloaded
+# dae_2.1.2_x86_64.ipk as the panel and then failed. The panel pattern must be
+# anchored on the easyproxy prefix.
+reset
+cat > "$SB/fix/api-mixed.json" <<'JSON'
+{
+  "tag_name": "v0.8.2",
+  "assets": [
+    { "name": "dae_2.1.2_x86_64.ipk", "browser_download_url": "https://example.test/dl/dae_2.1.2_x86_64.ipk" },
+    { "name": "sing-box_1.14.4_x86_64.ipk", "browser_download_url": "https://example.test/dl/sing-box_1.14.4_x86_64.ipk" },
+    { "name": "easyproxy_0.8.2-1_x86_64.ipk", "browser_download_url": "https://example.test/dl/easyproxy_0.8.2-1_x86_64.ipk" }
+  ]
+}
+JSON
+EP_TEST_API_FIX="$SB/fix/api-mixed.json" EP_TEST_UNAME=x86_64 sh "$INSTALL" > "$SB/out" 2>&1; rc=$?
+grep -q 'easyproxy_0\.8\.2-1_x86_64\.ipk' "$EP_TEST_LOG/curl.urls" 2>/dev/null \
+	&& ok "面板下载的是 easyproxy 的架构包" || no "面板下载的是 easyproxy 的架构包" "$(cat "$EP_TEST_LOG/curl.urls" 2>/dev/null)"
+grep -q 'dae_2\.1\.2_x86_64\.ipk' "$EP_TEST_LOG/curl.urls" 2>/dev/null \
+	&& no "面板不去下载 dae 的架构包" "$(cat "$EP_TEST_LOG/curl.urls" 2>/dev/null)" \
+	|| ok "面板不去下载 dae 的架构包"
+
 # --- install: an opkg that rejects all still gets the panel -------------
 # Kwrt 25.12-SNAPSHOT ships an opkg that accepts only its own architecture
 # (`riscv64` here) and refuses `Architecture: all`. The panel is a pure script
