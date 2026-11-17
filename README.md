@@ -3,11 +3,11 @@
 **OpenWrt / ImmortalWrt 上的中文代理管理系统。装一次，导入订阅就能用。**
 
 ![version](https://img.shields.io/badge/version-0.8.7-blue)
-![tests](https://img.shields.io/badge/tests-672%20passed-brightgreen)
+![tests](https://img.shields.io/badge/tests-812%20passed-brightgreen)
 ![firmware](https://img.shields.io/badge/firmware-OpenWrt%20%7C%20ImmortalWrt%20%7C%20Kwrt-informational)
 ![license](https://img.shields.io/badge/license-MIT-green)
 
-一条命令装好「面板 + sing-box + dae」，之后在 LuCI 的 **服务 → EasyProxy** 里全程中文操作；不开网页时，SSH 里 `easyproxy-manager.sh` 有十项菜单，含上不了网时的「紧急恢复直连」。
+一条命令装好「面板 + sing-box + dae」（`scripts/easyproxy.sh`），之后在 LuCI 的 **服务 → EasyProxy** 里全程中文操作；不开网页时，SSH 里 `easyproxy-manager.sh` 提供菜单，含上不了网时的「紧急恢复直连」。
 
 三条原则写死在代码里，不是开关：**国外走代理要顺、国内流量不进内核、内网设备完全不受影响。**
 
