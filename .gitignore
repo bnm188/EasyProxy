@@ -1,1 +1,4 @@
 test-logs/
+# Built packages must never be tracked: a stale ipk left in the tree used to be
+# uploaded next to the current one, and the installer then picked the old one.
+dist/*.ipk
