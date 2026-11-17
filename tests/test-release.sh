@@ -226,7 +226,7 @@ grep -q 'continue-on-error' "$WF" && no "自检不允许 continue-on-error" || o
 CLI="$SRC/package/easyproxy/files/usr/sbin/easyproxy"
 COMMON="$SRC/package/easyproxy/files/usr/lib/easyproxy/common.sh"
 grep -q 'EP_VERSION=' "$COMMON" && ok "版本号定义在 common.sh（唯一真源）" || no "版本号定义在 common.sh（唯一真源）"
-grep -q 'EP_UPDATE_ROOT/usr/lib/easyproxy/common.sh' "$CLI" && ok "更新校验从 common.sh 读版本号" || no "更新校验从 common.sh 读版本号"
+grep -q 'easyproxy"/common.sh' "$CLI" && ok "更新校验从 common.sh 读版本号" || no "更新校验从 common.sh 读版本号"
 if grep -q 'sed -n .*EP_UPDATE_ROOT/usr/sbin/easyproxy' "$CLI"; then
 	no "更新校验不再从 CLI 自身读版本号（会自匹配）"
 else

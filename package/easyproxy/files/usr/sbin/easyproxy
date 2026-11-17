@@ -1534,7 +1534,11 @@ update_verify_install() {
 	# carries no EP_VERSION= of its own, so the `sed` expression below would
 	# match its own source line and yield "\([^" as the version, failing every
 	# real upgrade. (Found on a Kwrt x86_64 router: 0.8.7 -> 0.8.8 rolled back.)
-	v="$(sed -n 's/.*EP_VERSION="\([^"]*\)".*/\1/p' "$EP_UPDATE_ROOT/usr/lib/easyproxy/common.sh" 2>/dev/null | head -n 1)"
+	# The directory and the basename are written apart on purpose: the test
+	# harness rewrites the absolute lib paths inside this script when it builds
+	# its sandbox, and a single literal would be rewritten too, pointing the
+	# check at a path that does not exist and failing every upgrade.
+	v="$(sed -n 's/.*EP_VERSION="\([^"]*\)".*/\1/p' "$EP_UPDATE_ROOT/usr/lib/easyproxy"/common.sh 2>/dev/null | head -n 1)"
 	case "$v" in
 		''|*[!0-9.]*) v="" ;;
 	esac

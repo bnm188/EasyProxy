@@ -92,6 +92,9 @@ else
 fi
 [ "$(printf '%s' "$out" | json_get "['ok']")" = "True" ] && ok "status ok=true" || no "status ok=true"
 PKG_VER="$(sed -n 's/^PKG_VERSION:=//p' "$SRC/package/easyproxy/Makefile" | head -1)"
+# The update fixtures below use a version deliberately far above PKG_VERSION
+# (0.9.9): an upgrade test needs a release newer than the build under test, so
+# hardcoding the "next" version would break every time the version is bumped.
 # 面板的"版本"按钮直接调 easyproxy version：必须 rc=0 且只打印版本号，
 # 不能落到 usage（真机上曾经就这样返回 code=2）。
 vout="$(env PATH="$SB/bin:$PATH" EP_TEST_UCI_DB="$SB/etc/uci.db" "$EP" version 2>&1)"; vrc=$?
@@ -362,16 +365,21 @@ grep -q 'easyproxy diag --auto' "$EP_CRONTAB" 2>/dev/null && no "关闭后任务
 UP="$SB/update"
 mkdir -p "$UP/repo" "$UP/root/usr/sbin" "$UP/root/etc/init.d" \
 	"$UP/root/www/luci-static/resources/easyproxy" "$UP/backups"
-printf '{"tag_name": "v0.8.10"}\n' > "$UP/repo/rel.json"
+printf '{"tag_name": "v0.9.9"}\n' > "$UP/repo/rel.json"
 
 # payload that looks like an installed EasyProxy
-mkdir -p "$UP/pack/usr/sbin" "$UP/pack/etc/init.d" "$UP/pack/www/luci-static/resources/easyproxy"
-printf '#!/bin/sh\nEP_VERSION="0.8.10"\n' > "$UP/pack/usr/sbin/easyproxy"
+mkdir -p "$UP/pack/usr/sbin" "$UP/pack/etc/init.d" "$UP/pack/www/luci-static/resources/easyproxy" \
+	"$UP/pack/usr/lib/easyproxy"
+printf '#!/sh\n' > "$UP/pack/usr/sbin/easyproxy"
+# The update verifies the version baked into the tree it just installed, and
+# that version lives in common.sh (reading the CLI itself made the sed match
+# its own source line). A payload without common.sh is an invalid tree.
+printf 'EP_VERSION="0.9.9"\n' > "$UP/pack/usr/lib/easyproxy/common.sh"
 printf '#!/bin/sh\n' > "$UP/pack/etc/init.d/easyproxy"
 printf "'require baseclass'\nreturn baseclass.extend({});\n" > "$UP/pack/www/luci-static/resources/easyproxy/app.js"
-( cd "$UP/pack" && tar -czf "$UP/repo/easyproxy-0.8.10-rootfs.tar.gz" . )
-( cd "$UP/repo" && sha256sum easyproxy-0.8.10-rootfs.tar.gz > SHA256SUMS )
-printf 'deadbeefdeadbeef  easyproxy-0.8.10-rootfs.tar.gz\n' > "$UP/repo/SHA256SUMS.bad"
+( cd "$UP/pack" && tar -czf "$UP/repo/easyproxy-0.9.9-rootfs.tar.gz" . )
+( cd "$UP/repo" && sha256sum easyproxy-0.9.9-rootfs.tar.gz > SHA256SUMS )
+printf 'deadbeefdeadbeef  easyproxy-0.9.9-rootfs.tar.gz\n' > "$UP/repo/SHA256SUMS.bad"
 
 # one wget stub for both diag PUT and the update downloads
 cat > "$SB/bin/wget" <<'STUB'
@@ -399,7 +407,7 @@ case "$url" in
 	*api.github.com*) [ -n "${EP_TEST_API_BROKEN:-}" ] && exit 1; cp "$base/rel.json" "$out" || exit 1 ;;
 	*SHA256SUMS.bad*) cp "$base/SHA256SUMS.bad" "$out" || exit 1 ;;
 	*SHA256SUMS*) cp "$base/SHA256SUMS" "$out" || exit 1 ;;
-	*easyproxy-*-rootfs.tar.gz*) cp "$base/easyproxy-0.8.10-rootfs.tar.gz" "$out" || exit 1 ;;
+	*easyproxy-*-rootfs.tar.gz*) cp "$base/easyproxy-0.9.9-rootfs.tar.gz" "$out" || exit 1 ;;
 	*) exit 1 ;;
 esac
 STUB
@@ -423,7 +431,7 @@ runup() { # runup <relbase> <args...>
 
 out="$(runup "$UP/repo" check)"; rc=$?
 [ "$rc" -eq 0 ] && ok "update check 退出码 0" || no "update check 退出码 0" "rc=$rc $out"
-printf '%s' "$out" | grep -q 'latest:  0.8.10' && ok "update check 认出最新版本" || no "update check 认出最新版本" "$out"
+printf '%s' "$out" | grep -q 'latest:  0.9.9' && ok "update check 认出最新版本" || no "update check 认出最新版本" "$out"
 printf '%s' "$out" | grep -q 'update is available' && ok "提示可升级" || no "提示可升级" "$out"
 
 out="$(runup "$UP/repo" check --json)"
@@ -436,27 +444,27 @@ out="$(runup "$UP/nowhere" check)"; rc=$?
 # api.github.com allows 60 unauthenticated requests per hour per address, and a
 # router behind carrier NAT shares that budget with every neighbour. Version
 # detection must therefore work with the API answering 403.
-printf '<?xml version="1.0" encoding="UTF-8"?>\n<feed xmlns="http://www.w3.org/2005/Atom">\n  <title>Release notes from EasyProxy</title>\n  <entry>\n    <id>tag:github.com,2008:Repository/1458940874/v0.8.10</id>\n    <link rel="alternate" type="text/html" href="https://github.com/bnm188/EasyProxy/releases/tag/v0.8.10"/>\n    <title>EasyProxy 0.8.10</title>\n  </entry>\n</feed>\n' > "$UP/repo/atom.xml"
+printf '<?xml version="1.0" encoding="UTF-8"?>\n<feed xmlns="http://www.w3.org/2005/Atom">\n  <title>Release notes from EasyProxy</title>\n  <entry>\n    <id>tag:github.com,2008:Repository/1458940874/v0.9.9</id>\n    <link rel="alternate" type="text/html" href="https://github.com/bnm188/EasyProxy/releases/tag/v0.9.9"/>\n    <title>EasyProxy 0.9.9</title>\n  </entry>\n</feed>\n' > "$UP/repo/atom.xml"
 
 out="$(EP_TEST_API_BROKEN=1 runup "$UP/repo" check)"; rc=$?
 [ "$rc" -eq 0 ] && ok "API 被限流时仍能检查更新（走 atom）" || no "API 被限流时仍能检查更新（走 atom）" "rc=$rc $out"
-printf '%s' "$out" | grep -q 'latest:  0.8.10' \
+printf '%s' "$out" | grep -q 'latest:  0.9.9' \
 	&& ok "atom 解析出最新版本" || no "atom 解析出最新版本" "$out"
 out="$(EP_TEST_API_BROKEN=1 runup "$UP/repo" check --json)"
-printf '%s' "$out" | grep -q '"latest":"0.8.10"' \
+printf '%s' "$out" | grep -q '"latest":"0.9.9"' \
 	&& ok "atom 路径的 --json 输出可供面板解析" || no "atom 路径的 --json 输出" "$out"
 
 # checksum mismatch must abort before replacing anything
-out="$(runup "$UP/repo" apply 0.8.10 2>&1)"; rc=$?
+out="$(runup "$UP/repo" apply 0.9.9 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && ok "校验通过时升级成功" || no "校验通过时升级成功" "rc=$rc $out"
 printf '%s' "$out" | grep -q 'checksum verified' && ok "动手前先校验 sha256" || no "动手前先校验" "$out"
 ls "$UP/backups"/rollback-*.tar.gz >/dev/null 2>&1 && ok "升级前备份当前版本" || no "升级前备份当前版本" "$(ls -l "$UP/backups" 2>/dev/null)"
 [ -f "$UP/root/www/luci-static/resources/easyproxy/app.js" ] && ok "解包后面板文件就位" || no "解包后面板文件就位" "$out"
-printf '%s' "$out" | grep -q 'now running 0.8.10' && ok "报告新版本已生效" || no "报告新版本已生效" "$out"
+printf '%s' "$out" | grep -q 'now running 0.9.9' && ok "报告新版本已生效" || no "报告新版本已生效" "$out"
 
 # a bad SHA256SUMS entry must stop the install
 cp "$UP/repo/SHA256SUMS" "$UP/repo/SHA256SUMS.ok"; cp "$UP/repo/SHA256SUMS.bad" "$UP/repo/SHA256SUMS"
-out="$(runup "$UP/repo" apply 0.8.10 2>&1)"; rc=$?
+out="$(runup "$UP/repo" apply 0.9.9 2>&1)"; rc=$?
 printf '%s' "$out" | grep -q 'checksum mismatch' && ok "校验不符时拒绝安装" || no "校验不符时拒绝安装" "rc=$rc $out"
 [ "$rc" -ne 0 ] && ok "校验不符返回非 0" || no "校验不符返回非 0" "rc=$rc"
 cp "$UP/repo/SHA256SUMS.ok" "$UP/repo/SHA256SUMS"
