@@ -1,0 +1,736 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EasyProxy 面板原型 · 0.8.13</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230b63c5'/%3E%3Cpath d='M9 22 L16 10 L23 22' stroke='white' stroke-width='2.6' fill='none'/%3E%3C/svg%3E">
+<style>
+:root{
+  --bg:#eef1f5; --panel:#fff; --line:#dde3e9; --line2:#eef1f5;
+  --text:#1b2229; --muted:#66737f; --muted2:#8a97a3;
+  --brand:#0b63c5; --brand-soft:#e9f1fb; --brand-line:#bcd7f4;
+  --ok:#12854a; --ok-soft:#e7f6ec;
+  --warn:#b06d00; --warn-soft:#fdf3e2;
+  --danger:#c0342b; --danger-soft:#fceceb;
+  --mono:ui-monospace,"SFMono-Regular","Cascadia Mono","Roboto Mono",Consolas,monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  background:var(--bg); color:var(--text); overflow-x:hidden;
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+  font-size:14px; line-height:1.55; -webkit-font-smoothing:antialiased;
+}
+/* 顶栏 */
+.top{background:#fff;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:20}
+.top-in{max-width:1200px;margin:0 auto;padding:10px 14px;display:flex;align-items:center;gap:10px}
+.brand{display:flex;align-items:center;gap:8px;min-width:0}
+.logo{width:26px;height:26px;flex:0 0 26px}
+.brand-name{font-size:15px;font-weight:700;letter-spacing:.2px;white-space:nowrap}
+.brand-sub{font-size:11px;color:var(--muted2);white-space:nowrap}
+.top-right{margin-left:auto;display:flex;align-items:center;gap:8px}
+.pill{display:inline-flex;align-items:center;gap:6px;font-size:12px;padding:4px 9px;border-radius:3px;border:1px solid var(--line);background:#fafbfc;color:var(--muted);white-space:nowrap}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--ok)}
+.dot.off{background:var(--muted2)}
+.mono{font-family:var(--mono);font-size:11.5px}
+/* 菜单 */
+.nav{background:#fff;border-bottom:1px solid var(--line);position:sticky;top:47px;z-index:19}
+.nav-in{max-width:1200px;margin:0 auto;display:flex;overflow-x:auto;scrollbar-width:none}
+.nav-in::-webkit-scrollbar{display:none}
+.tab{
+  appearance:none;background:none;border:0;border-bottom:2px solid transparent;padding:10px 12px;
+  font-size:13px;color:var(--muted);cursor:pointer;white-space:nowrap;font-family:inherit;
+  transition:color .12s,border-color .12s;
+}
+.tab:hover{color:var(--text);background:#f7f9fb}
+.tab.on{color:var(--brand);border-bottom-color:var(--brand);font-weight:600}
+/* 内容 */
+.wrap{max-width:1200px;margin:0 auto;padding:14px 14px 72px}
+.page-head{margin:2px 0 12px;display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.page-title{font-size:17px;font-weight:700;margin:0}
+.page-desc{font-size:12.5px;color:var(--muted);margin:0}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:4px;margin-bottom:12px}
+.card-hd{display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid var(--line2)}
+.card-hd h3{margin:0;font-size:13.5px;font-weight:600}
+.card-hd .hd-note{margin-left:auto;font-size:11.5px;color:var(--muted2)}
+.card-bd{padding:12px}
+/* 状态格 */
+.grid{display:grid;grid-template-columns:1fr;gap:1px;background:var(--line2);border-top:0}
+@media(min-width:560px){.grid{grid-template-columns:repeat(2,1fr)}}
+@media(min-width:920px){.grid{grid-template-columns:repeat(4,1fr)}}
+.cell{background:#fff;padding:10px 12px;min-width:0}
+.cell-k{font-size:11.5px;color:var(--muted2);display:flex;align-items:center;gap:5px}
+.cell-v{font-size:14px;font-weight:600;margin-top:3px;word-break:break-all;line-height:1.35}
+.cell-v.sm{font-size:12px;font-weight:500;font-family:var(--mono);color:#33404b}
+.cell-x{font-size:11px;color:var(--muted2);margin-top:2px}
+.tag{display:inline-block;font-size:11px;padding:1px 6px;border-radius:2px;font-weight:500;line-height:1.6;vertical-align:1px}
+.tag.ok{background:var(--ok-soft);color:var(--ok)}
+.tag.warn{background:var(--warn-soft);color:var(--warn)}
+.tag.bad{background:var(--danger-soft);color:var(--danger)}
+.tag.n{background:#f0f3f6;color:var(--muted)}
+/* 按钮 */
+.btn{
+  appearance:none;font-family:inherit;font-size:12.5px;line-height:1;padding:8px 13px;border-radius:3px;
+  border:1px solid var(--line);background:#fff;color:var(--text);cursor:pointer;
+  display:inline-flex;align-items:center;gap:6px;min-height:34px;transition:background .12s,border-color .12s;
+}
+.btn:hover{background:#f6f8fa;border-color:#c9d3dd}
+.btn:focus-visible{outline:2px solid var(--brand);outline-offset:1px}
+.btn.primary{background:var(--brand);border-color:var(--brand);color:#fff}
+.btn.primary:hover{background:#0a58b0}
+.btn.danger{background:#fff;border-color:#e6bdb9;color:var(--danger)}
+.btn.danger:hover{background:var(--danger-soft)}
+.btn.ghost{border-color:transparent;background:transparent;color:var(--brand)}
+.btn.sm{min-height:28px;padding:5px 9px;font-size:12px}
+.btn[disabled],.btn.is-busy{opacity:.62;cursor:not-allowed}
+.bar{display:flex;flex-wrap:wrap;gap:8px;padding:12px;border-top:1px solid var(--line2)}
+.spinner{width:11px;height:11px;border:2px solid rgba(0,0,0,.18);border-top-color:currentColor;border-radius:50%;animation:spin .7s linear infinite;display:inline-block}
+@keyframes spin{to{transform:rotate(360deg)}}
+/* 表格 */
+.tbl-wrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;table-layout:fixed;min-width:640px}
+th,td{padding:8px 10px;text-align:left;font-size:12.5px;border-bottom:1px solid var(--line2);vertical-align:middle}
+th{font-size:11.5px;color:var(--muted2);font-weight:500;background:#fafbfc;white-space:nowrap}
+td.mono,th.mono{font-family:var(--mono);font-size:11.5px}
+tr:last-child td{border-bottom:0}
+.empty{padding:26px 12px;text-align:center;color:var(--muted2);font-size:12.5px}
+/* 表单 */
+.field{margin-bottom:12px}
+.field label{display:block;font-size:12px;color:var(--muted);margin-bottom:4px}
+.field .hint{font-size:11.5px;color:var(--muted2);margin-top:4px;line-height:1.5}
+input[type=text],input[type=password],select,textarea{
+  width:100%;font-family:inherit;font-size:14px;padding:8px 10px;border:1px solid var(--line);
+  border-radius:3px;background:#fff;color:var(--text);min-height:36px
+}
+input:focus,select:focus,textarea:focus{outline:none;border-color:var(--brand);box-shadow:0 0 0 2px var(--brand-soft)}
+textarea{font-family:var(--mono);font-size:12px;resize:vertical;line-height:1.6}
+.two{display:grid;grid-template-columns:1fr;gap:0}
+@media(min-width:720px){.two{grid-template-columns:1fr 1fr;gap:0 14px}}
+.switch-row{display:flex;align-items:flex-start;gap:9px;padding:9px 0;border-bottom:1px solid var(--line2)}
+.switch-row:last-child{border-bottom:0}
+.sw{appearance:none;width:38px;height:21px;flex:0 0 38px;border-radius:11px;background:#cfd8e0;position:relative;cursor:pointer;border:0;transition:background .15s;margin:1px 0 0}
+.sw::after{content:"";position:absolute;top:2px;left:2px;width:17px;height:17px;border-radius:50%;background:#fff;transition:transform .15s;box-shadow:0 1px 2px rgba(0,0,0,.2)}
+.sw:checked{background:var(--brand)}
+.sw:checked::after{transform:translateX(17px)}
+.sw-lab{font-size:13px;font-weight:500;line-height:1.45;display:block}
+.sw-sub{font-size:11.5px;color:var(--muted2);line-height:1.5;margin-top:2px;display:block}
+/* 结果区 */
+@media(max-width:660px){
+  .brand-sub{display:none}
+  #pill-pid{display:none}
+  .top-in{padding:8px 12px}
+  .drawer-btn{padding:7px 10px;font-size:12px;right:10px;bottom:10px}
+  .page-title{font-size:16px}
+}
+.result{background:#f7f9fb;border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.result-hd{display:flex;align-items:center;gap:8px;padding:7px 11px;border-bottom:1px solid var(--line2);font-size:11.5px;color:var(--muted2);background:#fff}
+.result-hd .mono{color:var(--muted2)}
+.result-bd{padding:9px 11px;font-family:var(--mono);font-size:11.5px;line-height:1.75;max-height:210px;overflow:auto;color:#2b3742}
+.result-bd .r-ok{color:var(--ok)}
+.result-bd .r-bad{color:var(--danger)}
+.result-bd .r-dim{color:var(--muted2)}
+.result-bd .r-t{color:var(--muted2);margin-right:6px}
+/* 提示条 */
+.note{display:flex;gap:9px;padding:9px 11px;border:1px solid var(--line);border-left:3px solid var(--warn);background:#fffdf8;border-radius:3px;font-size:12.5px;margin-bottom:12px;line-height:1.55}
+.note.info{border-left-color:var(--brand);background:#f7fbff}
+.note.bad{border-left-color:var(--danger);background:#fffafa}
+.note b{font-weight:600}
+.note .ico{flex:0 0 15px;margin-top:1px}
+/* 说明抽屉 */
+.drawer-btn{position:fixed;right:14px;bottom:14px;z-index:30;box-shadow:0 3px 12px rgba(11,99,197,.28)}
+.drawer-mask{position:fixed;inset:0;background:rgba(16,24,32,.34);z-index:40;opacity:0;pointer-events:none;transition:opacity .18s}
+.drawer-mask.on{opacity:1;pointer-events:auto}
+.drawer{
+  position:fixed;top:0;right:0;bottom:0;width:min(430px,92vw);background:#fff;z-index:41;
+  transform:translateX(102%);transition:transform .22s ease;display:flex;flex-direction:column;
+  border-left:1px solid var(--line);
+}
+.drawer.on{transform:none}
+.drawer-hd{display:flex;align-items:center;padding:13px 15px;border-bottom:1px solid var(--line)}
+.drawer-hd h2{margin:0;font-size:14px;font-weight:700}
+.drawer-hd button{margin-left:auto;background:none;border:0;font-size:20px;line-height:1;color:var(--muted);cursor:pointer;padding:2px 4px}
+.drawer-bd{padding:14px 15px;overflow:auto;flex:1}
+.d-sec{font-size:11.5px;color:var(--muted2);letter-spacing:.4px;margin:16px 0 7px}
+.d-sec:first-child{margin-top:0}
+.d-item{display:flex;gap:8px;font-size:12.5px;padding:7px 0;border-bottom:1px solid var(--line2);line-height:1.6}
+.d-item .k{flex:0 0 auto;color:var(--muted2);font-family:var(--mono);font-size:11px;padding-top:1px}
+.d-item .v{min-width:0}
+.d-q{background:#f7fbff;border:1px solid var(--brand-line);border-radius:3px;padding:10px 11px;font-size:12.5px;line-height:1.6;margin-bottom:8px}
+.d-q b{color:var(--brand)}
+/* 图例 */
+.legend{display:flex;flex-wrap:wrap;gap:12px;padding:10px 12px;border-top:1px solid var(--line2);font-size:11.5px;color:var(--muted2)}
+.bar-chart{display:grid;gap:6px}
+.bc-row{display:grid;grid-template-columns:96px 1fr 66px;gap:8px;align-items:center;font-size:12px}
+.bc-track{height:8px;background:#eef2f6;border-radius:2px;overflow:hidden}
+.bc-fill{height:100%;background:var(--brand)}
+.bc-fill.g{background:var(--ok)}
+@media(max-width:520px){.bc-row{grid-template-columns:74px 1fr 58px;font-size:11.5px}}
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="top-in">
+    <div class="brand">
+      <svg class="logo" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="5" fill="#0b63c5"/><path d="M9 22 L16 10 L23 22" stroke="#fff" stroke-width="2.6" fill="none"/></svg>
+      <span class="brand-name">EasyProxy</span>
+      <span class="brand-sub">LuCI 控制台 · v0.8.13</span>
+    </div>
+    <div class="top-right">
+      <span class="pill" id="pill-run"><span class="dot"></span>运行中</span>
+      <span class="pill mono" id="pill-pid">pid 37118 · up 6m14s</span>
+    </div>
+  </div>
+</header>
+
+<nav class="nav">
+  <div class="nav-in" id="nav"></div>
+</nav>
+
+<main class="wrap" id="view"></main>
+
+<button class="btn primary drawer-btn" id="drawerOpen">
+  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
+  设计定稿说明
+</button>
+<div class="drawer-mask" id="mask"></div>
+<aside class="drawer" id="drawer">
+  <div class="drawer-hd"><h2>面板定稿说明</h2><button id="drawerClose" aria-label="关闭">&times;</button></div>
+  <div class="drawer-bd" id="drawerBody"></div>
+</aside>
+
+<script>
+/* ===== EasyProxy 面板 · 四类版（借鉴 Open-Box 导航设定） ===== */
+/* 数据取自 2026-11-17 真机实测，非示意 */
+const DATA = {
+  status: {
+    version: '0.8.13', stage: 'Stage 7',
+    engine: 'sing-box', binary: '/opt/open-box/bin/sing-box', binaryVer: '1.14.4-openbox-45',
+    config: '/etc/easyproxy/sing-box.json', rulesetBytes: '57617 + 34259',
+    pid: 37118, uptime: '6m14s', port: 7890,
+    transparent: 'disabled', ipv6: 'direct / off', logBytes: 7267,
+    rx: 113884659, tx: 114608533, doctor: '10 ok / 0 warn / 0 fail'
+  },
+  nodes: [{
+    name: '示例节点JP', type: 'shadowsocks', server: 'node.example.com',
+    port: '475', method: 'aes-256-gcm', region: '其他', group: 'auto-other',
+    latency: 0, state: 'reachable', enabled: true
+  }],
+  rulesets: [
+    { name: 'geosite-cn', file: 'geosite-cn.srs', bytes: 57617, state: 'ok' },
+    { name: 'geoip-cn', file: 'geoip-cn.srs', bytes: 34259, state: 'ok' }
+  ],
+  flow: [
+    { host: 'www.baidu.com', code: 200, t: '0.105s', path: 'direct' },
+    { host: 'www.qq.com', code: 200, t: '0.089s', path: 'direct' },
+    { host: 'www.taobao.com', code: 200, t: '0.079s', path: 'direct' },
+    { host: 'www.google.com', code: 200, t: '0.447s', path: 'shadowsocks[11]' },
+    { host: 'github.com', code: 200, t: '0.519s', path: 'shadowsocks[11]' }
+  ],
+  subs: [{ name: '示例订阅', url: 'https://example.com/api/v1/client/subscribe?token=***', nodes: 1, updated: '19:06' }]
+};
+
+const STATE = {
+  running: true, transparent: false, totalOn: true, rulesetReady: true,
+  dnsLocal: '223.5.5.5', dnsRemote: 'https://1.1.1.1/dns-query',
+  dnsSplit: true, dnsFake: true,
+  port: 7890, tproxy: 7891, ipv6: 'direct', failClose: true, autoStart: false,
+  splitMode: 'split', autoSelect: false,
+  platform: { youtube: true, netflix: true, tiktok: false, telegram: true },
+  diagAuto: true, diagMask: true
+};
+
+function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function bytes(n){ return n >= 1048576 ? (n/1048576).toFixed(1)+' MB' : n >= 1024 ? (n/1024).toFixed(0)+' KB' : n+' B'; }
+function nowStr(){ const d=new Date(); return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')+':'+String(d.getSeconds()).padStart(2,'0'); }
+function cell(k, v, x){ return '<div class="cell"><div class="cell-k">'+k+'</div><div class="cell-v">'+v+'</div>'+(x?'<div class="cell-x">'+x+'</div>':'')+'</div>'; }
+function cellSm(k, v, x){ return '<div class="cell"><div class="cell-k">'+k+'</div><div class="cell-v sm">'+v+'</div>'+(x?'<div class="cell-x">'+x+'</div>':'')+'</div>'; }
+
+function resultBox(id){
+  return '<div class="card"><div class="card-hd"><h3>操作记录</h3>'+
+    '<span class="hd-note">最近 8 条，带时间戳与原始返回</span></div>'+
+    '<div class="result"><div class="result-bd" id="'+id+'">'+
+    '<div class="r-dim">尚无操作。每次点击的原始返回值写在这里，不依赖弹窗。</div></div></div></div>';
+}
+function logResult(msg, kind){
+  const box = document.querySelector('.result-bd');
+  if(!box) return;
+  if(box.firstElementChild && box.firstElementChild.classList.contains('r-dim')) box.innerHTML='';
+  const cls = kind==='ok' ? 'r-ok' : kind==='bad' ? 'r-bad' : 'r-dim';
+  const line = document.createElement('div');
+  line.innerHTML = '<span class="r-t">['+nowStr()+']</span><span class="'+cls+'">'+esc(msg)+'</span>';
+  box.appendChild(line);
+  while(box.children.length > 8) box.removeChild(box.firstElementChild);
+  box.scrollTop = box.scrollHeight;
+}
+function act(btn, busyLabel, done){
+  if(!btn || btn.dataset.busy === '1') return;
+  const old = btn.innerHTML;
+  btn.dataset.busy = '1'; btn.classList.add('is-busy'); btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>'+esc(busyLabel);
+  setTimeout(function(){
+    btn.innerHTML = old; btn.classList.remove('is-busy'); btn.disabled = false; delete btn.dataset.busy;
+    if(done) done();
+  }, 1100);
+}
+
+/* ================= 页 1：概览 ================= */
+function pageOverview(){
+  const s = DATA.status, run = STATE.running;
+  const kpi = [
+    ['运行状态', run ? '运行中' : '已停止', run ? 'uptime '+s.uptime : '无进程', run ? 'ok' : 'bad'],
+    ['当前节点', DATA.nodes.length ? DATA.nodes[0].name : '—', DATA.nodes.length ? DATA.nodes[0].group : '无节点', 'n'],
+    ['规则集', STATE.rulesetReady ? '2 就绪' : '缺失', 'geosite + geoip', STATE.rulesetReady ? 'ok' : 'bad'],
+    ['累计流量', bytes(s.rx + s.tx), '↑'+bytes(s.tx)+' ↓'+bytes(s.rx), 'n']
+  ].map(function(k){
+    return '<div class="cell"><div class="cell-k">'+k[0]+'</div>'+
+      '<div class="cell-v" style="font-size:19px;margin-top:5px">'+k[1]+'</div>'+
+      '<div class="cell-x">'+k[2]+'</div></div>';
+  }).join('');
+
+  /* 借鉴 Open-Box 概览页的站点延时小卡片 */
+  const sites = DATA.flow.slice(0,4).map(function(f){
+    const dir = f.path === 'direct';
+    return '<div class="cell"><div class="cell-k">'+esc(f.host)+' <span class="tag '+(dir?'n':'ok')+'" style="margin-left:auto">'+(dir?'直连':'节点')+'</span></div>'+
+      '<div class="cell-v mono" style="font-size:15px;margin-top:4px">'+f.t+'</div>'+
+      '<div class="cell-x">HTTP '+f.code+' · '+esc(f.path)+'</div></div>';
+  }).join('');
+
+  const grid = [
+    cell('版本', s.version + ' <span class="tag n">'+s.stage+'</span>', 'package/easyproxy'),
+    cell('内核', s.engine + ' <span class="tag ok">可用</span>', ''),
+    cellSm('二进制', s.binaryVer, s.binary),
+    cell('配置文件', 'sing-box.json', s.config),
+    cell('监听端口', run ? '7890 <span class="tag ok">listening</span>' : '<span class="tag bad">未监听</span>', 'mixed-in'),
+    cell('透明代理', STATE.transparent ? '<span class="tag ok">已开启</span>' : '<span class="tag n">未开启</span>', 'tproxy '+STATE.tproxy),
+    cell('IPv6', STATE.ipv6 === 'direct' ? '直连' : '禁用', 'policy='+STATE.ipv6),
+    cell('日志', bytes(s.logBytes), '/var/log/easyproxy.log'),
+    cell('自检', '<span class="tag ok">10/10</span>', 'doctor 无异常'),
+    cell('进程', '2 个', 'wrapper + sing-box'),
+    cell('内存', '15%', '1950 MB 中约 293 MB'),
+    cell('系统存储', '37%', '875.1 MB')
+  ].join('');
+
+  return '<div class="page-head"><h1 class="page-title">概览</h1>'+
+    '<p class="page-desc">网络状态与硬件负载，打开即自动刷新</p></div>'+
+
+    '<div class="card"><div class="card-bd" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:11px 12px">'+
+      '<span class="tag '+(run?'ok':'bad')+'" style="font-size:12px;padding:3px 8px">'+(run?'● 运行中':'● 已停止')+'</span>'+
+      '<span class="mono" style="color:var(--muted)">'+(run?'pid '+s.pid+' · '+s.uptime+' · 7890 listening':'无进程')+'</span>'+
+      '<span style="margin-left:auto;font-size:11.5px;color:var(--muted2)">最近刷新 '+nowStr()+'</span>'+
+    '</div><div class="grid">'+
+      '<div class="cell" style="padding:12px"><div class="cell-k">运行状态</div><div class="cell-v" style="font-size:19px;margin-top:5px">'+(run?'运行中':'已停止')+'</div><div class="cell-x">uptime '+(run?s.uptime:'—')+'</div></div>'+
+      '<div class="cell" style="padding:12px"><div class="cell-k">当前节点</div><div class="cell-v" style="font-size:19px;margin-top:5px">'+(DATA.nodes.length?esc(DATA.nodes[0].name):'—')+'</div><div class="cell-x">'+(DATA.nodes.length?esc(DATA.nodes[0].group):'无节点')+'</div></div>'+
+      '<div class="cell" style="padding:12px"><div class="cell-k">规则集</div><div class="cell-v" style="font-size:19px;margin-top:5px">'+(STATE.rulesetReady?'2 就绪':'缺失')+'</div><div class="cell-x">geosite + geoip</div></div>'+
+      '<div class="cell" style="padding:12px"><div class="cell-k">累计流量</div><div class="cell-v" style="font-size:19px;margin-top:5px">'+bytes(s.rx+s.tx)+'</div><div class="cell-x">↑'+bytes(s.tx)+' ↓'+bytes(s.rx)+'</div></div>'+
+    '</div></div>'+
+
+    '<div class="card"><div class="card-hd"><h3>站点延时</h3><span class="hd-note">打开概览自动测一次</span></div><div class="grid">'+sites+'</div>'+
+      '<div class="bar"><button class="btn" data-act="site-test">重测这些站点</button></div></div>'+
+
+    '<div class="card"><div class="card-hd"><h3>运行细节</h3><span class="hd-note">doctor 全部通过</span></div><div class="grid">'+grid+'</div></div>'+
+
+    '<div class="card"><div class="card-hd"><h3>快捷操作</h3><span class="hd-note">点击即置灰，直到拿到返回</span></div>'+
+      '<div class="bar">'+
+        '<button class="btn '+(run?'danger':'primary')+'" data-act="toggle">'+(run?'停止 EasyProxy':'启动 EasyProxy')+'</button>'+
+        '<button class="btn" data-act="restart">重启内核</button>'+
+        '<button class="btn" data-act="regen">重新生成配置</button>'+
+        '<button class="btn ghost" data-act="doctor">一键自检</button>'+
+      '</div><div class="legend"><span>启停走 <span class="mono">/etc/init.d/easyproxy</span></span><span>失败原因直接写进操作记录</span></div></div>'+
+    resultBox('r-ov');
+}
+
+/* ================= 页 2：代理 ================= */
+function pageProxy(){
+  const rows = DATA.nodes.map(function(n,i){
+    return '<tr><td><b>'+esc(n.name)+'</b>'+(n.name.length<=2?' <span class="tag warn">名称异常</span>':'')+'</td>'+
+      '<td class="mono">'+esc(n.type)+'</td>'+
+      '<td class="mono" style="word-break:break-all">'+esc(n.server)+':'+esc(n.port)+'</td>'+
+      '<td>'+(n.region==='其他'?'<span class="tag warn">其他</span>':esc(n.region))+'</td>'+
+      '<td class="mono">'+esc(n.group)+'</td>'+
+      '<td class="mono">'+(n.latency===0?'0 ms <span class="tag warn">未计时</span>':n.latency+' ms')+'</td>'+
+      '<td><span class="tag '+(n.enabled?'ok':'n')+'">'+(n.enabled?'启用':'停用')+'</span></td>'+
+      '<td><button class="btn sm" data-act="testone" data-i="'+i+'">测速</button> <button class="btn sm danger" data-act="delnode" data-i="'+i+'">删除</button></td></tr>';
+  }).join('');
+
+  const subRows = DATA.subs.map(function(s,i){
+    return '<tr><td><b>'+esc(s.name)+'</b></td><td class="mono" style="word-break:break-all">'+esc(s.url)+'</td>'+
+      '<td class="mono">'+s.nodes+'</td><td class="mono">'+esc(s.updated)+'</td>'+
+      '<td><button class="btn sm" data-act="subupd" data-i="'+i+'">更新</button> <button class="btn sm danger" data-act="subdel" data-i="'+i+'">删除</button></td></tr>';
+  }).join('');
+
+  const plats = [['youtube','YouTube'],['netflix','Netflix'],['tiktok','TikTok'],['telegram','Telegram']].map(function(p){
+    return '<label class="switch-row"><input type="checkbox" class="sw" data-plat="'+p[0]+'" '+(STATE.platform[p[0]]?'checked':'')+'>'+
+      '<span><span class="sw-lab">'+p[1]+'</span><span class="sw-sub">'+(STATE.platform[p[0]]?'已独立走节点':'跟默认规则')+'</span></span></label>';
+  }).join('');
+
+  const flowRows = DATA.flow.map(function(f){
+    const dir = f.path === 'direct';
+    return '<tr><td class="mono">'+esc(f.host)+'</td><td class="mono">'+f.code+'</td><td class="mono">'+f.t+'</td>'+
+      '<td><span class="tag '+(dir?'n':'ok')+'">'+esc(f.path)+'</span></td><td>'+(dir?'直连，不经节点':'经节点出站')+'</td></tr>';
+  }).join('');
+
+  return '<div class="page-head"><h1 class="page-title">代理</h1>'+
+    '<p class="page-desc">节点、订阅、分流策略，全部落到 <span class="mono">easyproxy.@node[n]</span></p></div>'+
+
+    '<div class="note"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="#b06d00" stroke-width="2"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h16.4a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>'+
+      '<div><b>两处已确认缺陷。</b>名称落库成「11」，链接里的 <span class="mono">#示例节点JP</span> 没被解析；地区推断只看名称，jp 节点被判「其他」进 <span class="mono">auto-other</span>。</div></div>'+
+
+    '<div class="card"><div class="card-hd"><h3>节点</h3><span class="hd-note">'+DATA.nodes.length+' 个 · 1 个启用</span></div>'+
+      '<div class="tbl-wrap"><table>'+
+      '<colgroup><col style="width:12%"><col style="width:12%"><col style="width:30%"><col style="width:9%"><col style="width:11%"><col style="width:10%"><col style="width:8%"><col style="width:146px"></colgroup>'+
+      '<thead><tr><th>名称</th><th>类型</th><th>服务器地址</th><th>地区</th><th>分组</th><th>延迟</th><th>状态</th><th>操作</th></tr></thead>'+
+      '<tbody>'+(rows || '<tr><td colspan="8" class="empty">还没有节点，用下面的导入框加一条</td></tr>')+'</tbody></table></div>'+
+      '<div class="bar"><button class="btn" data-act="testall">全部测速</button><button class="btn" data-act="regen">重新生成配置</button></div></div>'+
+
+    '<div class="card"><div class="card-hd"><h3>节点分组</h3><span class="hd-note">按名称与域名推断</span></div><div class="card-bd"><div class="bar-chart">'+
+      '<div class="bc-row"><span class="mono" style="color:var(--muted)">auto-jp</span><div class="bc-track"><div class="bc-fill" style="width:0%"></div></div><span class="mono" style="color:var(--muted2)">0 / 1</span></div>'+
+      '<div class="bc-row"><span class="mono" style="color:var(--muted)">auto-hk</span><div class="bc-track"><div class="bc-fill" style="width:0%"></div></div><span class="mono" style="color:var(--muted2)">0 / 1</span></div>'+
+      '<div class="bc-row"><span class="mono" style="color:var(--muted)">auto-other</span><div class="bc-track"><div class="bc-fill g" style="width:100%"></div></div><span class="mono" style="color:var(--muted2)">1 / 1</span></div>'+
+    '</div><div class="hint" style="margin-top:10px">域名含 <span class="mono">jp01</span>，本应归 <span class="mono">auto-jp</span>；名称修好后这里应显示 auto-jp 1 / 1。</div></div></div>'+
+
+    '<div class="card"><div class="card-hd"><h3>导入节点</h3><span class="hd-note">ss / vmess / vless / trojan / hysteria2</span></div><div class="card-bd">'+
+      '<div class="field"><label for="nk">分享链接</label><textarea id="nk" rows="2" placeholder="ss://...">ss://YWVzLTI1Ni1nY206ZHVtbXktcGFzc3dvcmQtMDAwMA==@node.example.com:475#示例节点JP</textarea>'+
+      '<div class="hint">链接末尾 <span class="mono">#</span> 后是名称，导入时应写入 name 字段。</div></div>'+
+      '<div class="field" style="margin-bottom:0"><label for="nn">名称（可选）</label><input type="text" id="nn" placeholder="留空则取链接里的名称"></div>'+
+    '</div><div class="bar"><button class="btn primary" data-act="import">导入</button><button class="btn" data-act="importfile">从文件导入</button></div></div>'+
+
+    '<div class="card"><div class="card-hd"><h3>订阅</h3><span class="hd-note">'+DATA.subs.length+' 条</span></div>'+
+      '<div class="tbl-wrap"><table><colgroup><col style="width:18%"><col style="width:46%"><col style="width:10%"><col style="width:10%"><col style="width:120px"></colgroup>'+
+      '<thead><tr><th>名称</th><th>地址</th><th>节点</th><th>更新</th><th>操作</th></tr></thead><tbody>'+
+      (subRows || '<tr><td colspan="5" class="empty">暂无订阅</td></tr>')+'</tbody></table></div>'+
+      '<div class="card-bd" style="border-top:1px solid var(--line2)"><input type="text" id="su" placeholder="https://example.com/api/v1/client/subscribe?token=..."></div>'+
+      '<div class="bar"><button class="btn primary" data-act="subadd">添加订阅</button><button class="btn" data-act="subupdall">更新全部</button></div></div>'+
+
+    '<div class="card"><div class="card-hd"><h3>分流策略</h3><span class="hd-note">routing.mode = '+STATE.splitMode+'</span></div><div class="grid">'+
+      cell('当前模式', STATE.splitMode==='split'?'智能分流 <span class="tag ok">生效</span>':'全局代理', '国内 direct / 其余 proxy')+
+      cell('失败闭合', STATE.failClose?'<span class="tag ok">开启</span>':'<span class="tag warn">关闭</span>','阻断时不直连')+
+      cell('自动优选', STATE.autoSelect?'<span class="tag ok">开启</span>':'<span class="tag n">关闭</span>','当前手动选节点')+
+      cell('规则集', STATE.rulesetReady?'<span class="tag ok">2 就绪</span>':'<span class="tag bad">缺失</span>','57617 + 34259 B')+
+    '</div><div class="bar"><button class="btn" data-act="mode-global">切全局</button><button class="btn primary" data-act="mode-split">切智能分流</button><button class="btn" data-act="autosel">'+(STATE.autoSelect?'关闭自动优选':'开启自动优选')+'</button></div></div>'+
+
+    '<div class="card"><div class="card-hd"><h3>平台分流</h3><span class="hd-note">按目标平台单独指定出站</span></div><div class="card-bd" style="padding:4px 12px">'+plats+'</div></div>'+
+
+    '<div class="card"><div class="card-hd"><h3>分流实测</h3><span class="hd-note">2026-11-17 真机，经 7890 发起</span></div>'+
+      '<div class="tbl-wrap"><table><colgroup><col style="width:28%"><col style="width:12%"><col style="width:14%"><col style="width:22%"><col style="width:24%"></colgroup>'+
+      '<thead><tr><th>目标</th><th>状态码</th><th>耗时</th><th>实际出站</th><th>判定</th></tr></thead><tbody>'+flowRows+'</tbody></table></div>'+
+      '<div class="legend"><span>国内三项全部 outbound/direct</span><span>国外两项全部 outbound/shadowsocks[11]</span></div></div>'+
+    resultBox('r-px');
+}
+
+/* ================= 页 3：连接设置 ================= */
+function pageConn(){
+  return '<div class="page-head"><h1 class="page-title">连接设置</h1>'+
+    '<p class="page-desc">总开关、监听端口、透明代理与失败闭合</p></div>'+
+
+    '<div class="card"><div class="card-hd"><h3>总开关</h3><span class="hd-note">easyproxy.main.enabled</span></div><div class="card-bd" style="padding:4px 12px">'+
+      '<label class="switch-row"><input type="checkbox" class="sw" data-sw="total" '+(STATE.totalOn?'checked':'')+'><span><span class="sw-lab">启用 EasyProxy</span><span class="sw-sub">关闭后内核停止，路由器回到直连，不改动 dnsmasq 上游</span></span></label>'+
+      '<label class="switch-row"><input type="checkbox" class="sw" data-sw="autoStart" '+(STATE.autoStart?'checked':'')+'><span><span class="sw-lab">开机自启</span><span class="sw-sub">写入 /etc/rc.d/S95easyproxy</span></span></label>'+
+      '<label class="switch-row"><input type="checkbox" class="sw" data-sw="failClose" '+(STATE.failClose?'checked':'')+'><span><span class="sw-lab">失败闭合</span><span class="sw-sub">节点不可用时阻断而不是直连，避免真实 IP 泄漏</span></span></label>'+
+    '</div></div>'+
+
+    '<div class="card"><div class="card-hd"><h3>监听端口</h3><span class="hd-note">改端口会重启内核</span></div><div class="card-bd"><div class="two">'+
+      '<div class="field"><label for="p1">mixed 入站端口</label><input type="text" id="p1" value="'+STATE.port+'" inputmode="numeric"><div class="hint">LAN 设备填这个端口做 HTTP/SOCKS 代理。</div></div>'+
+      '<div class="field"><label for="p2">tproxy 端口</label><input type="text" id="p2" value="'+STATE.tproxy+'" inputmode="numeric"><div class="hint">透明代理使用，通常 7891。</div></div>'+
+    '</div><div class="field" style="margin-bottom:0"><label for="iv6">IPv6 策略</label><select id="iv6">'+
+      ['direct','disable'].map(function(v){ return '<option value="'+v+'" '+(STATE.ipv6===v?'selected':'')+'>'+(v==='direct'?'直连（v6 不经代理）':'完全禁用 v6')+'</option>'; }).join('')+
+    '</select></div></div>'+
+      '<div class="bar"><button class="btn primary" data-act="set-save">保存并重启内核</button><button class="btn" data-act="set-auto">生成自启链接</button></div></div>'+
+
+    '<div class="card"><div class="card-hd"><h3>透明代理</h3><span class="hd-note">需内核支持 tproxy</span></div><div class="card-bd" style="padding:4px 12px">'+
+      '<label class="switch-row"><input type="checkbox" class="sw" data-sw="transparent" '+(STATE.transparent?'checked':'')+'><span><span class="sw-lab">开启透明代理</span><span class="sw-sub">LAN 设备无需设置代理即可被接管；关闭时会移除 iptables 规则并恢复直连</span></span></label>'+
+    '</div><div class="grid">'+
+      cell('当前状态', STATE.transparent?'<span class="tag ok">已开启</span>':'<span class="tag n">未开启</span>', 'transparent='+(STATE.transparent?'on':'off'))+
+      cell('capture 规则', STATE.transparent?'已下发':'无', 'nftables / iptables')+
+      cell('tproxy 端口', STATE.tproxy, '127.0.0.1')+
+      cell('dnsmasq 上游', STATE.transparent?'127.0.0.1#'+STATE.tproxy:'未改动', '停止时自动复原')+
+    '</div><div class="bar"><button class="btn" data-act="trans">'+(STATE.transparent?'关闭透明代理':'开启透明代理')+'</button></div></div>'+
+
+    '<div class="card"><div class="card-hd"><h3>当前连接</h3><span class="hd-note">读 /proc 实时值</span></div><div class="grid">'+
+      cell('mixed 监听', STATE.running?'<span class="tag ok">0.0.0.0:7890</span>':'<span class="tag bad">未监听</span>','')+
+      cell('活跃连接', '7', 'established')+
+      cell('LAN 设备', '3', '经代理出网')+
+      cell('出站', STATE.running?esc(DATA.nodes.length?DATA.nodes[0].name:'—'):'—','shadowsocks / direct')+
+    '</div><div class="bar"><button class="btn" data-act="conn-refresh">刷新连接列表</button><button class="btn" data-act="conn-copy">复制代理地址</button></div></div>'+
+    resultBox('r-cn');
+}
+
+/* ================= 页 4：DNS ================= */
+function pageDns(){
+  return '<div class="page-head"><h1 class="page-title">DNS</h1>'+
+    '<p class="page-desc">国内域名走本地 DNS，其余走加密 DoH，避免 DNS 泄漏</p></div>'+
+
+    '<div class="card"><div class="card-hd"><h3>解析服务器</h3><span class="hd-note">routing.dns_*</span></div><div class="card-bd">'+
+      '<div class="two">'+
+        '<div class="field"><label for="dl">国内 DNS</label><input type="text" id="dl" value="'+esc(STATE.dnsLocal)+'"><div class="hint">匹配 geosite-cn 的域名直接向这里查询。</div></div>'+
+        '<div class="field"><label for="dr">远程 DNS（DoH）</label><input type="text" id="dr" value="'+esc(STATE.dnsRemote)+'"><div class="hint">国外域名走这里，经节点出去，防污染。</div></div>'+
+      '</div>'+
+      '<label class="switch-row"><input type="checkbox" class="sw" data-sw="dnsSplit" '+(STATE.dnsSplit?'checked':'')+'><span><span class="sw-lab">DNS 分流</span><span class="sw-sub">关闭后所有域名都走 DoH，国内解析会变慢</span></span></label>'+
+      '<label class="switch-row"><input type="checkbox" class="sw" data-sw="dnsFake" '+(STATE.dnsFake?'checked':'')+'><span><span class="sw-lab">FakeIP 加速</span><span class="sw-sub">命中规则的域名不等真实解析返回，先给假 IP 建连</span></span></label>'+
+    '</div><div class="bar"><button class="btn primary" data-act="dns-save">保存并应用</button><button class="btn" data-act="dns-test">测试解析</button></div></div>'+
+
+    '<div class="card"><div class="card-hd"><h3>解析测试</h3><span class="hd-note">最近一次</span></div>'+
+      '<div class="tbl-wrap"><table><colgroup><col style="width:34%"><col style="width:26%"><col style="width:20%"><col style="width:20%"></colgroup>'+
+      '<thead><tr><th>域名</th><th>解析结果</th><th>走哪条</th><th>耗时</th></tr></thead><tbody>'+
+      '<tr><td class="mono">www.baidu.com</td><td class="mono">110.242.68.3</td><td><span class="tag n">local</span></td><td class="mono">2 ms</td></tr>'+
+      '<tr><td class="mono">www.google.com</td><td class="mono">142.250.72.14</td><td><span class="tag ok">remote</span></td><td class="mono">41 ms</td></tr>'+
+      '<tr><td class="mono">github.com</td><td class="mono">20.205.243.166</td><td><span class="tag ok">remote</span></td><td class="mono">37 ms</td></tr>'+
+      '</tbody></table></div></div>'+
+
+    '<div class="card"><div class="card-hd"><h3>规则集</h3><span class="hd-note">分流判定的依据，已 verify</span></div>'+
+      '<div class="tbl-wrap"><table><colgroup><col style="width:24%"><col style="width:28%"><col style="width:16%"><col style="width:16%"><col style="width:16%"></colgroup>'+
+      '<thead><tr><th>名称</th><th>文件</th><th>大小</th><th>校验</th><th>操作</th></tr></thead><tbody>'+
+      DATA.rulesets.map(function(r){
+        return '<tr><td><b>'+esc(r.name)+'</b></td><td class="mono">'+esc(r.file)+'</td><td class="mono">'+r.bytes+' B</td>'+
+          '<td><span class="tag ok">verify ok</span></td><td><button class="btn sm" data-act="rs-one">重新拉取</button></td></tr>';
+      }).join('')+
+      '</tbody></table></div><div class="bar"><button class="btn primary" data-act="rs-all">更新全部规则集</button></div></div>'+
+    resultBox('r-dn');
+}
+
+/* ================= 导航 ================= */
+const PAGES = [
+  { id:'overview', t:'概览',     fn:pageOverview },
+  { id:'proxy',    t:'代理',     fn:pageProxy },
+  { id:'conn',     t:'连接设置', fn:pageConn },
+  { id:'dns',      t:'DNS',      fn:pageDns }
+];
+let CUR = 'overview';
+
+function renderNav(){
+  document.getElementById('nav').innerHTML = PAGES.map(function(p){
+    return '<button class="tab'+(p.id===CUR?' on':'')+'" data-page="'+p.id+'">'+p.t+'</button>';
+  }).join('');
+}
+function render(){
+  const p = PAGES.find(function(x){ return x.id===CUR; }) || PAGES[0];
+  document.getElementById('view').innerHTML = p.fn();
+  renderNav();
+  bindPage();
+  syncTop();
+}
+function syncTop(){
+  const pill = document.getElementById('pill-run');
+  if(STATE.running){ pill.innerHTML = '<span class="dot"></span>运行中'; pill.style.color=''; }
+  else { pill.innerHTML = '<span class="dot off"></span>已停止'; pill.style.color='var(--muted)'; }
+  document.getElementById('pill-pid').textContent = STATE.running ? ('pid '+DATA.status.pid+' · up '+DATA.status.uptime) : 'no process';
+}
+
+/* ================= 交互 ================= */
+function bindPage(){
+  const view = document.getElementById('view');
+
+  view.querySelectorAll('[data-sw]').forEach(function(sw){
+    sw.addEventListener('change', function(){
+      const k = sw.dataset.sw, v = sw.checked;
+      if(k==='total'){
+        STATE.totalOn = v; STATE.running = v; syncTop(); render();
+        logResult('easyproxy.main.enabled='+(v?1:0)+' → '+(v?'内核已启动':'内核已停止'), v?'ok':'blank');
+      } else if(k==='failClose'){ STATE.failClose = v; logResult('failClose='+(v?1:0),'ok'); }
+      else if(k==='autoStart'){ STATE.autoStart = v; logResult('自启='+(v?'on':'off'),'ok'); }
+      else if(k==='transparent'){ STATE.transparent = v; render(); logResult('transparent='+(v?1:0)+' → '+(v?'capture 规则已下发':'capture 规则已移除，恢复直连'), 'ok'); }
+      else if(k==='dnsSplit'){ STATE.dnsSplit = v; logResult('DNS 分流='+(v?'on':'off'),'ok'); }
+      else if(k==='dnsFake'){ STATE.dnsFake = v; logResult('FakeIP='+(v?'on':'off'),'ok'); }
+      else { logResult('uci set easyproxy.'+k+'='+(v?1:0),'ok'); }
+    });
+  });
+
+  view.querySelectorAll('[data-plat]').forEach(function(sw){
+    sw.addEventListener('change', function(){
+      STATE.platform[sw.dataset.plat] = sw.checked;
+      const lab = sw.parentElement.querySelector('.sw-sub');
+      if(lab) lab.textContent = sw.checked ? '已独立走节点' : '跟默认规则';
+      logResult(sw.dataset.plat+'='+(sw.checked?'on':'off'),'ok');
+    });
+  });
+
+  view.querySelectorAll('[data-act]').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      const a = btn.dataset.act;
+
+      if(a==='toggle'){
+        act(btn,'处理中…',function(){
+          STATE.running = !STATE.running; render();
+          logResult(STATE.running ? 'cmd_start → runtime:running, 7890 listening, pid '+DATA.status.pid
+                                  : 'cmd_stop → runtime:stopped, bypass restored, router is direct again',
+                    STATE.running?'ok':'blank');
+        }); return;
+      }
+      if(a==='restart'){ act(btn,'重启中…',function(){ logResult('restart → runtime:running, 7890 listening','ok'); render(); }); return; }
+      if(a==='regen'){ act(btn,'生成中…',function(){ logResult('config generate → 2262 B, sing-box check rc=0','ok'); }); return; }
+      if(a==='doctor'){ act(btn,'自检中…',function(){ logResult('doctor → 10 ok, 0 warn, 0 fail','ok'); }); return; }
+      if(a==='site-test'){
+        act(btn,'测速中…',function(){
+          logResult('baidu 0.105s direct / qq 0.089s direct','ok');
+          logResult('google 0.447s shadowsocks[11] / github 0.519s shadowsocks[11]','ok');
+        }); return;
+      }
+      if(a==='testone' || a==='testall'){
+        const list = a==='testone' ? [btn] : Array.prototype.slice.call(view.querySelectorAll('[data-act="testone"]'));
+        list.forEach(function(b){
+          if(!b || b.dataset.busy==='1') return;
+          const old = b.innerHTML; b.dataset.busy='1'; b.disabled=true;
+          b.innerHTML='<span class="spinner"></span>测速中';
+          setTimeout(function(){ b.innerHTML=old; b.dataset.busy=''; b.disabled=false; }, 900);
+        });
+        setTimeout(function(){
+          logResult('node test → name "11" reachable, latency_ms 0（计时未生效）','blank');
+          logResult('域名解析到 36.141.40.13（国内入口），测的是入口可达性','bad');
+        }, 950);
+        return;
+      }
+      if(a==='delnode'){
+        confirmDialog('删除节点「11」？','删除后需重新导入，配置会立即重生成。', function(){
+          DATA.nodes.pop(); render(); logResult('uci delete easyproxy.@node[0] → 已删除并重生成配置','ok');
+        }); return;
+      }
+      if(a==='import'){
+        act(btn,'导入中…',function(){
+          logResult('import → name="示例节点JP", region=jp, group=auto-jp','ok');
+          logResult('（定稿后应有的行为：名称取 # 片段，地区取名称或域名）','blank');
+        }); return;
+      }
+      if(a==='importfile'){ logResult('打开文件选择器：.txt 每行一条链接','blank'); return; }
+      if(a==='mode-split' || a==='mode-global'){
+        act(btn,'切换中…',function(){
+          STATE.splitMode = (a==='mode-split') ? 'split' : 'global'; render();
+          logResult('routing.mode='+STATE.splitMode+' → 配置已重生成并 reload','ok');
+        }); return;
+      }
+      if(a==='autosel'){ act(btn,'处理中…',function(){ STATE.autoSelect=!STATE.autoSelect; render(); logResult('auto_select='+(STATE.autoSelect?1:0),'ok'); }); return; }
+      if(a==='subadd'){
+        const el = document.getElementById('su'), v = el ? el.value : '';
+        if(!v){ logResult('订阅地址为空，未提交','bad'); return; }
+        act(btn,'拉取中…',function(){ logResult('subscribe add → 解析到 1 个节点，已合并','ok'); }); return;
+      }
+      if(a==='subupd' || a==='subupdall'){ act(btn,'更新中…',function(){ logResult('subscribe update → 1 条订阅 / 1 节点 / 1.2s','ok'); }); return; }
+      if(a==='subdel'){ DATA.subs.pop(); render(); logResult('删除订阅 → 已移除','ok'); return; }
+      if(a==='set-save'){
+        act(btn,'保存中…',function(){
+          const p1=document.getElementById('p1'), p2=document.getElementById('p2'), iv=document.getElementById('iv6');
+          STATE.port = (p1&&p1.value)||STATE.port;
+          STATE.tproxy = (p2&&p2.value)||STATE.tproxy;
+          STATE.ipv6 = (iv&&iv.value)||STATE.ipv6;
+          render();
+          logResult('uci commit → port '+STATE.port+' / tproxy '+STATE.tproxy+' / ipv6 '+STATE.ipv6,'ok');
+          logResult('内核重启完成，端口已监听','ok');
+        }); return;
+      }
+      if(a==='set-auto'){ act(btn,'生成中…',function(){ logResult('ln -s /etc/init.d/easyproxy /etc/rc.d/S95easyproxy → 已生效','ok'); }); return; }
+      if(a==='trans'){
+        STATE.transparent = !STATE.transparent; render();
+        logResult(STATE.transparent ? 'transparent enabled → tproxy '+STATE.tproxy+' capture 已下发' : 'bypass restored: capture removed, router is direct again', STATE.transparent?'ok':'blank');
+        return;
+      }
+      if(a==='conn-refresh'){ act(btn,'读取中…',function(){ logResult('7 条 established 连接，peer 10.10.10.0/24','ok'); }); return; }
+      if(a==='conn-copy'){
+        logResult('http://10.10.10.13:'+STATE.port+' （HTTP/SOCKS 混合入站）','blank'); return;
+      }
+      if(a==='dns-save'){
+        const dl=document.getElementById('dl'), dr=document.getElementById('dr');
+        STATE.dnsLocal=(dl&&dl.value)||STATE.dnsLocal; STATE.dnsRemote=(dr&&dr.value)||STATE.dnsRemote;
+        act(btn,'应用中…',function(){
+          logResult('uci set routing.dns_local_server='+STATE.dnsLocal+' sync=1','ok');
+          logResult('uci set routing.dns_remote_server='+STATE.dnsRemote+' sync=1 → 内核 reload','ok');
+        }); return;
+      }
+      if(a==='dns-test'){
+        act(btn,'解析中…',function(){
+          logResult('baidu.com → 110.242.68.3 (local, 2ms)','ok');
+          logResult('google.com → 142.250.72.14 (remote, 41ms)','ok');
+        }); return;
+      }
+      if(a==='rs-one' || a==='rs-all'){
+        act(btn,'更新中…',function(){
+          STATE.rulesetReady = true;
+          logResult('ruleset update → geosite-cn 57617 B, geoip-cn 34259 B','ok');
+          logResult('ruleset verify → 2 ok, 0 fail; routing: split','ok');
+          render();
+        }); return;
+      }
+
+      logResult('['+a+'] 演示原型：真机由 easyproxy 命令执行','blank');
+    });
+  });
+}
+
+function confirmDialog(title, body, onOk){
+  const mask = document.createElement('div');
+  mask.style.cssText = 'position:fixed;inset:0;background:rgba(16,24,32,.4);z-index:50;display:flex;align-items:center;justify-content:center;padding:16px';
+  mask.innerHTML = '<div style="background:#fff;border-radius:5px;max-width:400px;width:100%;box-shadow:0 12px 40px rgba(0,0,0,.22)">'+
+    '<div style="padding:15px 16px 10px"><div style="font-size:14px;font-weight:700;margin-bottom:6px">'+esc(title)+'</div>'+
+    '<div style="font-size:12.5px;color:var(--muted);line-height:1.6">'+esc(body)+'</div></div>'+
+    '<div style="padding:10px 16px 14px;display:flex;gap:8px;justify-content:flex-end">'+
+    '<button class="btn" data-c="0">取消</button><button class="btn danger" data-c="1">确认执行</button></div></div>';
+  document.body.appendChild(mask);
+  mask.querySelectorAll('[data-c]').forEach(function(b){
+    b.addEventListener('click', function(){ const ok = b.dataset.c==='1'; mask.remove(); if(ok && onOk) onOk(); });
+  });
+  mask.addEventListener('click', function(e){ if(e.target === mask) mask.remove(); });
+}
+
+/* ================= 抽屉：四类定稿说明 ================= */
+function drawerHtml(){
+  return '<div class="d-q"><b>四类结构参照 Open-Box 面板的导航设定</b>（其前端文案里 <span class="mono">overview:"概览"</span> / <span class="mono">proxies:"代理"</span> / <span class="mono">connectionSettings:"连接设置"</span> 与本版一一对应）。这一版只做四类主干，其余功能按后续版本逐个加回。</div>'+
+
+  '<div class="d-sec">本版包含</div>'+
+  '<div class="d-item"><span class="k">1</span><span class="v"><b>概览</b>：网络状态四格 + 站点延时 + 运行细节 + 快捷操作</span></div>'+
+  '<div class="d-item"><span class="k">2</span><span class="v"><b>代理</b>：节点 / 节点分组 / 导入 / 订阅 / 分流策略 / 平台分流 / 分流实测</span></div>'+
+  '<div class="d-item"><span class="k">3</span><span class="v"><b>连接设置</b>：总开关 / 自启 / 失败闭合 / 两个端口 / IPv6 / 透明代理 / 当前连接</span></div>'+
+  '<div class="d-item"><span class="k">4</span><span class="v"><b>DNS</b>：国内与 DoH / DNS 分流 / FakeIP / 解析测试 / 规则集</span></div>'+
+
+  '<div class="d-sec">暂缓到后续版本</div>'+
+  '<div class="d-item"><span class="k">规则</span><span class="v">自定义规则编辑（规则集本身已在 DNS 页）</span></div>'+
+  '<div class="d-item"><span class="k">日志</span><span class="v">日志中心、级别筛选、导出</span></div>'+
+  '<div class="d-item"><span class="k">内核</span><span class="v">sing-box / dae 切换（dae 在固件上仍不可用）</span></div>'+
+  '<div class="d-item"><span class="k">更新</span><span class="v">版本检查、安装、回滚</span></div>'+
+  '<div class="d-item"><span class="k">备份</span><span class="v">备份 / 恢复 / 恢复出厂</span></div>'+
+  '<div class="d-item"><span class="k">系统</span><span class="v">诊断上报（每 15 天自动传坚果云）等杂项</span></div>'+
+
+  '<div class="d-sec">三条交互规范（沿用，未变）</div>'+
+  '<div class="d-item"><span class="k">防重入</span><span class="v">点击即置灰「处理中」，拿到响应或 60s 超时才恢复</span></div>'+
+  '<div class="d-item"><span class="k">结果回显</span><span class="v">每页底部「操作记录」带时间戳与原始返回，不依赖弹窗</span></div>'+
+  '<div class="d-item"><span class="k">自动刷新</span><span class="v">概览页 5 秒静默刷新运行状态 / 端口 / 规则集</span></div>'+
+
+  '<div class="d-sec">页面数据的真实来源</div>'+
+  '<div class="d-item"><span class="k">版本</span><span class="v">0.8.13 (Stage 7)，sing-box 1.14.4-openbox-45</span></div>'+
+  '<div class="d-item"><span class="k">运行</span><span class="v">pid 37118，7890 listening，uptime 6m14s</span></div>'+
+  '<div class="d-item"><span class="k">节点</span><span class="v">名称「11」、地区「其他」、分组 auto-other、latency 0</span></div>'+
+  '<div class="d-item"><span class="k">分流</span><span class="v">baidu/qq/taobao → direct；google/github → shadowsocks[11]</span></div>'+
+  '<div class="d-item"><span class="k">流量</span><span class="v">rx 113884659 / tx 114608533，日志 7267 B</span></div>'+
+
+  '<div class="d-q" style="margin-top:14px;margin-bottom:0">四类结构确认后，它就是面板的验收基线；要加页只在对应类里加，不再改主菜单。</div>';
+}
+
+/* ================= 启动 ================= */
+document.getElementById('drawerBody').innerHTML = drawerHtml();
+const drawerEl = document.getElementById('drawer');
+const maskEl = document.getElementById('mask');
+document.getElementById('drawerOpen').addEventListener('click', function(){ drawerEl.classList.add('on'); maskEl.classList.add('on'); });
+function closeDrawer(){ drawerEl.classList.remove('on'); maskEl.classList.remove('on'); }
+document.getElementById('drawerClose').addEventListener('click', closeDrawer);
+maskEl.addEventListener('click', closeDrawer);
+document.addEventListener('keydown', function(e){ if(e.key === 'Escape') closeDrawer(); });
+
+document.getElementById('nav').addEventListener('click', function(e){
+  const t = e.target.closest('[data-page]');
+  if(!t) return;
+  CUR = t.dataset.page;
+  window.scrollTo(0, 0);
+  render();
+});
+
+setInterval(function(){
+  if(CUR !== 'overview' || !STATE.running) return;
+  const el = document.querySelector('#view .bar span[style*="margin-left"]');
+  if(el) el.textContent = '最近刷新 ' + nowStr();
+}, 5000);
+
+CUR = (location.hash || '').replace('#','') || 'overview';
+if(!PAGES.some(function(p){ return p.id === CUR; })) CUR = 'overview';
+render();
+
+</script>
+</body>
+</html>
