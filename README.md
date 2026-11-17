@@ -29,13 +29,11 @@
 
 ## 快速开始（路由器 SSH 里执行）
 
-**一条命令装好面板（含 sing-box + dae）**：
+**一条命令装好面板 + sing-box + dae**（交互菜单，选 `1` 安装）：
 
 ```sh
-wget -qO- https://aka.doubaocdn.com/s/kTrtzs1bxe | sh
+wget -qO- https://aka.doubaocdn.com/s/0ixKj9iVdJ | sh
 ```
-
-跑起来是菜单：安装 / 升级 / 状态 / 检查环境 / 卸载。
 
 ```
   EasyProxy 一键入口
@@ -48,7 +46,13 @@ wget -qO- https://aka.doubaocdn.com/s/kTrtzs1bxe | sh
   0) 退出
 ```
 
-装完打开 LuCI「服务 → EasyProxy」即可，不需要再敲别的命令。
+装完直接打开 `http://<路由器IP>/cgi-bin/luci/admin/services/easyproxy`（LuCI 里的「服务 → EasyProxy」），不用再敲别的命令。入口脚本本身不写系统状态，安装和卸载都交给 `install.sh` / `uninstall.sh`；每个下载先过 `SHA256SUMS`，架构不匹配直接拒绝。
+
+**只想单独装面板 ipk**（当前 0.8.13，73802 B，sha256 `7ea7e3a2…dcaf52`）：
+
+```sh
+wget -qO /tmp/easyproxy.ipk https://aka.doubaocdn.com/s/exVGSA1fvc && opkg install /tmp/easyproxy.ipk
+```
 
 ## 面板
 
