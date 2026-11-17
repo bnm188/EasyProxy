@@ -789,6 +789,52 @@ grep -q 'another proxy is already active' "$SB/out" && ok "提示已有其他代
 grep -q 'openbox' "$SB/out" && ok "提示里指出具体的冲突服务名" || no "提示里指出具体的冲突服务名" "$(cat "$SB/out")"
 rm -rf "$SB/bin2"
 
+# --- diag: WebDAV config handed to the installer ------------------------
+reset
+rm -f "$EP_ROOT/etc/easyproxy/diag.pass"
+sh "$INSTALL" install --diag-webdav 'https://dav.example.com/dav/EP/' \
+	--diag-user 'ops@example.com' --diag-pass 'sekret123' > "$SB/out" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && ok "diag：带参数安装退出码 0" || no "diag：带参数安装退出码 0" "rc=$rc $(cat "$SB/out")"
+[ "$(cat "$EP_ROOT/etc/easyproxy/diag.pass" 2>/dev/null)" = "sekret123" ] \
+	&& ok "diag：应用密码写入 /etc/easyproxy/diag.pass" \
+	|| no "diag：应用密码写入 /etc/easyproxy/diag.pass" "$(ls -l "$EP_ROOT/etc/easyproxy" 2>/dev/null)"
+[ "$(stat -c %a "$EP_ROOT/etc/easyproxy/diag.pass" 2>/dev/null)" = "600" ] \
+	&& ok "diag：密码文件权限为 600" \
+	|| no "diag：密码文件权限为 600" "$(stat -c %a "$EP_ROOT/etc/easyproxy/diag.pass" 2>/dev/null)"
+grep -q 'set easyproxy.main.diag_webdav=https://dav.example.com/dav/EP/' "$EP_TEST_LOG/uci.log" 2>/dev/null \
+	&& ok "diag：写入 WebDAV 地址" || no "diag：写入 WebDAV 地址" "$(cat "$EP_TEST_LOG/uci.log" 2>/dev/null)"
+grep -q 'set easyproxy.main.diag_user=ops@example.com' "$EP_TEST_LOG/uci.log" 2>/dev/null \
+	&& ok "diag：写入 WebDAV 账号" || no "diag：写入 WebDAV 账号" "$(cat "$EP_TEST_LOG/uci.log" 2>/dev/null)"
+grep -q 'commit easyproxy' "$EP_TEST_LOG/uci.log" 2>/dev/null \
+	&& ok "diag：提交 uci 变更" || no "diag：提交 uci 变更" "$(cat "$EP_TEST_LOG/uci.log" 2>/dev/null)"
+grep -q 'sekret123' "$SB/out" && no "diag：终端输出不回显密码" "$(cat "$SB/out")" || ok "diag：终端输出不回显密码"
+grep -q 'sekret123' "$EP_TEST_LOG/uci.log" 2>/dev/null \
+	&& no "diag：密码不写进 uci" "$(cat "$EP_TEST_LOG/uci.log" 2>/dev/null)" || ok "diag：密码不写进 uci"
+
+# password may come from a file so that `history`/`ps` never hold it
+reset
+rm -f "$EP_ROOT/etc/easyproxy/diag.pass"
+printf '%s' 'from-file' > "$SB/pw"
+sh "$INSTALL" install --diag-webdav 'https://dav.example.com/dav/EP/' \
+	--diag-user 'ops@example.com' --diag-pass-file "$SB/pw" > "$SB/out" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && ok "diag：--diag-pass-file 安装退出码 0" || no "diag：--diag-pass-file" "rc=$rc $(cat "$SB/out")"
+[ "$(cat "$EP_ROOT/etc/easyproxy/diag.pass" 2>/dev/null)" = "from-file" ] \
+	&& ok "diag：从文件读取应用密码" || no "diag：从文件读取应用密码"
+
+# without the flags nothing is written - default behaviour unchanged
+reset
+rm -rf "$EP_ROOT/etc/easyproxy"
+sh "$INSTALL" > "$SB/out" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && ok "diag：不带参数照常安装" || no "diag：不带参数照常安装" "rc=$rc $(cat "$SB/out")"
+[ ! -f "$EP_ROOT/etc/easyproxy/diag.pass" ] \
+	&& ok "diag：不带参数不创建密码文件" || no "diag：不带参数不创建密码文件"
+
+# partial flags must fail loudly instead of installing half-configured
+reset
+sh "$INSTALL" install --diag-webdav 'https://dav.example.com/dav/EP/' > "$SB/out" 2>&1; rc=$?
+[ "$rc" -ne 0 ] && ok "diag：只给地址不给账号密码时报错退出" || no "diag：参数不全应报错" "rc=$rc"
+grep -q 'diag-user' "$SB/out" && ok "diag：报错点名缺失的参数" || no "diag：报错点名缺失的参数" "$(cat "$SB/out")"
+
 say ""
 say "结果：$PASS 通过，$FAIL 失败"
 [ "$FAIL" -eq 0 ] || exit 1

@@ -38,6 +38,10 @@ RPCD="${EP_RPCD:-/etc/init.d/rpcd}"
 LUCI_INDEX="${EP_LUCI_CACHE:-/tmp/luci-indexcache}"
 ROOT="${EP_ROOT:-/}"
 STATE="${EP_STATE_DIR:-/etc/easyproxy}"
+DIAG_WEBDAV=""
+DIAG_USER=""
+DIAG_PASS=""
+DIAG_PASS_FILE=""
 
 SING_BOX_VER="${EP_SING_BOX_VER:-1.14.4}"
 SING_BOX_BASE="${EP_SING_BOX_BASE:-https://github.com/SagerNet/sing-box/releases/download/v${SING_BOX_VER}}"
@@ -65,6 +69,12 @@ EasyProxy installer
   install.sh --no-sing-box   install EasyProxy and dae only
   install.sh --no-dae        install EasyProxy and sing-box only
   install.sh --no-engine     install EasyProxy only
+  install.sh --diag-webdav URL --diag-user ACCOUNT --diag-pass PASS
+                             preconfigure the diagnostic upload target (WebDAV):
+                             the folder URL, the account and the app password
+  install.sh ... --diag-pass-file FILE
+                             same, but read the app password from FILE so the
+                             password never lands in shell history or `ps`
   install.sh upgrade         compare all three components with the newest release,
                              print the version changes and upgrade the ones that differ
   install.sh upgrade --only sing-box|dae|package
@@ -87,6 +97,28 @@ EOF
 info() { printf '%s\n' "$*"; }
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 
+# Write the diagnostic-upload credentials the operator passed on the command
+# line. The password goes to a 600 file (the CLI reads it from there and hands
+# it to curl through netrc), never into uci, so it cannot leak through
+# `uci show` or the packaged config.
+configure_diag() {
+	[ -n "$DIAG_WEBDAV" ] || return 0
+	if [ -z "$DIAG_PASS" ]; then
+		DIAG_PASS=$(cat "$DIAG_PASS_FILE" 2>/dev/null)
+		[ -n "$DIAG_PASS" ] || die "--diag-pass-file is empty: $DIAG_PASS_FILE"
+	fi
+	uci set easyproxy.main.diag_webdav="$DIAG_WEBDAV" 2>/dev/null \
+		|| info "diag: could not set easyproxy.main.diag_webdav (is uci available?)"
+	uci set easyproxy.main.diag_user="$DIAG_USER" 2>/dev/null \
+		|| info "diag: could not set easyproxy.main.diag_user"
+	uci commit easyproxy 2>/dev/null || true
+	mkdir -p "$ROOT/etc/easyproxy" || die "cannot create $ROOT/etc/easyproxy"
+	( umask 077; printf '%s' "$DIAG_PASS" > "$ROOT/etc/easyproxy/diag.pass" ) \
+		|| die "cannot write $ROOT/etc/easyproxy/diag.pass"
+	chmod 600 "$ROOT/etc/easyproxy/diag.pass" 2>/dev/null || true
+	info "diag upload: configured (WebDAV $DIAG_WEBDAV, account $DIAG_USER)"
+}
+
 while [ $# -gt 0 ]; do
 	case "$1" in
 		install) ACTION=install ;;
@@ -102,6 +134,22 @@ while [ $# -gt 0 ]; do
 			[ $# -ge 2 ] || die "--only needs a component: package, sing-box or dae"
 			ONLY="$2"; shift ;;
 		--only=*) ONLY="${1#--only=}" ;;
+		--diag-webdav)
+			[ $# -ge 2 ] || die "--diag-webdav needs a URL"
+			DIAG_WEBDAV="$2"; shift ;;
+		--diag-webdav=*) DIAG_WEBDAV="${1#--diag-webdav=}" ;;
+		--diag-user)
+			[ $# -ge 2 ] || die "--diag-user needs the WebDAV account"
+			DIAG_USER="$2"; shift ;;
+		--diag-user=*) DIAG_USER="${1#--diag-user=}" ;;
+		--diag-pass)
+			[ $# -ge 2 ] || die "--diag-pass needs the app password"
+			DIAG_PASS="$2"; shift ;;
+		--diag-pass=*) DIAG_PASS="${1#--diag-pass=}" ;;
+		--diag-pass-file)
+			[ $# -ge 2 ] || die "--diag-pass-file needs a path"
+			DIAG_PASS_FILE="$2"; shift ;;
+		--diag-pass-file=*) DIAG_PASS_FILE="${1#--diag-pass-file=}" ;;
 		-h|--help) usage; exit 0 ;;
 		*) usage >&2; exit 2 ;;
 	esac
@@ -112,6 +160,20 @@ case "$ONLY" in
 	''|package|sing-box|dae) : ;;
 	*) die "--only accepts package, sing-box or dae (got $ONLY)" ;;
 esac
+
+# Diagnostic upload can be preconfigured at install time, which is what a
+# machine that is handed to someone else needs: the operator types it once,
+# here, and the panel/host never has to be touched again.
+if [ -n "$DIAG_WEBDAV$DIAG_USER$DIAG_PASS$DIAG_PASS_FILE" ]; then
+	[ -n "$DIAG_WEBDAV" ] \
+		|| die "--diag-webdav (the WebDAV folder URL) is required with --diag-user/--diag-pass"
+	[ -n "$DIAG_USER" ] \
+		|| die "--diag-user (the WebDAV account) is required with --diag-webdav/--diag-pass"
+	[ -n "$DIAG_PASS$DIAG_PASS_FILE" ] \
+		|| die "one of --diag-pass or --diag-pass-file is required with --diag-webdav/--diag-user"
+	[ -z "$DIAG_PASS_FILE" ] || [ -r "$DIAG_PASS_FILE" ] \
+		|| die "--diag-pass-file: cannot read $DIAG_PASS_FILE"
+fi
 
 # --- fetch helpers ---------------------------------------------------------
 fetch_text() {
@@ -1418,6 +1480,7 @@ case "$ACTION" in
 	upgrade) do_upgrade ;;
 	install)
 		do_install
+		configure_diag
 		cat <<'EOF'
 
 Next steps:
