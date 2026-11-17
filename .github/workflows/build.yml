@@ -12,6 +12,10 @@ on:
         description: "要发布的版本号（必须与 package/easyproxy/Makefile 的 PKG_VERSION 相同，例如 0.8.0）；留空则只构建不发布"
         required: false
         default: ""
+  schedule:
+    # 每天 03:00 UTC（北京时间 11:00）跑一次体检构建：编译、跑全套测试、上传 artifact，
+    # 不发版（定时运行没有 .release-request）。GitHub 的定时任务可能延迟 5~20 分钟。
+    - cron: '0 3 * * *'
 
 permissions:
   contents: write
@@ -20,6 +24,14 @@ jobs:
   build:
     name: Build ImmortalWrt 25.12.2 packages and kernels
     runs-on: ubuntu-24.04
+
+    # Two pushes to the same ref no longer build or publish at the same time.
+    # cancel-in-progress stays false on purpose: a run that is already creating a
+    # release must not be killed halfway, and a queued second run would otherwise
+    # race it for the same tag.
+    concurrency:
+      group: easyproxy-build-${{ github.ref }}
+      cancel-in-progress: false
 
     steps:
       # Release notes are generated from the commits since the previous release,
@@ -52,11 +64,15 @@ jobs:
             TAG="v${INPUT_VERSION}"
           elif [ -f .release-request ]; then
             REQ="$(tr -d '[:space:]' < .release-request)"
-            if [ -n "$REQ" ]; then
-              case "$REQ" in
-                v*) TAG="$REQ" ;;
-                *) TAG="v$REQ" ;;
-              esac
+            REQ="${REQ#v}"
+            # A leftover request from an earlier or aborted release must not fire
+            # again: it is only honoured when it names the version this tree
+            # actually builds. Anything else is reported and ignored.
+            VER="$(sed -n 's/^PKG_VERSION:=//p' package/easyproxy/Makefile | head -1)"
+            if [ -n "$REQ" ] && [ "$REQ" = "$VER" ]; then
+              TAG="v$REQ"
+            elif [ -n "$REQ" ]; then
+              echo "::warning title=stale release request::.release-request asks for $REQ but PKG_VERSION is $VER; building only, and the stale file will be removed"
             fi
           fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
@@ -257,6 +273,30 @@ jobs:
       # artifacts, which is exactly what kept releases from happening. A real
       # push by the maintainer does start the build, so a committed
       # .release-request file is the path an automation uses to publish.
+      # Release immutability is a repository-level GitHub switch this workflow
+      # cannot turn on with its own token. It is read here and reported as it
+      # really is, so nobody can claim platform protection that is not on. The
+      # publish step below stays conservative either way: an existing release is
+      # never overwritten, and the same version is never published twice.
+      - name: Report release immutability
+        if: steps.intent.outputs.tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -uo pipefail
+          SETTING="$(gh api "repos/$GITHUB_REPOSITORY" --jq '.immutable // empty' 2>/dev/null || true)"
+          case "$SETTING" in
+            true)
+              echo "平台级不可变发布：已启用（已发布版本的资产不可替换、不可删除）"
+              ;;
+            false)
+              echo "::warning title=immutable releases off::平台级不可变发布：未启用。请在仓库 Settings 里打开 Immutable releases；本次发布仍按不可变处理（重复发同一版本会直接失败）"
+              ;;
+            *)
+              echo "::warning title=immutable releases unknown::读不到平台级不可变发布开关（字段不可用或权限不足），按未启用处理；脚本自身仍拒绝覆盖任何已发布版本"
+              ;;
+          esac
+
       - name: Publish GitHub release
         if: steps.intent.outputs.tag != ''
         env:
@@ -402,3 +442,30 @@ jobs:
               || echo "::warning title=tag delete::tag $tag was already gone"
           done < to-delete.txt
           echo "pruned $(grep -c . to-delete.txt 2>/dev/null || echo 0) release(s)"
+
+      # The request file is a one-shot trigger, so it is consumed here instead of
+      # being left for the next ordinary commit to fire again. It is kept when
+      # the release did not actually appear, so a failed publish can be retried
+      # by re-running the workflow without editing the repo again. A push made
+      # with GITHUB_TOKEN does not start another workflow run, which is why this
+      # cleanup commit cannot re-trigger the build.
+      - name: Clear the release request
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.intent.outputs.tag }}
+        run: |
+          set -uo pipefail
+          [ -f .release-request ] || { echo "no .release-request to clear"; exit 0; }
+          if [ -n "${TAG:-}" ]; then
+            if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              echo "release $TAG is not published; keeping .release-request so the run can be retried"
+              exit 0
+            fi
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm -q .release-request
+          git commit -q -m "chore(release): consume .release-request${TAG:+ for $TAG}"
+          git push origin "HEAD:main" || { echo "::error title=cleanup push failed::cannot remove .release-request from main"; exit 1; }
+          echo "removed .release-request from main"
