@@ -196,6 +196,8 @@ textarea{font-family:var(--mono);font-size:12px;resize:vertical;line-height:1.6}
 .ov-page .cell-k{font-size:11.5px;color:#5e6d7d;letter-spacing:.02em}
 .ov-page .cell-v{font-size:24px;font-weight:600;letter-spacing:-.4px;margin-top:7px;line-height:1.25}
 .ov-page .cell-x{margin-top:4px;font-size:11.5px;color:#7e8c9b}
+.ov-page .ov-clock{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;color:#5e6d7d;
+ letter-spacing:.01em;font-variant-numeric:tabular-nums;margin-left:auto}
 .ov-page .kpi-bar{margin-top:10px;height:6px;border-radius:99px;background:rgba(24,44,72,.10);overflow:hidden;position:relative}
 .ov-page .kpi-bar i{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,#19a974,#3ecf8e);
  transition:width 1.15s cubic-bezier(.22,.8,.2,1),background .9s linear;position:relative;overflow:hidden}
@@ -406,10 +408,11 @@ function pageOverview(){
     cell('系统存储', '37%', '875.1 MB')
   ].join('');
 
+  const now = fmtClock();
   return '<div class="ov-head"><h1 class="page-title">概览</h1>'+
       '<span class="'+(run?'ov-good':'ov-bad')+'">'+(run?'● 运行中':'● 已停止')+'</span>'+
       '<span class="mono">'+(run?'pid '+s.pid+' · '+s.uptime+' · 7890 listening':'无进程')+'</span>'+
-      '<span class="mono sp">最近刷新 '+nowStr()+'</span></div>'+
+      '<span class="ov-clock" id="ep-clock">'+now+'</span></div>'+
 
     '<div class="card"><div class="card-hd"><h3>实时状态</h3><span class="hd-note">硬件与节点流量 · 每 1.5 秒刷新（演示数据）</span></div><div class="grid">'+kpi+'</div></div>'+
 
@@ -938,6 +941,25 @@ function syncTop(){
 }
 
 /* ================= 交互 ================= */
+var CLOCK=null;
+function fmtClock(){
+  var d=new Date();
+  var wk=['周日','周一','周二','周三','周四','周五','周六'][d.getDay()];
+  var p=function(n){ return (n<10?'0':'')+n; };
+  return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+' '+wk+' '+
+         p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());
+}
+function startClock(){
+  if(CLOCK){ clearInterval(CLOCK); CLOCK=null; }
+  var el=document.getElementById('ep-clock'); if(!el) return;
+  el.textContent=fmtClock();
+  CLOCK=setInterval(function(){
+    var e=document.getElementById('ep-clock');
+    if(!e){ clearInterval(CLOCK); CLOCK=null; return; }
+    e.textContent=fmtClock();
+  },1000);
+}
+
 var KPI_TIMER=null, KPI_T=0;
 function stopKpi(){ if(KPI_TIMER){ clearInterval(KPI_TIMER); KPI_TIMER=null; } }
 function startKpi(){
@@ -978,6 +1000,7 @@ function startKpi(){
 }
 
 function bindPage(){
+  startClock();
   startKpi();
   Array.prototype.forEach.call(document.querySelectorAll('[data-sub]'), function(b){
     b.addEventListener('click', function(){ SUB = b.dataset.sub; render(); });
