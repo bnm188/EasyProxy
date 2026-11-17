@@ -46,8 +46,8 @@ body{
 .nav-in{max-width:1200px;margin:0 auto;display:flex;overflow-x:auto;scrollbar-width:none}
 .nav-in::-webkit-scrollbar{display:none}
 .tab{
-  appearance:none;background:none;border:0;border-bottom:2px solid transparent;padding:10px 12px;
-  font-size:13px;color:var(--muted);cursor:pointer;white-space:nowrap;font-family:inherit;
+  appearance:none;background:none;border:0;border-bottom:2px solid transparent;padding:11px 15px;
+  font-size:15px;color:var(--muted);cursor:pointer;white-space:nowrap;font-family:inherit;
   transition:color .12s,border-color .12s;
 }
 .tab:hover{color:var(--text);background:#f7f9fb}
@@ -245,7 +245,7 @@ const STATE = {
   port: 7890, tproxy: 7891, ipv6: 'direct', failClose: true, autoStart: false,
   splitMode: 'split', autoSelect: false,
   platform: { youtube: true, netflix: true, tiktok: false, telegram: true },
-  diagAuto: true, diagMask: true
+  diagAuto: true, diagMask: true, autoRecover: true
 };
 
 function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
@@ -496,12 +496,42 @@ function pageDns(){
     resultBox('r-dn');
 }
 
+/* ================= 页 5：设置 ================= */
+function pageSettings(){
+  return '<div class="page-head"><h1 class="page-title">设置</h1>'+
+    '<p class="page-desc">系统级开关、内核版本、备份恢复与诊断上报</p></div>'+
+
+    '<div class="card"><div class="card-hd"><h3>常规</h3><span class="hd-note">/etc/config/easyproxy</span></div><div class="card-bd">'+
+      '<label class="switch-row"><input type="checkbox" class="sw" data-sw="autoStart" '+(STATE.autoStart?'checked':'')+'><span><span class="sw-lab">开机自启</span><span class="sw-sub">写入 /etc/rc.d/S95easyproxy</span></span></label>'+
+      '<label class="switch-row"><input type="checkbox" class="sw" data-sw="autoRecover" '+(STATE.autoRecover?'checked':'')+'><span><span class="sw-lab">内核异常自动恢复</span><span class="sw-sub">内核退出后 10 秒内自动重启一次，连续失败则停止重试并记录日志</span></span></label>'+
+    '</div></div>'+
+
+    '<div class="card"><div class="card-hd"><h3>内核与版本</h3><span class="hd-note">当前 0.8.13</span></div>'+
+      '<div class="grid">'+
+        cell('面板版本','0.8.13','Stage 7 · package/easyproxy')+
+        cell('内核','sing-box','1.14.4-openbox-45')+
+        cell('更新通道','稳定','stable · 手动检查')+
+        cell('配置校验','通过','sing-box check rc=0')+
+      '</div><div class="bar"><button class="btn" data-act="chk-update">检查更新</button></div></div>'+
+
+    '<div class="card"><div class="card-hd"><h3>备份与恢复</h3><span class="hd-note">uci + 节点 + 规则集</span></div>'+
+      '<div class="card-bd"><div class="hint">备份包含全部 uci 配置与节点凭据；恢复后自动重生成配置并重启内核。</div></div>'+
+      '<div class="bar"><button class="btn primary" data-act="cfg-backup">导出备份</button><button class="btn" data-act="cfg-restore">从文件恢复</button><button class="btn" data-act="cfg-reset">重置全部配置</button></div></div>'+
+
+    '<div class="card"><div class="card-hd"><h3>诊断上报</h3><span class="hd-note">坚果云 · 每 15 天一次</span></div><div class="card-bd">'+
+      '<label class="switch-row"><input type="checkbox" class="sw" data-sw="diagAuto" '+(STATE.diagAuto?'checked':'')+'><span><span class="sw-lab">自动上报</span><span class="sw-sub">每 15 天打包一次诊断日志，上传到坚果云 EasyProxy 目录</span></span></label>'+
+      '<label class="switch-row"><input type="checkbox" class="sw" data-sw="diagMask" '+(STATE.diagMask?'checked':'')+'><span><span class="sw-lab">脱敏</span><span class="sw-sub">上传前抹除节点地址、密码与订阅令牌</span></span></label>'+
+    '</div><div class="bar"><button class="btn" data-act="diag-now">立即上报一次</button></div></div>'+
+    resultBox('r-st');
+}
+
 /* ================= 导航 ================= */
 const PAGES = [
   { id:'overview', t:'概览',     fn:pageOverview },
   { id:'proxy',    t:'代理',     fn:pageProxy },
   { id:'conn',     t:'连接设置', fn:pageConn },
-  { id:'dns',      t:'DNS',      fn:pageDns }
+  { id:'dns',      t:'DNS',      fn:pageDns },
+  { id:'settings', t:'设置',     fn:pageSettings }
 ];
 let CUR = 'overview';
 
@@ -536,6 +566,9 @@ function bindPage(){
         logResult('easyproxy.main.enabled='+(v?1:0)+' → '+(v?'内核已启动':'内核已停止'), v?'ok':'blank');
       } else if(k==='failClose'){ STATE.failClose = v; logResult('failClose='+(v?1:0),'ok'); }
       else if(k==='autoStart'){ STATE.autoStart = v; logResult('自启='+(v?'on':'off'),'ok'); }
+      else if(k==='autoRecover'){ STATE.autoRecover = v; logResult('watchdog.auto_restart='+(v?1:0),'ok'); }
+      else if(k==='diagAuto'){ STATE.diagAuto = v; logResult('diag.auto='+(v?1:0)+', interval=15d','ok'); }
+      else if(k==='diagMask'){ STATE.diagMask = v; logResult('diag.mask='+(v?1:0),'ok'); }
       else if(k==='transparent'){ STATE.transparent = v; render(); logResult('transparent='+(v?1:0)+' → '+(v?'capture 规则已下发':'capture 规则已移除，恢复直连'), 'ok'); }
       else if(k==='dnsSplit'){ STATE.dnsSplit = v; logResult('DNS 分流='+(v?'on':'off'),'ok'); }
       else if(k==='dnsFake'){ STATE.dnsFake = v; logResult('FakeIP='+(v?'on':'off'),'ok'); }
@@ -630,6 +663,11 @@ function bindPage(){
         logResult(STATE.transparent ? 'transparent enabled → tproxy '+STATE.tproxy+' capture 已下发' : 'bypass restored: capture removed, router is direct again', STATE.transparent?'ok':'blank');
         return;
       }
+      if(a==='chk-update'){ act(btn,'检查中…',function(){ logResult('release check → v0.8.13 为最新，无可用更新','ok'); }); return; }
+      if(a==='cfg-backup'){ act(btn,'导出中…',function(){ logResult('export → easyproxy-config-0.8.13.tar.gz, 1.4 KB, 含全部 uci 段','ok'); }); return; }
+      if(a==='cfg-restore'){ logResult('打开文件选择器：选择 .tar.gz 备份包','blank'); return; }
+      if(a==='cfg-reset'){ confirmDialog('重置全部配置？','节点、订阅与分流规则都会被清除，路由器恢复直连。', function(){ DATA.nodes.length = 0; STATE.running = false; render(); logResult('reset → 配置已清空，内核已停止','bad'); }); return; }
+      if(a==='diag-now'){ act(btn,'上报中…',function(){ logResult('diag upload → dav/EasyProxy/2026-11-18-101013.tar.gz, 18.4 KB','ok'); }); return; }
       if(a==='conn-refresh'){ act(btn,'读取中…',function(){ logResult('7 条 established 连接，peer 10.10.10.0/24','ok'); }); return; }
       if(a==='conn-copy'){
         logResult('http://10.10.10.13:'+STATE.port+' （HTTP/SOCKS 混合入站）','blank'); return;
