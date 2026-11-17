@@ -2,6 +2,7 @@
 'require fs';
 'require uci';
 'require ui';
+'require baseclass';
 
 // The panel's only exec target is this CLI. The ACL next to it grants exec on
 // exactly this path and nothing else: no /bin/sh, no helper script. A generic
@@ -887,21 +888,18 @@ function pageSettings(data) {
 	]);
 }
 
-// LuCI's loader instantiates a module it receives, and refuses anything that is
-// not a constructor ("factory yields invalid constructor"). Returning a plain
-// object breaks the panel on that loader while working on the older one. A
-// function with the same members, aliased as its own prototype, satisfies both:
-// `new App()` yields an instance carrying every member, and `app.loadStatus()`
-// keeps working for views that use the module directly.
-var App = function App() {};
+// This module has to be a class: luci.js (>= 27.x) checks Class.isSubclass()
+// on whatever a factory returns and then instantiates it with `new`. A plain
+// object or a bare function therefore throws "factory yields invalid
+// constructor". Views keep calling the members as app.xxx() — they get the
+// instance that the loader builds.
+return baseclass.extend({
+	injectStyle: injectStyle,
+	run: run,
+	cliJson: cliJson,
+	loadStatus: loadStatus,
 
-App.prototype = App;
-
-App.injectStyle = injectStyle;
-App.run = run;
-App.cliJson = cliJson;
-App.loadStatus = loadStatus;
-App.loadCfg = function () {
+	loadCfg: function () {
 		uci.unload('easyproxy');
 		return uci.load('easyproxy').then(function () {
 			return {
@@ -922,18 +920,16 @@ App.loadCfg = function () {
 				ipv6_policy: uci.get('easyproxy', 'transparent', 'ipv6_policy')
 			};
 		});
-	};
+	},
 
-App.pageOverview = pageOverview;
-App.pageNodes = pageNodes;
-App.pageSubscription = pageSubscription;
-App.pageSplit = pageSplit;
-App.pageEngines = pageEngines;
-App.pageDns = pageDns;
-App.pageRules = pageRules;
-App.pageLogs = pageLogs;
-App.pageBackup = pageBackup;
-App.pageSettings = pageSettings;
-
-return App;
-
+	pageOverview: pageOverview,
+	pageNodes: pageNodes,
+	pageSubscription: pageSubscription,
+	pageSplit: pageSplit,
+	pageEngines: pageEngines,
+	pageDns: pageDns,
+	pageRules: pageRules,
+	pageLogs: pageLogs,
+	pageBackup: pageBackup,
+	pageSettings: pageSettings
+});
