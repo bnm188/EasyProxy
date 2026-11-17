@@ -40,6 +40,11 @@ body{
 .brand-sub{font-size:11px;color:var(--muted2);white-space:nowrap}
 .top-right{margin-left:auto;display:flex;align-items:center;gap:8px}
 .pill{display:inline-flex;align-items:center;gap:6px;font-size:12px;padding:4px 9px;border-radius:3px;border:1px solid var(--line);background:#fafbfc;color:var(--muted);white-space:nowrap}
+.top-clock{display:inline-flex;align-items:center;font-family:ui-monospace,Menlo,Consolas,monospace;
+  font-size:12.5px;font-weight:500;color:#33445a;background:rgba(255,255,255,.55);
+  border:1px solid rgba(120,145,175,.28);padding:5px 11px;border-radius:99px;
+  font-variant-numeric:tabular-nums;letter-spacing:.01em;white-space:nowrap}
+.top-clock b{font-weight:600;color:#7d8b9b;margin-right:7px}
 .dot{width:7px;height:7px;border-radius:50%;background:var(--ok)}
 .dot.off{background:var(--muted2)}
 .mono{font-family:var(--mono);font-size:11.5px}
@@ -265,8 +270,7 @@ textarea{font-family:var(--mono);font-size:12px;resize:vertical;line-height:1.6}
       <span class="brand-sub">LuCI 控制台 · v0.8.13</span>
     </div>
     <div class="top-right">
-      <span class="pill" id="pill-run"><span class="dot"></span>运行中</span>
-      <span class="pill mono" id="pill-pid">pid 37118 · up 6m14s</span>
+      <span class="top-clock" id="top-clock">北京时间 --</span>
     </div>
   </div>
 </header>
@@ -934,30 +938,32 @@ function applySub(){
   });
 }
 function syncTop(){
-  const pill = document.getElementById('pill-run');
-  if(STATE.running){ pill.innerHTML = '<span class="dot"></span>运行中'; pill.style.color=''; }
-  else { pill.innerHTML = '<span class="dot off"></span>已停止'; pill.style.color='var(--muted)'; }
-  document.getElementById('pill-pid').textContent = STATE.running ? ('pid '+DATA.status.pid+' · up '+DATA.status.uptime) : 'no process';
+  const dot = document.getElementById('pill-run');
+  if(dot){ dot.style.display='none'; }
 }
 
 /* ================= 交互 ================= */
 var CLOCK=null;
-function fmtClock(){
-  var d=new Date();
-  var wk=['周日','周一','周二','周三','周四','周五','周六'][d.getDay()];
+function fmtClock(withLabel){
+  // 固定按 UTC+8 计算，任何设备、任何时区打开都显示真实北京时间
+  var d=new Date(Date.now()+8*3600000);
+  var wk=['周日','周一','周二','周三','周四','周五','周六'][d.getUTCDay()];
   var p=function(n){ return (n<10?'0':'')+n; };
-  return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+' '+wk+' '+
-         p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());
+  var t=d.getUTCFullYear()+'-'+p(d.getUTCMonth()+1)+'-'+p(d.getUTCDate())+' '+wk+' '+
+         p(d.getUTCHours())+':'+p(d.getUTCMinutes())+':'+p(d.getUTCSeconds());
+  return withLabel ? '<b>北京时间</b>'+t : t;
 }
 function startClock(){
   if(CLOCK){ clearInterval(CLOCK); CLOCK=null; }
-  var el=document.getElementById('ep-clock'); if(!el) return;
-  el.textContent=fmtClock();
-  CLOCK=setInterval(function(){
-    var e=document.getElementById('ep-clock');
-    if(!e){ clearInterval(CLOCK); CLOCK=null; return; }
-    e.textContent=fmtClock();
-  },1000);
+  var tick=function(){
+    var top=document.getElementById('top-clock');
+    var ep=document.getElementById('ep-clock');
+    if(top) top.innerHTML=fmtClock(true);
+    if(ep) ep.textContent=fmtClock(false);
+    if(!top && !ep){ clearInterval(CLOCK); CLOCK=null; }
+  };
+  tick();
+  CLOCK=setInterval(tick,1000);
 }
 
 var KPI_TIMER=null, KPI_T=0;
