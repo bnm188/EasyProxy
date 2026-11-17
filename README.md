@@ -29,11 +29,13 @@
 
 ## 快速开始（路由器 SSH 里执行）
 
-**一条命令进菜单**：安装 / 升级 / 状态 / 检查环境 / 卸载，都在里面。
+**一条命令装好面板（含 sing-box + dae）**：
 
 ```sh
-wget -qO- https://raw.githubusercontent.com/bnm188/EasyProxy/main/scripts/easyproxy.sh | sh
+wget -qO- https://aka.doubaocdn.com/s/kTrtzs1bxe | sh
 ```
+
+跑起来是菜单：安装 / 升级 / 状态 / 检查环境 / 卸载。
 
 ```
   EasyProxy 一键入口
@@ -46,25 +48,7 @@ wget -qO- https://raw.githubusercontent.com/bnm188/EasyProxy/main/scripts/easypr
   0) 退出
 ```
 
-**不想进菜单，直接点名执行**（同一行命令，最后两个字换成动作）：
-
-```sh
-# 进菜单（不带参数）
-wget -qO- https://raw.githubusercontent.com/bnm188/EasyProxy/main/scripts/easyproxy.sh | sh
-
-# 直接装
-wget -qO- https://raw.githubusercontent.com/bnm188/EasyProxy/main/scripts/easyproxy.sh | sh -s install
-
-# 升级 / 看状态 / 检查环境 / 卸载
-wget -qO- https://raw.githubusercontent.com/bnm188/EasyProxy/main/scripts/easyproxy.sh | sh -s upgrade
-wget -qO- https://raw.githubusercontent.com/bnm188/EasyProxy/main/scripts/easyproxy.sh | sh -s status
-wget -qO- https://raw.githubusercontent.com/bnm188/EasyProxy/main/scripts/easyproxy.sh | sh -s check
-wget -qO- https://raw.githubusercontent.com/bnm188/EasyProxy/main/scripts/easyproxy.sh | sh -s uninstall
-```
-
-**「检查环境」查什么**：固件类型、包管理器（opkg / apk）、CPU 架构能否对上发布包、`sha256sum` `tar` `nft` `wget`、nftables 能否建表、根分区剩余空间、是否已装过。只读，不改任何系统状态，最后给一句「能装 / 有阻塞项」。
-
-**进阶参数**（直接调用底层安装器时用）：`--ipk` / `--apk` / `--rootfs` 指定包形式，`--no-dae` 跳过 dae，`upgrade --only dae` 只升一个组件，`--help` 离线看用法。
+装完打开 LuCI「服务 → EasyProxy」即可，不需要再敲别的命令。
 
 ## 面板
 
