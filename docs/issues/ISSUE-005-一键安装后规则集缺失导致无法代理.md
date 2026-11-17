@@ -31,15 +31,24 @@ Transparent: disabled
 
 也就是：装完 → 面板能开 → 节点显示 1 个 → 用户以为好了 → 实际打不开任何国外站点。
 
-## 取证状态（诚实标注）
+## 取证（已补齐核查，2026-11-18 真机实测）
 
-| 项 | 状态 |
+| 项 | 结果 |
 |---|---|
-| `status` 原文输出 | **已取证**（上面四行即原样） |
-| `/etc/easyproxy/ruleset` 目录是否真的不存在 | **未核实**（本轮未单独查该路径，只依据 status 结论） |
-| 规则集是否本应由安装器自动拉取 | **未核实**（需查 `install.sh` 与 `rules` 子命令的默认行为） |
+| `status` 原文 | 见上四行，原样保留 |
+| `/etc/easyproxy/ruleset` | **目录存在但为空**（`drwx------ root root`，目录内 0 个文件）—— status 报的 `missing` 指「没有规则文件」，**不是目录不存在** |
+| 安装器是否自动拉取 | **不拉**：一键安装全程无任何 ruleset 动作，装完即为空 |
+| `easyproxy ruleset update` | `geosite-cn.srs` 57617 B、`geoip-cn.srs` 34259 B，`rule sets updated in /etc/easyproxy/ruleset` |
+| `easyproxy ruleset verify` | `[ok] geosite-cn.srs` / `[ok] geoip-cn.srs` / `ruleset: 2 ok, 0 fail` |
+| 拉取后再查 `status` | `Rule sets: ready (/etc/easyproxy/ruleset)`、`Routing: split (China direct, others proxied)` |
+| `easyproxy config generate` | 生成 2262 B；`rule_set` 出现 3 处；`{"rule_set":["geosite-cn","geoip-cn"],"outbound":"direct"}`；`{"type":"local","tag":"geosite-cn","format":"binary","path":"/etc/easyproxy/ruleset/geosite-cn.srs"}` |
+| 内核只读校验 | `/opt/open-box/bin/sing-box check -c /etc/easyproxy/sing-box.json` → **rc=0**，`Engine validation: passed` |
 
-这条在归档里先按"现象 + status 原文"落档，实施修复前必须补齐后两项核查，不得凭推测写结论。
+## 定性（结论已收敛）
+
+**不是机制坏了，是漏了一步。** 手动 `ruleset update` 之后，规则集 → 状态 → 配置 → 内核校验四环全部正常，路由立刻从 `direct only` 变成 `split`。
+
+因此本条只需要：**安装器装完自动拉一次规则集 + 明确提示**，不需要改动路由或内核逻辑。修复成本低，收益高（直接决定用户第一眼能不能用）。
 
 ## 影响面
 
