@@ -1172,9 +1172,60 @@ diag_collect() {
 # PUT one file into the repository through the Contents API. curl cannot be
 # assumed on a router, so busybox wget is the fallback. A token is required and
 # is kept in a 0600 file - never in UCI, where it would land in the bundle.
+# A customer's own cloud (Nutstore, Nextcloud, Synology) exposes WebDAV: the
+# bundle is one PUT to a folder, no GitHub repository and no token involved.
+# The app password never appears on the command line - `ps` is world-readable on
+# OpenWrt - so it is handed to curl through a private netrc file instead.
+diag_upload_webdav() {
+	local file url user pass pass_file dest code host netrc id
+	file="$1"
+	url="${EP_DIAG_WEBDAV:-$(ep_get main diag_webdav '')}"
+	user="${EP_DIAG_USER:-$(ep_get main diag_user '')}"
+	pass_file="${EP_DIAG_PASS_FILE:-/etc/easyproxy/diag.pass}"
+	if [ ! -r "$pass_file" ]; then
+		echo "diag: no password at $pass_file" >&2
+		echo "diag: save the WebDAV app password there, then chmod 600 it" >&2
+		return 3
+	fi
+	pass="$(tr -d ' \r\n' < "$pass_file")"
+	[ -n "$pass" ] || { echo "diag: the password file $pass_file is empty" >&2; return 3; }
+	if ! command -v curl >/dev/null 2>&1; then
+		echo "diag: WebDAV upload needs curl; install it: opkg install curl" >&2
+		return 3
+	fi
+	host="$(printf '%s' "$url" | sed -n 's#^http://\([^/]*\).*#\1#p;s#^https://\([^/]*\).*#\1#p')"
+	[ -n "$host" ] || { echo "diag: cannot parse the host out of $url" >&2; return 3; }
+	id="$(diag_customer_id)"
+	[ -n "$id" ] || id="unassigned"
+	dest="${url%/}/${id}/$(date -u '+%Y%m%dT%H%M%SZ')-$(uname -n 2>/dev/null | tr -c 'A-Za-z0-9_.-' '_').txt"
+	netrc="$(mktemp 2>/dev/null || echo /tmp/easyproxy-diag.netrc)"
+	( umask 077; printf 'machine %s login %s password %s\n' "$host" "$user" "$pass" > "$netrc" )
+	# WebDAV creates nothing implicitly: PUT into a missing folder fails with 409,
+	# so the per-customer folder is created first. 201 = created, 405 = already
+	# there; both are fine, and neither may stop the upload.
+	curl -s -o /dev/null -X MKCOL --netrc-file "$netrc" "${url%/}/${id}/" 2>/dev/null
+	code="$(curl -s -o /dev/null -w '%{http_code}' -T "$file" --netrc-file "$netrc" "$dest" 2>/dev/null)"
+	rm -f "$netrc"
+	case "$code" in
+		200|201|204) echo "diag: uploaded to $dest"; return 0 ;;
+		401|403)
+			echo "diag: WebDAV rejected the credentials (HTTP $code); bundle kept locally: $file" >&2
+			return 5 ;;
+		*)
+			echo "diag: WebDAV upload failed (HTTP ${code:-000}); bundle kept locally: $file" >&2
+			return 4 ;;
+	esac
+}
+
 diag_upload() {
 	local file token token_file repo branch name api payload tmp rc id
 	file="$1"
+	# A WebDAV target takes precedence: it needs no GitHub token, and a router
+	# that cannot hold a token is exactly the one that needs this path.
+	if [ -n "${EP_DIAG_WEBDAV:-}$(ep_get main diag_webdav '')" ]; then
+		diag_upload_webdav "$file"
+		return $?
+	fi
 	id="$(diag_customer_id)"
 	[ -n "$id" ] || id="unassigned"
 	token_file="${EP_DIAG_TOKEN_FILE:-/etc/easyproxy/diag.token}"

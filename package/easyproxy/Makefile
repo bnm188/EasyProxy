@@ -1,7 +1,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=easyproxy
-PKG_VERSION:=0.8.5
+PKG_VERSION:=0.8.6
 PKG_RELEASE:=1
 
 PKG_LICENSE:=MIT
@@ -26,6 +26,10 @@ define Package/easyproxy/description
  Stage 6 keeps LAN traffic direct and makes fail_closed real: when the CN rule
  sets are missing nothing is proxied instead of silently going full-tunnel.
  IPv6 is never captured silently: it is explicit `direct` or `block`.
+ 0.8.6 sends the diagnostic bundle to the operator's own cloud over WebDAV
+ (Nutstore, Nextcloud, Synology) as an alternative to a GitHub repository: the
+ app password lives in a 600 file and reaches curl through netrc, so it never
+ shows up in `ps`, and the per-customer folder is created with MKCOL first.
  0.8.5 makes a released package installable again: the installer accepted only
  the `ar` container while every published ipk is a gzip-tar, so a fresh install
  aborted with "is not an ipk archive" before opkg ever ran. It now accepts both

@@ -2,7 +2,7 @@
 
 **OpenWrt / ImmortalWrt 上的中文代理管理系统。装一次，导入订阅就能用。**
 
-![version](https://img.shields.io/badge/version-0.8.5-blue)
+![version](https://img.shields.io/badge/version-0.8.6-blue)
 ![tests](https://img.shields.io/badge/tests-672%20passed-brightgreen)
 ![firmware](https://img.shields.io/badge/firmware-OpenWrt%20%7C%20ImmortalWrt%20%7C%20Kwrt-informational)
 ![license](https://img.shields.io/badge/license-MIT-green)

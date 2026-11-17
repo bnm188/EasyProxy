@@ -259,6 +259,57 @@ EP_TEST_LOG_GH="$SB/diag/gh3.log" EP_DIAG_TOKEN_FILE="$SB/diag/token" EP_DIAG_OU
 	"$EP" diag --upload >/dev/null 2>&1
 grep -q 'diagnostics/unassigned/' "$SB/diag/gh3.log" && ok "未设编号时落到 unassigned/" || no "未设编号时落到 unassigned/" "$(cat "$SB/diag/gh3.log")"
 
+# --- diag --upload over WebDAV (own cloud, no GitHub token) -----------------
+# A customer's own Nextcloud / Nutstore exposes WebDAV: one PUT, no token, no
+# repository. This path must not require the GitHub token file at all.
+cat > "$SB/bin/curl" <<'STUB'
+#!/bin/sh
+printf '%s\n' "$*" >> "$EP_TEST_LOG_WD"
+if [ "${EP_TEST_WD_CODE:-201}" = "401" ]; then printf '401'; else printf '201'; fi
+exit 0
+STUB
+chmod +x "$SB/bin/curl"
+printf 'app-pass-123\n' > "$SB/diag/pass"; chmod 600 "$SB/diag/pass"
+printf '007\n' > "$EP_DIAG_ID_FILE"
+
+: > "$SB/diag/wd.log"
+out="$(EP_TEST_LOG_WD="$SB/diag/wd.log" EP_DIAG_WEBDAV="https://dav.example.test/dav/EasyProxy/" \
+	EP_DIAG_USER="me@example.test" EP_DIAG_PASS_FILE="$SB/diag/pass" \
+	EP_DIAG_OUT="$SB/diag/out6.txt" "$EP" diag --upload 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && ok "WebDAV 上传成功返回 0" || no "WebDAV 上传成功返回 0" "rc=$rc $out"
+grep -q 'dav.example.test/dav/EasyProxy/007/' "$SB/diag/wd.log" 2>/dev/null \
+	&& ok "WebDAV 路径按客户编号分目录" || no "WebDAV 路径按客户编号分目录" "$(cat "$SB/diag/wd.log" 2>/dev/null)"
+grep -q -- '-T ' "$SB/diag/wd.log" 2>/dev/null \
+	&& ok "WebDAV 用 curl -T 上传文件本体" || no "WebDAV 用 curl -T 上传" "$(cat "$SB/diag/wd.log" 2>/dev/null)"
+# WebDAV does not create folders on PUT: a missing <id>/ folder makes the upload
+# fail with 409, so the folder is created first (405 means it already existed).
+grep -q 'MKCOL' "$SB/diag/wd.log" 2>/dev/null \
+	&& ok "上传前先建客户编号目录（MKCOL）" || no "上传前先建客户编号目录（MKCOL）" "$(cat "$SB/diag/wd.log" 2>/dev/null)"
+grep -q 'MKCOL.*EasyProxy/007/' "$SB/diag/wd.log" 2>/dev/null \
+	&& ok "MKCOL 针对客户编号目录" || no "MKCOL 针对客户编号目录" "$(cat "$SB/diag/wd.log" 2>/dev/null)"
+grep -q 'app-pass-123' "$SB/diag/wd.log" 2>/dev/null \
+	&& no "密码不得出现在命令行参数里" "" || ok "密码没有泄露到命令行参数"
+[ -f "$SB/diag/out6.txt" ] && ok "WebDAV 成功后本地包仍保留" || no "WebDAV 成功后本地包保留" ""
+
+# no password file: refuse locally, never send a credential-less request
+rm -f "$SB/diag/pass"; : > "$SB/diag/wd.log"
+out="$(EP_TEST_LOG_WD="$SB/diag/wd.log" EP_DIAG_WEBDAV="https://dav.example.test/dav/EasyProxy/" \
+	EP_DIAG_USER="me@example.test" EP_DIAG_PASS_FILE="$SB/diag/pass" \
+	EP_DIAG_OUT="$SB/diag/out7.txt" "$EP" diag --upload 2>&1)"; rc=$?
+[ "$rc" -eq 3 ] && ok "WebDAV 无密码文件时返回 3" || no "WebDAV 无密码文件时返回 3" "rc=$rc $out"
+printf '%s' "$out" | grep -q 'diag: no password at' && ok "提示密码文件该放哪里" || no "提示密码文件位置" "$out"
+[ -s "$SB/diag/wd.log" ] && no "无密码时不得发出请求" "$(cat "$SB/diag/wd.log")" || ok "无密码时没有发出请求"
+
+# credentials rejected: say so, keep the bundle
+printf 'wrong-pass\n' > "$SB/diag/pass"; chmod 600 "$SB/diag/pass"; : > "$SB/diag/wd.log"
+out="$(EP_TEST_WD_CODE=401 EP_TEST_LOG_WD="$SB/diag/wd.log" EP_DIAG_WEBDAV="https://dav.example.test/dav/EasyProxy/" \
+	EP_DIAG_USER="me@example.test" EP_DIAG_PASS_FILE="$SB/diag/pass" \
+	EP_DIAG_OUT="$SB/diag/out8.txt" "$EP" diag --upload 2>&1)"; rc=$?
+[ "$rc" -eq 5 ] && ok "WebDAV 凭据被拒返回 5" || no "WebDAV 凭据被拒返回 5" "rc=$rc $out"
+printf '%s' "$out" | grep -qi 'credential' && ok "说明是凭据被拒" || no "说明是凭据被拒" "$out"
+[ -f "$SB/diag/out8.txt" ] && ok "凭据被拒后本地包仍保留" || no "凭据被拒后本地包保留" ""
+rm -f "$SB/diag/pass"
+
 out="$("$EP" diag --daily on 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && ok "diag --daily on 返回 0" || no "diag --daily on 返回 0" "rc=$rc $out"
 grep -q 'easyproxy diag --auto' "$EP_CRONTAB" 2>/dev/null && ok "crontab 写入每日任务" || no "crontab 写入每日任务" "$(cat "$EP_CRONTAB" 2>/dev/null)"
@@ -274,16 +325,16 @@ grep -q 'easyproxy diag --auto' "$EP_CRONTAB" 2>/dev/null && no "关闭后任务
 UP="$SB/update"
 mkdir -p "$UP/repo" "$UP/root/usr/sbin" "$UP/root/etc/init.d" \
 	"$UP/root/www/luci-static/resources/easyproxy" "$UP/backups"
-printf '{"tag_name": "v0.8.6"}\n' > "$UP/repo/rel.json"
+printf '{"tag_name": "v0.8.7"}\n' > "$UP/repo/rel.json"
 
 # payload that looks like an installed EasyProxy
 mkdir -p "$UP/pack/usr/sbin" "$UP/pack/etc/init.d" "$UP/pack/www/luci-static/resources/easyproxy"
-printf '#!/bin/sh\nEP_VERSION="0.8.6"\n' > "$UP/pack/usr/sbin/easyproxy"
+printf '#!/bin/sh\nEP_VERSION="0.8.7"\n' > "$UP/pack/usr/sbin/easyproxy"
 printf '#!/bin/sh\n' > "$UP/pack/etc/init.d/easyproxy"
 printf "'require baseclass'\nreturn baseclass.extend({});\n" > "$UP/pack/www/luci-static/resources/easyproxy/app.js"
-( cd "$UP/pack" && tar -czf "$UP/repo/easyproxy-0.8.6-rootfs.tar.gz" . )
-( cd "$UP/repo" && sha256sum easyproxy-0.8.6-rootfs.tar.gz > SHA256SUMS )
-printf 'deadbeefdeadbeef  easyproxy-0.8.6-rootfs.tar.gz\n' > "$UP/repo/SHA256SUMS.bad"
+( cd "$UP/pack" && tar -czf "$UP/repo/easyproxy-0.8.7-rootfs.tar.gz" . )
+( cd "$UP/repo" && sha256sum easyproxy-0.8.7-rootfs.tar.gz > SHA256SUMS )
+printf 'deadbeefdeadbeef  easyproxy-0.8.7-rootfs.tar.gz\n' > "$UP/repo/SHA256SUMS.bad"
 
 # one wget stub for both diag PUT and the update downloads
 cat > "$SB/bin/wget" <<'STUB'
@@ -311,7 +362,7 @@ case "$url" in
 	*api.github.com*) [ -n "${EP_TEST_API_BROKEN:-}" ] && exit 1; cp "$base/rel.json" "$out" || exit 1 ;;
 	*SHA256SUMS.bad*) cp "$base/SHA256SUMS.bad" "$out" || exit 1 ;;
 	*SHA256SUMS*) cp "$base/SHA256SUMS" "$out" || exit 1 ;;
-	*easyproxy-*-rootfs.tar.gz*) cp "$base/easyproxy-0.8.6-rootfs.tar.gz" "$out" || exit 1 ;;
+	*easyproxy-*-rootfs.tar.gz*) cp "$base/easyproxy-0.8.7-rootfs.tar.gz" "$out" || exit 1 ;;
 	*) exit 1 ;;
 esac
 STUB
@@ -320,7 +371,7 @@ chmod +x "$SB/bin/wget"
 # a pre-existing install: the backup must be able to archive it
 printf "'require baseclass'\nreturn baseclass.extend({ original: true });\n" \
 	> "$UP/root/www/luci-static/resources/easyproxy/app.js"
-printf '#!/bin/sh\nEP_VERSION="0.8.5"\n' > "$UP/root/usr/sbin/easyproxy"
+printf '#!/bin/sh\nEP_VERSION="0.8.6"\n' > "$UP/root/usr/sbin/easyproxy"
 printf '#!/bin/sh\n' > "$UP/root/etc/init.d/easyproxy"
 
 runup() { # runup <relbase> <args...>
@@ -335,7 +386,7 @@ runup() { # runup <relbase> <args...>
 
 out="$(runup "$UP/repo" check)"; rc=$?
 [ "$rc" -eq 0 ] && ok "update check 退出码 0" || no "update check 退出码 0" "rc=$rc $out"
-printf '%s' "$out" | grep -q 'latest:  0.8.6' && ok "update check 认出最新版本" || no "update check 认出最新版本" "$out"
+printf '%s' "$out" | grep -q 'latest:  0.8.7' && ok "update check 认出最新版本" || no "update check 认出最新版本" "$out"
 printf '%s' "$out" | grep -q 'update is available' && ok "提示可升级" || no "提示可升级" "$out"
 
 out="$(runup "$UP/repo" check --json)"
@@ -348,27 +399,27 @@ out="$(runup "$UP/nowhere" check)"; rc=$?
 # api.github.com allows 60 unauthenticated requests per hour per address, and a
 # router behind carrier NAT shares that budget with every neighbour. Version
 # detection must therefore work with the API answering 403.
-printf '<?xml version="1.0" encoding="UTF-8"?>\n<feed xmlns="http://www.w3.org/2005/Atom">\n  <title>Release notes from EasyProxy</title>\n  <entry>\n    <id>tag:github.com,2008:Repository/1458940874/v0.8.6</id>\n    <link rel="alternate" type="text/html" href="https://github.com/bnm188/EasyProxy/releases/tag/v0.8.6"/>\n    <title>EasyProxy 0.8.6</title>\n  </entry>\n</feed>\n' > "$UP/repo/atom.xml"
+printf '<?xml version="1.0" encoding="UTF-8"?>\n<feed xmlns="http://www.w3.org/2005/Atom">\n  <title>Release notes from EasyProxy</title>\n  <entry>\n    <id>tag:github.com,2008:Repository/1458940874/v0.8.7</id>\n    <link rel="alternate" type="text/html" href="https://github.com/bnm188/EasyProxy/releases/tag/v0.8.7"/>\n    <title>EasyProxy 0.8.7</title>\n  </entry>\n</feed>\n' > "$UP/repo/atom.xml"
 
 out="$(EP_TEST_API_BROKEN=1 runup "$UP/repo" check)"; rc=$?
 [ "$rc" -eq 0 ] && ok "API 被限流时仍能检查更新（走 atom）" || no "API 被限流时仍能检查更新（走 atom）" "rc=$rc $out"
-printf '%s' "$out" | grep -q 'latest:  0.8.6' \
+printf '%s' "$out" | grep -q 'latest:  0.8.7' \
 	&& ok "atom 解析出最新版本" || no "atom 解析出最新版本" "$out"
 out="$(EP_TEST_API_BROKEN=1 runup "$UP/repo" check --json)"
-printf '%s' "$out" | grep -q '"latest":"0.8.6"' \
+printf '%s' "$out" | grep -q '"latest":"0.8.7"' \
 	&& ok "atom 路径的 --json 输出可供面板解析" || no "atom 路径的 --json 输出" "$out"
 
 # checksum mismatch must abort before replacing anything
-out="$(runup "$UP/repo" apply 0.8.6 2>&1)"; rc=$?
+out="$(runup "$UP/repo" apply 0.8.7 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && ok "校验通过时升级成功" || no "校验通过时升级成功" "rc=$rc $out"
 printf '%s' "$out" | grep -q 'checksum verified' && ok "动手前先校验 sha256" || no "动手前先校验" "$out"
-[ -f "$UP/backups/rollback-0.8.5.tar.gz" ] && ok "升级前备份当前版本" || no "升级前备份当前版本" "$(ls -l "$UP/backups" 2>/dev/null)"
+[ -f "$UP/backups/rollback-0.8.6.tar.gz" ] && ok "升级前备份当前版本" || no "升级前备份当前版本" "$(ls -l "$UP/backups" 2>/dev/null)"
 [ -f "$UP/root/www/luci-static/resources/easyproxy/app.js" ] && ok "解包后面板文件就位" || no "解包后面板文件就位" "$out"
-printf '%s' "$out" | grep -q 'now running 0.8.6' && ok "报告新版本已生效" || no "报告新版本已生效" "$out"
+printf '%s' "$out" | grep -q 'now running 0.8.7' && ok "报告新版本已生效" || no "报告新版本已生效" "$out"
 
 # a bad SHA256SUMS entry must stop the install
 cp "$UP/repo/SHA256SUMS" "$UP/repo/SHA256SUMS.ok"; cp "$UP/repo/SHA256SUMS.bad" "$UP/repo/SHA256SUMS"
-out="$(runup "$UP/repo" apply 0.8.6 2>&1)"; rc=$?
+out="$(runup "$UP/repo" apply 0.8.7 2>&1)"; rc=$?
 printf '%s' "$out" | grep -q 'checksum mismatch' && ok "校验不符时拒绝安装" || no "校验不符时拒绝安装" "rc=$rc $out"
 [ "$rc" -ne 0 ] && ok "校验不符返回非 0" || no "校验不符返回非 0" "rc=$rc"
 cp "$UP/repo/SHA256SUMS.ok" "$UP/repo/SHA256SUMS"
