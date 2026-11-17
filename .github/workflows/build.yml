@@ -12,11 +12,6 @@ on:
         description: "要发布的版本号（必须与 package/easyproxy/Makefile 的 PKG_VERSION 相同，例如 0.8.0）；留空则按版本号自动判定"
         required: false
         default: ""
-  schedule:
-    # 每 2 小时整点跑一次：编译、跑全套测试、上传 artifact，并按版本号判断是否发版。
-    # 令牌推送不会启动构建，所以定时这里就是自动发版的落地通道：版本号一变，
-    # 最晚两小时内自己出包发版。GitHub 的定时任务可能再延迟 5~20 分钟。
-    - cron: '0 */2 * * *'
 
 permissions:
   contents: write
@@ -48,11 +43,12 @@ jobs:
       # Release intent, resolved once here so every later step uses the same tag:
       #   1. a v* tag the maintainer pushed by hand;
       #   2. a manual run that passes inputs.version;
-      #   3. the version number itself: on main, on the scheduled run, and on a
-      #      manual run without an input, PKG_VERSION is compared with the newest
-      #      published release and a higher version publishes by itself.
-      #      The scheduled run is what makes an automation push land: commits
-      #      made with a token do not start a workflow, the scheduled build does.
+      #   3. the version number itself: on main, and on a manual run without an
+      #      input, PKG_VERSION is compared with the newest published release and
+      #      a higher version publishes by itself.
+      #      This path needs a real push: a commit created through an API token
+      #      does not start a workflow, so the working copy must push with
+      #      credentials GitHub treats as the maintainer.
       # A commit whose message carries [no-release] is exempt, for work that must
       # land on main without producing a release.
       - name: Resolve the release intent
@@ -69,7 +65,7 @@ jobs:
             TAG="${GITHUB_REF_NAME}"
           elif [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ] && [ -n "${INPUT_VERSION}" ]; then
             TAG="v${INPUT_VERSION}"
-          elif [ "${GITHUB_EVENT_NAME}" = "push" ] || [ "${GITHUB_EVENT_NAME}" = "schedule" ] || [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+          elif [ "${GITHUB_EVENT_NAME}" = "push" ] || [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
             MSG="$(git log -1 --pretty=%B)"
             case "$MSG" in
               *"[no-release]"*)
