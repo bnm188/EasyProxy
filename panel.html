@@ -1,0 +1,116 @@
+<html><head><meta charset="utf-8"><style>*{box-sizing:border-box}body{margin:0;background:#050b14;font-family:"Noto Sans CJK SC",sans-serif}
+.lshell{display:flex;min-height:100vh}
+.side{width:196px;flex:0 0 196px;background:#0b1524;border-right:1px solid #16233a;padding:14px 0;color:#8fa6c2;font-size:13px;line-height:2}
+.side .t{padding:6px 18px 14px;color:#e8f1ff;font-size:15px;font-weight:600;line-height:1.4}
+.mi{padding:7px 18px;display:block}
+.on{background:#12233b;color:#5eead4;border-left:3px solid #22d3ee}
+.main{flex:1;padding:18px 22px}
+</style><style>.ep-wrap{font-family:"Noto Sans SC","Segoe UI",system-ui,sans-serif;color:#c9d6e8}
+.ep-hero{position:relative;padding:16px 20px;border-radius:14px;background:linear-gradient(135deg,#0c1424,#10203a 55%,#0a1a2c);border:1px solid #1d2f4d;box-shadow:0 0 22px rgba(34,211,238,.08);margin-bottom:14px}
+.ep-hero h2{margin:0 0 4px;font-size:19px;letter-spacing:.5px;color:#e8f1ff}
+.ep-hero .ep-sub{font-size:12px;color:#7f93ad}
+.ep-hero-line{height:2px;margin-top:12px;background:linear-gradient(90deg,#22d3ee,#6366f1,transparent)}
+.ep-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(168px,1fr));gap:10px;margin-bottom:14px}
+.ep-tile{background:#0e1727;border:1px solid #1b2a44;border-radius:11px;padding:11px 13px;transition:border-color .2s,box-shadow .2s}
+.ep-tile:hover{border-color:#2b6c8f;box-shadow:0 0 14px rgba(34,211,238,.14)}
+.ep-tile .ep-lab{font-size:11px;color:#7f93ad;letter-spacing:.4px;margin-bottom:6px}
+.ep-tile .ep-val{font-size:15px;color:#e8f1ff;font-family:ui-monospace,Menlo,Consolas,monospace;word-break:break-all}
+.ep-card{background:#0e1727;border:1px solid #1b2a44;border-radius:12px;padding:14px 16px;margin-bottom:14px}
+.ep-card h3{margin:0 0 10px;font-size:14px;color:#cfe6ff;font-weight:600;letter-spacing:.4px}
+.ep-card .ep-hint{font-size:12px;color:#7f93ad;line-height:1.6;margin-top:8px}
+.ep-dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:7px;vertical-align:middle;box-shadow:0 0 9px currentColor}
+.ep-ok{color:#22c55e}.ep-warn{color:#f59e0b}.ep-bad{color:#ef4444}.ep-off{color:#64748b}
+.ep-ok .ep-dot,.ep-warn .ep-dot{animation:epPulse 2s ease-in-out infinite}
+@keyframes epPulse{0%,100%{opacity:.55}50%{opacity:1}}
+.ep-tbl{width:100%;border-collapse:collapse;font-size:13px}
+.ep-tbl th{text-align:left;color:#7f93ad;font-weight:500;font-size:11px;letter-spacing:.4px;padding:6px 8px;border-bottom:1px solid #1b2a44}
+.ep-tbl td{padding:7px 8px;border-bottom:1px solid #14213a;color:#c9d6e8;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px}
+.ep-tbl tr:hover td{background:#101c30}
+.ep-btn{background:#132038;border:1px solid #24395a;color:#cfe6ff;border-radius:8px;padding:6px 12px;font-size:12px;cursor:pointer;margin:0 6px 6px 0;transition:all .18s}
+.ep-btn:hover{border-color:#22d3ee;color:#e8f1ff;box-shadow:0 0 10px rgba(34,211,238,.2)}
+.ep-btn.ep-primary{background:linear-gradient(135deg,#0e7490,#1d4ed8);border-color:#22d3ee}
+.ep-btn.ep-danger{background:#3b1220;border-color:#7f1d3a;color:#fecdd3}
+.ep-in{background:#0a1322;border:1px solid #22344f;color:#d6e2f3;border-radius:8px;padding:6px 9px;font-size:12px;font-family:ui-monospace,Menlo,Consolas,monospace;min-width:120px}
+.ep-in:focus{outline:none;border-color:#22d3ee;box-shadow:0 0 8px rgba(34,211,238,.25)}
+.ep-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:9px;font-size:13px}
+.ep-row label{min-width:170px;color:#9db0c9}
+.ep-pre{background:#0a1322;border:1px solid #1b2a44;border-radius:10px;padding:10px 12px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;color:#a9c0da;white-space:pre-wrap;max-height:320px;overflow:auto;line-height:1.6}
+.ep-tag{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;margin:2px 4px 2px 0;border:1px solid #24395a;color:#9db0c9}
+.ep-tag.ep-hit{border-color:#22d3ee;color:#a5f3fc}
+.ep-chart{width:100%;height:150px;display:block;background:#0a1322;border:1px solid #1b2a44;border-radius:11px}
+.ep-err{background:#2b1220;border:1px solid #7f1d3a;color:#fecdd3;border-radius:10px;padding:12px 14px;font-size:13px;margin-bottom:14px}
+.ep-switch{appearance:none;-webkit-appearance:none;width:38px;height:20px;background:#1b2a44;border-radius:999px;position:relative;cursor:pointer;transition:background .2s;border:none}
+.ep-switch:checked{background:#0e7490}
+.ep-switch:after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#c9d6e8;transition:left .2s}
+.ep-switch:checked:after{left:20px;background:#e8f1ff}'
+].join('\n');
+
+function injectStyle() {
+	if (typeof document === 'undefined' || document.getElementById('ep-dark-style'))
+		return;
+	document.head.appendChild(E('style', { id: 'ep-dark-style', type: 'text/css' }, CSS));
+}
+
+function notify(text, level) {
+	ui.addNotification(null, E('p', {}, text), level || 'info');
+}
+
+function run(args) {
+	return fs.exec(BIN, args).catch(function (e) {
+		return { code: -1, stdout: '', stderr: String((e && e.message) || e) };
+	});
+}
+
+function cliJson(args) {
+	return run(args.concat(['--json'])).then(function (r) {
+		try {
+			return JSON.parse(r.stdout);
+		} catch (e) {
+			return null;
+		}
+	});
+}
+
+function loadStatus() {
+	return cliJson(['status']);
+}
+
+function errCard(text) {
+	return E('div', { class: 'ep-err' }, text);
+}
+
+// The dae adapter is still 开发中: a dae engine cannot start, because the
+// renderer refuses a config it cannot run. The panel therefore keeps the
+// previous choice and says why instead of writing dae into main.engine, which
+// would leave the service unable to start after the next reload.
+function saveEngine(pick) {
+	if (pick === 'dae') {
+		notify('dae 适配器开发中，暂不可选：请继续使用 sing-box', 'error');
+		return Promise.resolve();
+	}
+	return saveUci({ 'main.engine': pick }).then(function () {
+		notify('已保存内核选择', 'success');
+		reload();
+	}).catch(function (e) {
+		notify('保存失败：' + e, 'error');
+	});
+}
+
+function hero(title, sub, tags) {
+	return E('div', { class: 'ep-hero' }, [
+		E('h2', {}, title),
+		E('div', { class: 'ep-sub' }, sub),
+		tags ? E('div', { style: 'margin-top:10px' }, tags) : '</style></head><body><div class="lshell">
+<div class="side"><div class="t">EasyProxy</div>
+<span class="mi on">总览</span><span class="mi">节点</span><span class="mi">订阅</span><span class="mi">分流</span><span class="mi">透明代理</span><span class="mi">DNS</span><span class="mi">内核</span><span class="mi">维护</span><span class="mi">日志</span><span class="mi">关于</span></div>
+<div class="main"><div class="ep-wrap">
+<div class="ep-hero"><h2>EasyProxy 运行总览</h2><div class="ep-sub">先用它确认四件事：内核在跑、规则集在、中国大陆直连、内网没被劫持。</div>
+<div style="margin-top:10px"><span class="ep-tag">sing-box 1.14.4</span><span class="ep-tag">x86_64</span><span class="ep-tag">透明代理</span><span class="ep-tag">入口旁路</span></div><div class="ep-hero-line"></div></div>
+<div class="ep-card"><h3>入口旁路（国内不进内核）</h3><div class="ep-grid">
+<div class="ep-tile"><div class="ep-lab">入口状态</div><div class="ep-val ep-ok">已启用</div></div><div class="ep-tile"><div class="ep-lab">国内地址表</div><div class="ep-val ep-ok">2387 条</div></div><div class="ep-tile"><div class="ep-lab">判定口径</div><div class="ep-val ep-ok">域名优先 + IP 兜底</div></div></div>
+<div class="ep-hint">命中国内地址表的流量在 nft 入口直接放行，不进入内核进程。</div>
+<div style="margin-top:12px"><button class="ep-btn ep-danger">一键恢复直连</button></div></div>
+<div class="ep-grid"><div class="ep-tile"><div class="ep-lab">运行状态</div><div class="ep-val ep-ok">运行中 8123</div></div><div class="ep-tile"><div class="ep-lab">总开关</div><div class="ep-val ep-ok">已启用</div></div><div class="ep-tile"><div class="ep-lab">中国大陆</div><div class="ep-val ep-ok">直连（锁定）</div></div><div class="ep-tile"><div class="ep-lab">失败闭合</div><div class="ep-val ep-ok">已锁定 1</div></div><div class="ep-tile"><div class="ep-lab">内网设备</div><div class="ep-val ep-ok">强制直连</div></div><div class="ep-tile"><div class="ep-lab">节点</div><div class="ep-val ep-ok">12 / 18 启用</div></div><div class="ep-tile"><div class="ep-lab">CN 规则集</div><div class="ep-val ep-ok">已就绪</div></div><div class="ep-tile"><div class="ep-lab">透明代理</div><div class="ep-val ep-ok">接管中</div></div><div class="ep-tile"><div class="ep-lab">内核二进制</div><div class="ep-val ep-ok">就绪</div></div><div class="ep-tile"><div class="ep-lab">监听端口</div><div class="ep-val ep-ok">7893 已监听</div></div><div class="ep-tile"><div class="ep-lab">生成配置</div><div class="ep-val ep-ok">校验通过</div></div><div class="ep-tile"><div class="ep-lab">内核稳定性</div><div class="ep-val ep-ok">稳定</div></div></div>
+<div class="ep-card"><h3>快捷操作</h3><div><button class="ep-btn ep-primary">停止</button><button class="ep-btn ">重启</button><button class="ep-btn ">重新生成配置</button><button class="ep-btn ">关闭透明代理</button><button class="ep-btn ">一键自检</button></div>
+<div class="ep-hint">所有操作都调用 easyproxy 命令行，面板不做隐式改写。</div></div>
+</div></div></div></body></html>
