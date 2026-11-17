@@ -1316,16 +1316,39 @@ ver_cmp() {
 	}'
 }
 
+# The latest version is read from the release atom feed on github.com first.
+# That feed is an ordinary page on github.com, so it is not subject to the
+# api.github.com quota (60 unauthenticated requests per hour, counted per IP) -
+# a router behind carrier NAT shares that budget with every neighbour and can
+# find it exhausted without any activity of its own. The API stays as a fallback
+# for the day the feed stops being served.
 update_latest_version() {
+	local repo tmp tag
+	repo="$(update_repo)"
+	tmp="$(mktemp 2>/dev/null || echo /tmp/easyproxy-rel.atom)"
+	if update_fetch "https://github.com/$repo/releases.atom" "$tmp"; then
+		# First entry in the feed is the newest release; the feed-level <id>
+		# does not match this pattern, so it cannot be mistaken for a tag.
+		tag="$(sed -n 's#.*Repository/[0-9][0-9]*/\(v[0-9][0-9.]*\).*#\1#p' "$tmp" | head -n 1)"
+	fi
+	rm -f "$tmp" 2>/dev/null
+	if [ -z "${tag:-}" ]; then
+		tag="$(update_latest_version_api)" || return 1
+	fi
+	[ -n "${tag:-}" ] || return 1
+	printf '%s' "${tag#v}"
+}
+
+update_latest_version_api() {
 	local repo tmp tag
 	repo="$(update_repo)"
 	tmp="$(mktemp 2>/dev/null || echo /tmp/easyproxy-rel.json)"
 	if update_fetch "https://api.github.com/repos/$repo/releases/latest" "$tmp"; then
 		tag="$(sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$tmp" | head -n 1)"
 	fi
-	rm -f "$tmp"
+	rm -f "$tmp" 2>/dev/null
 	[ -n "${tag:-}" ] || return 1
-	printf '%s' "${tag#v}"
+	printf '%s' "$tag"
 }
 
 update_current_version() { printf '%s' "$EP_VERSION"; }

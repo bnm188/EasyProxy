@@ -1,7 +1,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=easyproxy
-PKG_VERSION:=0.8.3
+PKG_VERSION:=0.8.5
 PKG_RELEASE:=1
 
 PKG_LICENSE:=MIT
@@ -26,6 +26,12 @@ define Package/easyproxy/description
  Stage 6 keeps LAN traffic direct and makes fail_closed real: when the CN rule
  sets are missing nothing is proxied instead of silently going full-tunnel.
  IPv6 is never captured silently: it is explicit `direct` or `block`.
+ 0.8.5 makes a released package installable again: the installer accepted only
+ the `ar` container while every published ipk is a gzip-tar, so a fresh install
+ aborted with "is not an ipk archive" before opkg ever ran. It now accepts both
+ containers, passes `install --rootfs` through the entry script instead of
+ swallowing it, and reads the newest version from the releases.atom feed so a
+ rate-limited api.github.com no longer blocks "check for updates".
  0.8.3 adds panel-driven self update (check/apply/rollback with a SHA256 gate),
  log files that are actually written (0600, rotated), a diag bundle filed under
  a per-customer number and uploaded daily, and an installer that adopts an

@@ -218,8 +218,11 @@ EOF
 
 main() {
 	case "${1:-}" in
-		install)   need_root; run_sub install.sh install ;;
-		upgrade)   need_root; run_sub install.sh upgrade ;;
+		# shift first: `install --rootfs` must reach install.sh, otherwise a
+		# firmware without a usable package manager has no way in through this
+		# entry. The same applies to upgrade and its own switches.
+		install)   need_root; shift; run_sub install.sh install "$@" ;;
+		upgrade)   need_root; shift; run_sub install.sh upgrade "$@" ;;
 		status)    run_sub install.sh status ;;
 		check)     check_env ;;
 		uninstall) need_root; shift; run_sub uninstall.sh "$@" ;;

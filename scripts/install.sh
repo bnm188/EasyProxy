@@ -387,10 +387,23 @@ fetch_pinned() {
 
 # Cheap format check, so an HTML error page is stopped even when the checksum
 # list itself could not be fetched.
+#
+# Two containers legitimately ship as `.ipk`: the historical `ar` archive, and
+# the gzip-tar layout that OpenWrt 24.10+ and scripts/make-ipk.sh produce by
+# default (debian-binary + control.tar.gz + data.tar.gz inside one .tar.gz). A
+# check that only knows `!<arch>` rejects every package the release ships today,
+# so both are accepted here and anything else - an HTML page from a captive
+# portal, a truncated download, a plain gzip of the wrong payload - is refused.
 check_package_file() {
 	case "$1" in
-		*.ipk) dd if="$2" bs=1 count=8 2>/dev/null | grep -q '!<arch>' \
-			|| die "$(basename "$1") is not an ipk archive (invalid download, nothing installed)" ;;
+		*.ipk)
+			if dd if="$2" bs=1 count=8 2>/dev/null | grep -q '!<arch>'; then
+				return 0
+			fi
+			if tar tzf "$2" 2>/dev/null | grep -q 'debian-binary'; then
+				return 0
+			fi
+			die "$(basename "$1") is not an ipk archive (invalid download, nothing installed)" ;;
 	esac
 }
 

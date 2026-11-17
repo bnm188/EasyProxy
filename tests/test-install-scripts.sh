@@ -58,6 +58,25 @@ for n in easyproxy-0.5.0-rootfs.tar.gz easyproxy-0.9.9-rootfs.tar.gz; do
 done
 sed 's/^[0-9a-f]/0/' "$SB/fix/SHA256SUMS" > "$SB/fix/SHA256SUMS.bad"
 
+# A real 24.10+ ipk: a gzip-tar holding debian-binary + control.tar.gz +
+# data.tar.gz. scripts/make-ipk.sh emits this by default, so the installer's
+# format check has to accept it - the historical `!<arch>` check cannot.
+mkdir -p "$SB/fix/ipkdir/ctrl" "$SB/fix/ipkdir/data"
+printf '2.0\n' > "$SB/fix/ipkdir/debian-binary"
+printf 'Package: easyproxy\nVersion: 0.5.0-1\nArchitecture: x86_64\n' > "$SB/fix/ipkdir/ctrl/control"
+printf '/etc/config/easyproxy\n' > "$SB/fix/ipkdir/ctrl/conffiles"
+tar -czf "$SB/fix/ipkdir/control.tar.gz" -C "$SB/fix/ipkdir/ctrl" ./control ./conffiles
+tar -czf "$SB/fix/ipkdir/data.tar.gz" -C "$SB/fix/ipkdir/data" .
+tar -czf "$SB/fix/asset-targz.ipk" -C "$SB/fix/ipkdir" ./debian-binary ./control.tar.gz ./data.tar.gz
+# Same gzip container without debian-binary: still not a valid ipk.
+tar -czf "$SB/fix/asset-gzipbad.ipk" -C "$SB/fix/ipkdir" ./control.tar.gz ./data.tar.gz
+h_targz="$(sha256sum "$SB/fix/asset-targz.ipk" | awk '{ print $1 }')"
+h_gzipbad="$(sha256sum "$SB/fix/asset-gzipbad.ipk" | awk '{ print $1 }')"
+{ printf '%s  easyproxy_0.5.0-1_x86_64.ipk\n' "$h_targz"
+  printf '%s  easyproxy-0.5.0-rootfs.tar.gz\n' "$h_tgz"; } > "$SB/fix/SHA256SUMS.targz"
+{ printf '%s  easyproxy_0.5.0-1_x86_64.ipk\n' "$h_gzipbad"
+  printf '%s  easyproxy-0.5.0-rootfs.tar.gz\n' "$h_tgz"; } > "$SB/fix/SHA256SUMS.gzipbad"
+
 # A release that also carries the kernel ipks, so the "prefer the kernel ipk"
 # route can be exercised.
 cat > "$SB/fix/api-kernels.json" <<'JSON'
@@ -67,6 +86,18 @@ cat > "$SB/fix/api-kernels.json" <<'JSON'
     { "name": "easyproxy_0.5.0-1_all.ipk", "browser_download_url": "https://example.test/dl/easyproxy_0.5.0-1_all.ipk" },
     { "name": "sing-box_1.14.4_x86_64.ipk", "browser_download_url": "https://example.test/dl/sing-box_1.14.4_x86_64.ipk" },
     { "name": "dae_2.1.2_x86_64.ipk", "browser_download_url": "https://example.test/dl/dae_2.1.2_x86_64.ipk" },
+    { "name": "SHA256SUMS", "browser_download_url": "https://example.test/dl/SHA256SUMS" }
+  ]
+}
+JSON
+
+# A release carrying the architecture-specific ipk the layout cases install.
+cat > "$SB/fix/api-x86.json" <<'JSON'
+{
+  "tag_name": "v0.5.0",
+  "assets": [
+    { "name": "easyproxy_0.5.0-1_x86_64.ipk", "browser_download_url": "https://example.test/dl/easyproxy_0.5.0-1_x86_64.ipk" },
+    { "name": "easyproxy-0.5.0-rootfs.tar.gz", "browser_download_url": "https://example.test/dl/easyproxy-0.5.0-rootfs.tar.gz" },
     { "name": "SHA256SUMS", "browser_download_url": "https://example.test/dl/SHA256SUMS" }
   ]
 }
@@ -122,7 +153,7 @@ case "$url" in
 	*daeuniverse/dae*) [ -f "$EP_TEST_LOG/dae.fail" ] && exit 22; f="${EP_TEST_DAE_ARCHIVE:-$EP_TEST_FIX/dae.tar.xz}" ;;
 	*Makefile) f="$EP_TEST_FIX/Makefile" ;;
 	*.apk) f="$EP_TEST_FIX/asset.apk" ;;
-	*_x86_64.ipk) [ -f "$EP_TEST_LOG/x86.fail" ] && exit 22; f="$EP_TEST_FIX/asset.ipk" ;;
+	*_x86_64.ipk) [ -f "$EP_TEST_LOG/x86.fail" ] && exit 22; f="${EP_TEST_IPK:-$EP_TEST_FIX/asset.ipk}" ;;
 	*.ipk) f="$EP_TEST_FIX/asset.ipk" ;;
 	*SHA256SUMS) f="${EP_TEST_SUMS:-$EP_TEST_FIX/SHA256SUMS}" ;;
 	*.tar.gz) f="$EP_TEST_FIX/asset.tar.gz" ;;
@@ -425,6 +456,28 @@ reset
 EP_TEST_OPKG_REJECT=1 sh "$INSTALL" > "$SB/out" 2>&1; rc=$?
 [ "$rc" -eq 0 ] && ok "opkg 判 ipk 为 Malformed 时改用 rootfs 归档（退出码 0）" || no "opkg 判 Malformed 时改用 rootfs 归档" "rc=$rc $(cat "$SB/out")"
 grep -qi 'rootfs archive' "$SB/out" && ok "回退时说明改走 rootfs 归档" || no "回退时说明改走 rootfs 归档" "$(cat "$SB/out")"
+
+# --- install: the ipk layout the release actually ships (24.10+ gzip-tar)
+# A gzip-tar ipk is what make-ipk.sh produces by default. Rejecting it would
+# make every fresh install on every firmware fail, whatever the opkg can read.
+reset
+EP_TEST_IPK="$SB/fix/asset-targz.ipk" EP_TEST_SUMS="$SB/fix/SHA256SUMS.targz" EP_TEST_API_FIX="$SB/fix/api-x86.json" \
+	sh "$INSTALL" > "$SB/out" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && ok "gzip-tar 布局的 ipk：安装退出码 0" || no "gzip-tar 布局的 ipk：安装退出码 0" "rc=$rc $(cat "$SB/out")"
+grep -q 'is not an ipk archive' "$SB/out" \
+	&& no "gzip-tar 布局不得被判为非 ipk 归档" "$(grep 'is not an ipk' "$SB/out")" \
+	|| ok "gzip-tar 布局不被判为非 ipk 归档"
+grep -q 'install .*easyproxy.*\.ipk' "$EP_TEST_LOG/pm.log" 2>/dev/null \
+	&& ok "gzip-tar 布局：仍交给 opkg 安装" || no "gzip-tar 布局：仍交给 opkg 安装" "$(cat "$EP_TEST_LOG/pm.log" 2>/dev/null)"
+
+# --- install: gzip container that is not an ipk is still refused -------
+reset
+EP_TEST_IPK="$SB/fix/asset-gzipbad.ipk" EP_TEST_SUMS="$SB/fix/SHA256SUMS.gzipbad" EP_TEST_API_FIX="$SB/fix/api-x86.json" \
+	sh "$INSTALL" > "$SB/out" 2>&1; rc=$?
+[ "$rc" -ne 0 ] && ok "缺 debian-binary 的 gzip 容器被拒绝（非 0）" || no "缺 debian-binary 的 gzip 容器被拒绝" "rc=$rc $(cat "$SB/out")"
+grep -q 'is not an ipk archive' "$SB/out" \
+	&& ok "拒绝原因指明不是 ipk 归档" || no "拒绝原因指明不是 ipk 归档" "$(cat "$SB/out")"
+[ -f "$EP_TEST_LOG/installed" ] && no "被拒的容器不得交给包管理器" "" || ok "被拒的容器没有交给包管理器"
 
 # --- install: never install a bad download ----------------------------
 reset

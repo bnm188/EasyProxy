@@ -274,16 +274,16 @@ grep -q 'easyproxy diag --auto' "$EP_CRONTAB" 2>/dev/null && no "关闭后任务
 UP="$SB/update"
 mkdir -p "$UP/repo" "$UP/root/usr/sbin" "$UP/root/etc/init.d" \
 	"$UP/root/www/luci-static/resources/easyproxy" "$UP/backups"
-printf '{"tag_name": "v0.8.4"}\n' > "$UP/repo/rel.json"
+printf '{"tag_name": "v0.8.6"}\n' > "$UP/repo/rel.json"
 
 # payload that looks like an installed EasyProxy
 mkdir -p "$UP/pack/usr/sbin" "$UP/pack/etc/init.d" "$UP/pack/www/luci-static/resources/easyproxy"
-printf '#!/bin/sh\nEP_VERSION="0.8.4"\n' > "$UP/pack/usr/sbin/easyproxy"
+printf '#!/bin/sh\nEP_VERSION="0.8.6"\n' > "$UP/pack/usr/sbin/easyproxy"
 printf '#!/bin/sh\n' > "$UP/pack/etc/init.d/easyproxy"
 printf "'require baseclass'\nreturn baseclass.extend({});\n" > "$UP/pack/www/luci-static/resources/easyproxy/app.js"
-( cd "$UP/pack" && tar -czf "$UP/repo/easyproxy-0.8.4-rootfs.tar.gz" . )
-( cd "$UP/repo" && sha256sum easyproxy-0.8.4-rootfs.tar.gz > SHA256SUMS )
-printf 'deadbeefdeadbeef  easyproxy-0.8.4-rootfs.tar.gz\n' > "$UP/repo/SHA256SUMS.bad"
+( cd "$UP/pack" && tar -czf "$UP/repo/easyproxy-0.8.6-rootfs.tar.gz" . )
+( cd "$UP/repo" && sha256sum easyproxy-0.8.6-rootfs.tar.gz > SHA256SUMS )
+printf 'deadbeefdeadbeef  easyproxy-0.8.6-rootfs.tar.gz\n' > "$UP/repo/SHA256SUMS.bad"
 
 # one wget stub for both diag PUT and the update downloads
 cat > "$SB/bin/wget" <<'STUB'
@@ -307,10 +307,11 @@ done
 base="${EP_TEST_REL:-}"
 [ -n "$base" ] || exit 1
 case "$url" in
-	*api.github.com*) cp "$base/rel.json" "$out" || exit 1 ;;
+	*releases.atom*) [ -f "$base/atom.xml" ] && cp "$base/atom.xml" "$out" || exit 1 ;;
+	*api.github.com*) [ -n "${EP_TEST_API_BROKEN:-}" ] && exit 1; cp "$base/rel.json" "$out" || exit 1 ;;
 	*SHA256SUMS.bad*) cp "$base/SHA256SUMS.bad" "$out" || exit 1 ;;
 	*SHA256SUMS*) cp "$base/SHA256SUMS" "$out" || exit 1 ;;
-	*easyproxy-*-rootfs.tar.gz*) cp "$base/easyproxy-0.8.4-rootfs.tar.gz" "$out" || exit 1 ;;
+	*easyproxy-*-rootfs.tar.gz*) cp "$base/easyproxy-0.8.6-rootfs.tar.gz" "$out" || exit 1 ;;
 	*) exit 1 ;;
 esac
 STUB
@@ -319,12 +320,13 @@ chmod +x "$SB/bin/wget"
 # a pre-existing install: the backup must be able to archive it
 printf "'require baseclass'\nreturn baseclass.extend({ original: true });\n" \
 	> "$UP/root/www/luci-static/resources/easyproxy/app.js"
-printf '#!/bin/sh\nEP_VERSION="0.8.3"\n' > "$UP/root/usr/sbin/easyproxy"
+printf '#!/bin/sh\nEP_VERSION="0.8.5"\n' > "$UP/root/usr/sbin/easyproxy"
 printf '#!/bin/sh\n' > "$UP/root/etc/init.d/easyproxy"
 
 runup() { # runup <relbase> <args...>
 	local rel="$1"; shift
 	PATH="$SB/bin:$PATH" EP_TEST_REL="$rel" EP_UPDATE_REPO="bnm188/EasyProxy" \
+	EP_TEST_API_BROKEN="${EP_TEST_API_BROKEN:-}" \
 	EP_UPDATE_ROOT="$UP/root" EP_UPDATE_BACKUP_DIR="$UP/backups" \
 	EP_UPDATE_APP_JS="$UP/root/www/luci-static/resources/easyproxy/app.js" \
 	EP_UPDATE_MENU_JSON="$UP/root/menu.json" EP_UPDATE_MIRRORS="" \
@@ -333,7 +335,7 @@ runup() { # runup <relbase> <args...>
 
 out="$(runup "$UP/repo" check)"; rc=$?
 [ "$rc" -eq 0 ] && ok "update check 退出码 0" || no "update check 退出码 0" "rc=$rc $out"
-printf '%s' "$out" | grep -q 'latest:  0.8.4' && ok "update check 认出最新版本" || no "update check 认出最新版本" "$out"
+printf '%s' "$out" | grep -q 'latest:  0.8.6' && ok "update check 认出最新版本" || no "update check 认出最新版本" "$out"
 printf '%s' "$out" | grep -q 'update is available' && ok "提示可升级" || no "提示可升级" "$out"
 
 out="$(runup "$UP/repo" check --json)"
@@ -342,17 +344,31 @@ printf '%s' "$out" | grep -q '"available":true' && ok "update check --json 供�
 out="$(runup "$UP/nowhere" check)"; rc=$?
 [ "$rc" -eq 4 ] && ok "拿不到 Release 时返回 4" || no "拿不到 Release 时返回 4" "rc=$rc $out"
 
+# The release feed on github.com is the path that survives a rate-limited IP:
+# api.github.com allows 60 unauthenticated requests per hour per address, and a
+# router behind carrier NAT shares that budget with every neighbour. Version
+# detection must therefore work with the API answering 403.
+printf '<?xml version="1.0" encoding="UTF-8"?>\n<feed xmlns="http://www.w3.org/2005/Atom">\n  <title>Release notes from EasyProxy</title>\n  <entry>\n    <id>tag:github.com,2008:Repository/1458940874/v0.8.6</id>\n    <link rel="alternate" type="text/html" href="https://github.com/bnm188/EasyProxy/releases/tag/v0.8.6"/>\n    <title>EasyProxy 0.8.6</title>\n  </entry>\n</feed>\n' > "$UP/repo/atom.xml"
+
+out="$(EP_TEST_API_BROKEN=1 runup "$UP/repo" check)"; rc=$?
+[ "$rc" -eq 0 ] && ok "API 被限流时仍能检查更新（走 atom）" || no "API 被限流时仍能检查更新（走 atom）" "rc=$rc $out"
+printf '%s' "$out" | grep -q 'latest:  0.8.6' \
+	&& ok "atom 解析出最新版本" || no "atom 解析出最新版本" "$out"
+out="$(EP_TEST_API_BROKEN=1 runup "$UP/repo" check --json)"
+printf '%s' "$out" | grep -q '"latest":"0.8.6"' \
+	&& ok "atom 路径的 --json 输出可供面板解析" || no "atom 路径的 --json 输出" "$out"
+
 # checksum mismatch must abort before replacing anything
-out="$(runup "$UP/repo" apply 0.8.4 2>&1)"; rc=$?
+out="$(runup "$UP/repo" apply 0.8.6 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && ok "校验通过时升级成功" || no "校验通过时升级成功" "rc=$rc $out"
 printf '%s' "$out" | grep -q 'checksum verified' && ok "动手前先校验 sha256" || no "动手前先校验" "$out"
-[ -f "$UP/backups/rollback-0.8.3.tar.gz" ] && ok "升级前备份当前版本" || no "升级前备份当前版本" "$(ls -l "$UP/backups" 2>/dev/null)"
+[ -f "$UP/backups/rollback-0.8.5.tar.gz" ] && ok "升级前备份当前版本" || no "升级前备份当前版本" "$(ls -l "$UP/backups" 2>/dev/null)"
 [ -f "$UP/root/www/luci-static/resources/easyproxy/app.js" ] && ok "解包后面板文件就位" || no "解包后面板文件就位" "$out"
-printf '%s' "$out" | grep -q 'now running 0.8.4' && ok "报告新版本已生效" || no "报告新版本已生效" "$out"
+printf '%s' "$out" | grep -q 'now running 0.8.6' && ok "报告新版本已生效" || no "报告新版本已生效" "$out"
 
 # a bad SHA256SUMS entry must stop the install
 cp "$UP/repo/SHA256SUMS" "$UP/repo/SHA256SUMS.ok"; cp "$UP/repo/SHA256SUMS.bad" "$UP/repo/SHA256SUMS"
-out="$(runup "$UP/repo" apply 0.8.4 2>&1)"; rc=$?
+out="$(runup "$UP/repo" apply 0.8.6 2>&1)"; rc=$?
 printf '%s' "$out" | grep -q 'checksum mismatch' && ok "校验不符时拒绝安装" || no "校验不符时拒绝安装" "rc=$rc $out"
 [ "$rc" -ne 0 ] && ok "校验不符返回非 0" || no "校验不符返回非 0" "rc=$rc"
 cp "$UP/repo/SHA256SUMS.ok" "$UP/repo/SHA256SUMS"
