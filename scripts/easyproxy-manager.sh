@@ -39,6 +39,7 @@ EasyProxy 管理入口
   backup       配置备份 / 恢复 / 重置
   rulesets     规则集更新 / 校验
   panel        面板入口说明
+  rescue       紧急恢复直连（删除 nft 接管，回到纯直连）
   help         本帮助
 USAGE
 }
@@ -161,6 +162,28 @@ act_rulesets() {
 	fi
 }
 
+act_rescue() {
+	if [ -x /usr/sbin/easyproxy ]; then
+		say "即将删除 nft 接管规则并切回纯直连。"
+		printf '确认继续？[y/N]: '
+		read -r _yn || _yn=""
+		case "$_yn" in
+			y|Y|yes|YES) /usr/sbin/easyproxy bypass restore ;;
+			*) say "已取消。" ;;
+		esac
+	else
+		# 未安装也允许救机：直接清掉可能残留的 nft 表
+		if have nft; then
+			nft delete table ip easyproxy 2>/dev/null || :
+			nft delete table ip6 easyproxy 2>/dev/null || :
+			say "已删除残留的 nft 接管规则。"
+		else
+			err "nft 不可用，无法清理"
+			return 1
+		fi
+	fi
+}
+
 act_panel() {
 	say "面板入口：LuCI → 服务 → EasyProxy（登录 http://<路由器IP>/cgi-bin/luci）"
 	say "若面板未出现：/etc/init.d/rpcd restart && /etc/init.d/uhttpd restart"
@@ -177,6 +200,7 @@ dispatch() {
 		backup)    act_backup ;;
 		rulesets)  act_rulesets ;;
 		panel)     act_panel ;;
+		rescue)    act_rescue ;;
 		help|-h|--help) usage ;;
 		*) err "未知动作：$1"; usage; exit 2 ;;
 	esac
@@ -198,6 +222,7 @@ menu() {
 	say "  7) 配置备份 / 恢复"
 	say "  8) 规则集更新"
 	say "  9) 面板入口"
+	say " 10) 紧急恢复直连（上不了网时用）"
 	say "  0) 退出"
 	say "  --------------------------------------------------"
 	printf '选择: '
@@ -212,6 +237,7 @@ menu() {
 		7) dispatch backup ;;
 		8) dispatch rulesets ;;
 		9) dispatch panel ;;
+		10) dispatch rescue ;;
 		0|"") exit 0 ;;
 		*) err "无效选项：$_ans"; exit 2 ;;
 	esac

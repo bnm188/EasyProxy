@@ -27,7 +27,7 @@ LOG_DIR="${EP_TEST_LOG_DIR:-$SRC/test-logs}"
 mkdir -p "$LOG_DIR"
 
 # Every suite that must run. A missing file is a coverage gap, not a pass.
-EXPECTED="test-cli test-engine test-install-scripts test-manager test-ipk-layout test-maintenance test-nodes test-regressions test-routing test-runtime test-release test-security test-transparent"
+EXPECTED="test-bypass test-cli test-engine test-install-scripts test-manager test-ipk-layout test-maintenance test-nodes test-regressions test-routing test-runtime test-release test-security test-transparent"
 
 say() { printf '%s\n' "$*"; }
 
