@@ -2,7 +2,7 @@
 	"admin/services/easyproxy": {
 		"title": "EasyProxy",
 		"order": 55,
-		"action": { "type": "first-level", "path": "easyproxy/overview" }
+		"action": { "type": "first", "path": "easyproxy/overview" }
 	},
 	"admin/services/easyproxy/overview": {
 		"title": "运行总览",
