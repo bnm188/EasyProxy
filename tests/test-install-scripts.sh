@@ -835,6 +835,35 @@ sh "$INSTALL" install --diag-webdav 'https://dav.example.com/dav/EP/' > "$SB/out
 [ "$rc" -ne 0 ] && ok "diag：只给地址不给账号密码时报错退出" || no "diag：参数不全应报错" "rc=$rc"
 grep -q 'diag-user' "$SB/out" && ok "diag：报错点名缺失的参数" || no "diag：报错点名缺失的参数" "$(cat "$SB/out")"
 
+# --- diag: everything from one file, nothing on the command line --------
+reset
+rm -f "$EP_ROOT/etc/easyproxy/diag.pass"
+printf '%s\n%s\n%s\n' 'https://dav.example.com/dav/EP/' 'ops@example.com' 'secret-cfg' > "$SB/diag.cfg"
+sh "$INSTALL" install --diag-config "$SB/diag.cfg" > "$SB/out" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && ok "diag-config：安装退出码 0" || no "diag-config：安装退出码 0" "rc=$rc $(cat "$SB/out")"
+[ "$(cat "$EP_ROOT/etc/easyproxy/diag.pass" 2>/dev/null)" = "secret-cfg" ] \
+	&& ok "diag-config：密码取自第三行" || no "diag-config：密码取自第三行" "$(cat "$EP_ROOT/etc/easyproxy/diag.pass" 2>/dev/null)"
+grep -q 'set easyproxy.main.diag_webdav=https://dav.example.com/dav/EP/' "$EP_TEST_LOG/uci.log" 2>/dev/null \
+	&& ok "diag-config：地址取自第一行" || no "diag-config：地址取自第一行" "$(cat "$EP_TEST_LOG/uci.log" 2>/dev/null)"
+grep -q 'set easyproxy.main.diag_user=ops@example.com' "$EP_TEST_LOG/uci.log" 2>/dev/null \
+	&& ok "diag-config：账号取自第二行" || no "diag-config：账号取自第二行" "$(cat "$EP_TEST_LOG/uci.log" 2>/dev/null)"
+[ "$(stat -c %a "$EP_ROOT/etc/easyproxy/diag.pass" 2>/dev/null)" = "600" ] \
+	&& ok "diag-config：密码文件权限为 600" || no "diag-config：密码文件权限为 600"
+grep -q 'ops@example.com' "$SB/out" && no "diag-config：输出不回显账号" "$(cat "$SB/out")" || ok "diag-config：输出不回显账号"
+grep -q 'secret-cfg' "$SB/out" && no "diag-config：输出不回显密码" "$(cat "$SB/out")" || ok "diag-config：输出不回显密码"
+
+# a short config file must be rejected, not half-installed
+reset
+printf '%s\n%s\n' 'https://dav.example.com/dav/EP/' 'ops@example.com' > "$SB/diag.cfg"
+sh "$INSTALL" install --diag-config "$SB/diag.cfg" > "$SB/out" 2>&1; rc=$?
+[ "$rc" -ne 0 ] && ok "diag-config：只有两行时报错退出" || no "diag-config：只有两行应报错" "rc=$rc"
+grep -q 'three lines' "$SB/out" && ok "diag-config：报错说明需要三行" || no "diag-config：报错说明需要三行" "$(cat "$SB/out")"
+
+# a missing file must be rejected too
+reset
+sh "$INSTALL" install --diag-config "$SB/nope.cfg" > "$SB/out" 2>&1; rc=$?
+[ "$rc" -ne 0 ] && ok "diag-config：文件不存在时报错退出" || no "diag-config：文件不存在应报错" "rc=$rc"
+
 say ""
 say "结果：$PASS 通过，$FAIL 失败"
 [ "$FAIL" -eq 0 ] || exit 1

@@ -42,6 +42,7 @@ DIAG_WEBDAV=""
 DIAG_USER=""
 DIAG_PASS=""
 DIAG_PASS_FILE=""
+DIAG_CONFIG=""
 
 SING_BOX_VER="${EP_SING_BOX_VER:-1.14.4}"
 SING_BOX_BASE="${EP_SING_BOX_BASE:-https://github.com/SagerNet/sing-box/releases/download/v${SING_BOX_VER}}"
@@ -75,6 +76,10 @@ EasyProxy installer
   install.sh ... --diag-pass-file FILE
                              same, but read the app password from FILE so the
                              password never lands in shell history or `ps`
+  install.sh ... --diag-config FILE
+                             read all three from FILE (three lines: WebDAV URL,
+                             account, app password) - nothing sensitive is left
+                             on the command line
   install.sh upgrade         compare all three components with the newest release,
                              print the version changes and upgrade the ones that differ
   install.sh upgrade --only sing-box|dae|package
@@ -116,7 +121,7 @@ configure_diag() {
 	( umask 077; printf '%s' "$DIAG_PASS" > "$ROOT/etc/easyproxy/diag.pass" ) \
 		|| die "cannot write $ROOT/etc/easyproxy/diag.pass"
 	chmod 600 "$ROOT/etc/easyproxy/diag.pass" 2>/dev/null || true
-	info "diag upload: configured (WebDAV $DIAG_WEBDAV, account $DIAG_USER)"
+	info "diag upload: configured (WebDAV $DIAG_WEBDAV)"
 }
 
 while [ $# -gt 0 ]; do
@@ -150,6 +155,10 @@ while [ $# -gt 0 ]; do
 			[ $# -ge 2 ] || die "--diag-pass-file needs a path"
 			DIAG_PASS_FILE="$2"; shift ;;
 		--diag-pass-file=*) DIAG_PASS_FILE="${1#--diag-pass-file=}" ;;
+		--diag-config)
+			[ $# -ge 2 ] || die "--diag-config needs a path"
+			DIAG_CONFIG="$2"; shift ;;
+		--diag-config=*) DIAG_CONFIG="${1#--diag-config=}" ;;
 		-h|--help) usage; exit 0 ;;
 		*) usage >&2; exit 2 ;;
 	esac
@@ -164,7 +173,16 @@ esac
 # Diagnostic upload can be preconfigured at install time, which is what a
 # machine that is handed to someone else needs: the operator types it once,
 # here, and the panel/host never has to be touched again.
-if [ -n "$DIAG_WEBDAV$DIAG_USER$DIAG_PASS$DIAG_PASS_FILE" ]; then
+if [ -n "$DIAG_CONFIG" ]; then
+	[ -r "$DIAG_CONFIG" ] || die "--diag-config: cannot read $DIAG_CONFIG"
+	DIAG_WEBDAV=$(sed -n '1p' "$DIAG_CONFIG")
+	DIAG_USER=$(sed -n '2p' "$DIAG_CONFIG")
+	DIAG_PASS=$(sed -n '3p' "$DIAG_CONFIG")
+	[ -n "$DIAG_WEBDAV" ] && [ -n "$DIAG_USER" ] && [ -n "$DIAG_PASS" ] \
+		|| die "--diag-config needs three lines: WebDAV URL, account, app password"
+fi
+
+if [ -n "$DIAG_WEBDAV$DIAG_USER$DIAG_PASS$DIAG_PASS_FILE$DIAG_CONFIG" ]; then
 	[ -n "$DIAG_WEBDAV" ] \
 		|| die "--diag-webdav (the WebDAV folder URL) is required with --diag-user/--diag-pass"
 	[ -n "$DIAG_USER" ] \
