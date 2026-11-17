@@ -280,6 +280,38 @@ function trafficChart() {
 	return E('div', {}, [canvas, cap]);
 }
 
+
+function bypassText(state) {
+	switch (state) {
+	case 'active': return '已启用';
+	case 'ready': return '已就绪（未下发）';
+	case 'missing': return '地址表缺失';
+	case 'disabled': return '已关闭';
+	case 'unavailable': return '模块缺失';
+	default: return '不支持';
+	}
+}
+
+function bypassClass(state) {
+	switch (state) {
+	case 'active': case 'ready': return 'ep-ok';
+	case 'disabled': return 'ep-off';
+	case 'unavailable': return 'ep-bad';
+	default: return 'ep-warn';
+	}
+}
+
+function bypassHint(state) {
+	switch (state) {
+	case 'active': return '国内流量在 nft 入口放行，不进内核进程；这条状态为 active 才算真的生效。';
+	case 'ready': return '地址表已通过校验，但规则还没下发：先开启透明代理，再回本页刷新。';
+	case 'missing': return '地址表缺失或校验失败。此时不会退回全局代理，国内流量仍按直连处理。';
+	case 'disabled': return '入口旁路已关闭：国内流量会进入内核再按 direct 直连，比旁路多一层处理。';
+	case 'unavailable': return '未找到 bypass 模块（/usr/lib/easyproxy/bypass.sh），请重装本包。';
+	default: return '本机 nftables 不可用，入口旁路无法启用。';
+	}
+}
+
 function pageOverview(status) {
 	injectStyle();
 	if (!status)
@@ -350,8 +382,29 @@ function pageOverview(status) {
 
 	var chart = card('流量统计', trafficChart(), '每 2 秒采一次 /proc/net/dev，只算速率，不写任何文件。');
 
+
+	var bypass = card('入口旁路（国内不进内核）', [
+		E('div', { class: 'ep-grid' }, [
+			tile('入口状态', bypassText(status.bypass_state), bypassClass(status.bypass_state)),
+			tile('国内地址表', String(status.bypass_cidr || 0) + ' 条', (status.bypass_cidr > 0) ? 'ep-ok' : 'ep-warn'),
+			tile('判定口径', '域名优先 + IP 兜底', 'ep-ok')
+		]),
+		E('div', { class: 'ep-hint', style: 'margin:0' }, bypassHint(status.bypass_state)),
+		E('div', {}, [
+			button('一键恢复直连', 'ep-danger', function () {
+				if (!confirm('将立即删除 nft 接管规则、切回纯直连，确定继续？'))
+					return;
+				return run(['bypass', 'restore']).then(function (r) {
+					notify((r.stdout || r.stderr || 'done').trim(), r.code === 0 ? 'success' : 'error');
+					if (r.code === 0) reload();
+				});
+			})
+		])
+	], '开启后，命中国内地址表的流量在 nft 入口直接放行，不进入内核进程。');
+
 	return E('div', { class: 'ep-wrap' }, [
 		hero('EasyProxy 运行总览', '先用它确认四件事：内核在跑、规则集在、中国大陆直连、内网没被劫持。', tags),
+		bypass,
 		grid,
 		actions,
 		chart,
@@ -872,3 +925,4 @@ return {
 	pageBackup: pageBackup,
 	pageSettings: pageSettings
 };
+
