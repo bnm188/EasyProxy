@@ -1,0 +1,48 @@
+name: Apply 0.8.1 tree and request the release
+
+on:
+  push:
+    branches: ["main"]
+    paths: [".github/apply081.trigger"]
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Apply the 0.8.1 patch
+        run: |
+          set -euo pipefail
+          curl -fsSL "https://aka.doubaocdn.com/s/uN7RSWw72N" -o /tmp/rel081.patch
+          echo "880e6f513c643a734694b7b5dee3010e4085e9585a7746b2b961bf050dac51cf  /tmp/rel081.patch" | sha256sum -c -
+          git apply --index /tmp/rel081.patch
+          git diff --cached --stat
+          grep -n '^PKG_VERSION:=' package/easyproxy/Makefile
+          grep -n '^EP_VERSION=' package/easyproxy/files/usr/lib/easyproxy/common.sh
+          test -s scripts/easyproxy-manager.sh
+          sh -n scripts/easyproxy-manager.sh
+          grep -c 'test-manager' tests/run-all.sh
+
+      - name: Commit and request release 0.8.1
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          printf '0.8.1\n' > .release-request
+          git add -A
+          git commit -q -m "feat(release): 0.8.1 - single SSH entry, release pipeline hardening
+
+package: PKG_VERSION 0.8.0 -> 0.8.1 (Makefile + common.sh EP_VERSION)
+scripts: scripts/easyproxy-manager.sh - one URL, nine actions, POSIX sh, opkg and apk detection, wget and curl fallback
+scripts: release-notes.sh skips chore/ci/docs/diag commits, refuses empty notes
+tests: tests/test-manager.sh (30 assertions), test-cli reads PKG_VERSION
+docs: counts unified to the measured 631, D15 and Stage 10 updated"
+          git push origin HEAD:main
