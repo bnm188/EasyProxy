@@ -53,6 +53,14 @@ printf '%s\n' "$SUBJECTS" | while IFS= read -r subject; do
 	[ -n "$subject" ] || continue
 	body="$(printf '%s' "$subject" | sed -e 's/^[A-Za-z][A-Za-z0-9_-]*\(([^)]*)\)\{0,1\}!\{0,1\}: //')"
 	low="$(printf '%s' "$subject" | tr 'A-Z' 'a-z')"
+	# 正式发布说明只写用户关心的修复/功能/优化。开发过程提交不进说明：
+	# chore / ci / docs / test / build / style / revert / wip，以及临时诊断与
+	# 一次性搬运工作流（diag、one-shot、workflow、.github、report 之类）。
+	case "$low" in
+		chore*|ci*|docs*|doc*|test*|tests*|build*|style*|revert*|wip*|tmp*|temp*|diag*|diagnos*|*one-shot*|*workflow*|*.github*|*report*|*报告*)
+			continue
+			;;
+	esac
 	case "$low" in
 		fix*|bugfix*|hotfix*|*修复*|*修掉*|*修正*)
 			[ "$(wc -l < "$TMP/fix")" -lt 8 ] && printf -- '- %s\n' "$body" >> "$TMP/fix"
@@ -65,6 +73,11 @@ printf '%s\n' "$SUBJECTS" | while IFS= read -r subject; do
 			;;
 	esac
 done
+
+if [ ! -s "$TMP/fix" ] && [ ! -s "$TMP/feat" ] && [ ! -s "$TMP/opt" ]; then
+	echo "release-notes: every commit in ${RANGE} is a development-process commit; refusing to publish a note with no user-facing change" >&2
+	exit 1
+fi
 
 printf 'EasyProxy %s 更新说明\n\n' "$VER"
 printf '修复了什么问题\n'
