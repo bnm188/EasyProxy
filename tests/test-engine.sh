@@ -25,10 +25,12 @@ mkdir -p "$SB/usr/lib/easyproxy/adapters" "$SB/usr/sbin" "$SB/etc" "$SB/bin" "$S
 cp "$SRC/package/easyproxy/files/usr/lib/easyproxy/common.sh" "$SB/usr/lib/easyproxy/common.sh"
 cp "$SRC/package/easyproxy/files/usr/lib/easyproxy/config.sh" "$SB/usr/lib/easyproxy/config.sh"
 cp "$SRC/package/easyproxy/files/usr/lib/easyproxy/transparent.sh" "$SB/usr/lib/easyproxy/transparent.sh"
+cp "$SRC/package/easyproxy/files/usr/lib/easyproxy/mihomo.sh" "$SB/usr/lib/easyproxy/mihomo.sh"
 cp "$SRC/package/easyproxy/files/usr/lib/easyproxy/adapters/"*.sh "$SB/usr/lib/easyproxy/adapters/"
 sed -e "s#/usr/lib/easyproxy/common.sh#$SB/usr/lib/easyproxy/common.sh#" \
     -e "s#/usr/lib/easyproxy/config.sh#$SB/usr/lib/easyproxy/config.sh#" \
     -e "s#/usr/lib/easyproxy/transparent.sh#$SB/usr/lib/easyproxy/transparent.sh#" \
+    -e "s#/usr/lib/easyproxy/mihomo.sh#$SB/usr/lib/easyproxy/mihomo.sh#" \
 	"$SRC/package/easyproxy/files/usr/sbin/easyproxy" > "$SB/usr/sbin/easyproxy"
 chmod +x "$SB/usr/sbin/easyproxy"
 
@@ -275,6 +277,110 @@ done
 for fn in dae_available dae_version dae_config dae_validate dae_run; do
 	grep -q "^${fn}()" "$SB/usr/lib/easyproxy/adapters/dae.sh" && ok "dae adapter 提供 $fn（切换接口已预留）" || no "dae adapter 提供 $fn"
 done
+
+
+# --- 9. mihomo (second engine) ---------------------------------------------
+# Same UCI node model, different config dialect. These assertions pin the YAML
+# shape the engine needs: without mixed-port or a rule list mihomo starts and
+# proxies nothing, which looks exactly like "it works" until you curl through it.
+say ""
+say "9. mihomo 第二内核"
+
+for fn in mihomo_available mihomo_version mihomo_config mihomo_validate mihomo_run; do
+	grep -q "^${fn}()" "$SB/usr/lib/easyproxy/adapters/mihomo.sh" && ok "mihomo adapter 提供 $fn" || no "mihomo adapter 提供 $fn"
+done
+
+out="$("$EP" engine list 2>&1)"
+printf '%s' "$out" | grep -q 'mihomo' && ok "engine list 列出 mihomo" || no "engine list 列出 mihomo" "$out"
+printf '%s' "$out" | grep -Eq 'mihomo +stable' && ok "mihomo 标为 stable（真机验收通过）" || no "mihomo 未标 stable" "$out"
+
+MIHOMO_YAML="$SB/etc/mihomo.yaml"
+write_ucis 1 mihomo "$SB/bin/sing-box" 7890 1
+cat >> "$SB/etc/uci.db" <<-DB
+	easyproxy.mihomo.config_file=$MIHOMO_YAML
+	easyproxy.mihomo.binary=$SB/bin/mihomo
+	easyproxy.mihomo.home=$SB/etc/mihomo
+	DB
+
+cat > "$SB/probe-mihomo.sh" <<-PROBE
+#!/bin/sh
+export EP_TEST_UCI_DB="$SB/etc/uci.db"
+export PATH="$SB/bin:\$PATH"
+export EP_LIB_DIR="$SB/usr/lib/easyproxy"
+. "$SB/usr/lib/easyproxy/common.sh"
+. "$SB/usr/lib/easyproxy/config.sh"
+. "$SB/usr/lib/easyproxy/mihomo.sh"
+PROBE
+chmod +x "$SB/probe-mihomo.sh"
+
+# binary 不存在时不校验，直接落盘
+printf 'ep_mihomo_config_build "%s"\n' "$MIHOMO_YAML" >> "$SB/probe-mihomo.sh"
+if sh "$SB/probe-mihomo.sh" >/dev/null 2>&1; then
+	ok "无二进制时也能生成 mihomo 配置"
+else
+	no "生成 mihomo 配置" "$(sh "$SB/probe-mihomo.sh" 2>&1 | tail -2)"
+fi
+
+if [ -s "$MIHOMO_YAML" ]; then
+	grep -q 'mixed-port: 7890' "$MIHOMO_YAML" && ok "mixed-port 取 main.listen_port" || no "mixed-port 取 main.listen_port"
+	grep -q 'external-controller: "127.0.0.1:9090"' "$MIHOMO_YAML" && ok "external-controller 绑回环" || no "external-controller 绑回环"
+	grep -q 'geo-auto-update: false' "$MIHOMO_YAML" && ok "关闭 geodata 自动下载（断网不卡启动）" || no "关闭 geo-auto-update"
+	grep -q '  - name: "hk-01"' "$MIHOMO_YAML" && ok "节点进入 proxies" || no "节点进入 proxies"
+	grep -q '    type: ss' "$MIHOMO_YAML" && ok "shadowsocks 映射为 type ss" || no "ss 映射"
+	grep -q '    cipher: "aes-256-gcm"' "$MIHOMO_YAML" && ok "method 映射为 cipher" || no "cipher 映射"
+	grep -q '  - name: PROXY' "$MIHOMO_YAML" && ok "生成 PROXY 选择组" || no "生成 PROXY 选择组"
+	grep -q 'GEOIP,CN,DIRECT' "$MIHOMO_YAML" && ok "国内流量直连规则" || no "国内流量直连规则"
+	grep -q 'MATCH,PROXY' "$MIHOMO_YAML" && ok "其余流量走代理" || no "其余流量走代理"
+else
+	no "生成了非空的 mihomo.yaml"
+fi
+
+# 坏节点必须报错且不能覆盖现有配置
+cp "$MIHOMO_YAML" "$SB/mihomo-keep.yaml"
+sed -i 's/^easyproxy.@node\[0\].password=.*/easyproxy.@node[0].password=/' "$SB/etc/uci.db"
+if sh "$SB/probe-mihomo.sh" >/dev/null 2>&1; then
+	no "缺 password 的节点应当失败"
+else
+	ok "缺 password 的节点被拒绝"
+fi
+cmp -s "$MIHOMO_YAML" "$SB/mihomo-keep.yaml" && ok "生成失败不覆盖原配置" || no "生成失败覆盖了原配置"
+
+# 没有节点时也应当直接失败，而不是写出一份空 proxies
+sed -i '/^easyproxy.@node\[0\].*/d' "$SB/etc/uci.db"
+if sh "$SB/probe-mihomo.sh" >/dev/null 2>&1; then
+	no "无节点时应当失败"
+else
+	ok "无节点时拒绝生成"
+fi
+
+# 适配器缺失时 ep_engine_verb 用 127 表示"未实现"，调用方才能区分
+# 生成配置只能走 ep_engine_config_generate：真机上曾因为 cmd_start 和 init 脚本
+# 直接调 ep_config_build，把 Clash YAML 当 sing-box JSON 生成，还留下一个
+# 长驻进程占着 7890。这条断言守住"新增引擎只改一个地方"。
+if grep -q "ep_config_build" "$SRC/package/easyproxy/files/usr/sbin/easyproxy"; then
+	no "CLI 不再直接调用 ep_config_build" "$(grep -n 'ep_config_build' "$SRC/package/easyproxy/files/usr/sbin/easyproxy")"
+else
+	ok "CLI 不再直接调用 ep_config_build"
+fi
+if grep -q "ep_config_build" "$SRC/package/easyproxy/files/etc/init.d/easyproxy"; then
+	no "init 脚本不再直接调用 ep_config_build" "$(grep -n 'ep_config_build' "$SRC/package/easyproxy/files/etc/init.d/easyproxy")"
+else
+	ok "init 脚本不再直接调用 ep_config_build"
+fi
+grep -q "^ep_engine_config_generate()" "$SB/usr/lib/easyproxy/common.sh" 	&& ok "配置生成有统一入口 ep_engine_config_generate" || no "配置生成有统一入口"
+
+cat > "$SB/probe-verb.sh" <<-PROBE
+#!/bin/sh
+export EP_TEST_UCI_DB="$SB/etc/uci.db"
+export PATH="$SB/bin:\$PATH"
+export EP_LIB_DIR="$SB/usr/lib/easyproxy"
+. "$SB/usr/lib/easyproxy/common.sh"
+. "$SB/usr/lib/easyproxy/config.sh"
+. "$SB/usr/lib/easyproxy/mihomo.sh"
+ep_engine_verb nope validate
+echo "rc=\$?"
+PROBE
+sh "$SB/probe-verb.sh" 2>/dev/null | grep -q 'rc=127' && ok "未知引擎的 verb 返回 127" || no "未知引擎的 verb 返回 127"
 
 say ""
 say "结果：$PASS 通过，$FAIL 失败"

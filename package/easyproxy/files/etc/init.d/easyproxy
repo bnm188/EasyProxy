@@ -9,6 +9,10 @@ USE_PROCD=1
 . /usr/lib/easyproxy/common.sh
 . /usr/lib/easyproxy/config.sh
 . /usr/lib/easyproxy/transparent.sh
+# The config generator of the second engine; best-effort so a trimmed install
+# still boots sing-box.
+EP_MIHOMO_LIB="${EP_MIHOMO_LIB:-/usr/lib/easyproxy/mihomo.sh}"
+[ -r "$EP_MIHOMO_LIB" ] && . "$EP_MIHOMO_LIB"
 
 start_service() {
 	local enabled engine binary
@@ -22,7 +26,7 @@ start_service() {
 	[ "$(ep_binary_state "$binary")" = "available" ] || { ep_log "engine binary missing: $binary"; return 1; }
 
 	export EP_RULE_SET_NO_FETCH=1
-	if ! ep_config_build "$(ep_engine_config_path "$engine")"; then
+	if ! ep_engine_config_generate "$engine" "$(ep_engine_config_path "$engine")"; then
 		ep_log "config generation failed: $EP_ERR"
 		return 1
 	fi

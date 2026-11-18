@@ -64,6 +64,14 @@ config engine 'sing_box'
 	option config_file '/etc/easyproxy/sing-box.json'
 	option binary '/usr/bin/sing-box'
 
+# Second engine. Its home directory holds the geodata files: mihomo downloads
+# them on first start otherwise, which fails on a box with no internet.
+config engine 'mihomo'
+	option config_file '/etc/easyproxy/mihomo.yaml'
+	option binary '/usr/bin/mihomo'
+	option home '/etc/easyproxy/mihomo'
+	option controller '127.0.0.1:9090'
+
 # Node sections are optional. `easyproxy config generate` turns every enabled
 # "config node" section into one sing-box outbound and puts them behind a
 # latency-tested "proxy" group:

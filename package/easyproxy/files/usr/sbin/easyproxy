@@ -2,6 +2,10 @@
 
 . /usr/lib/easyproxy/common.sh
 . /usr/lib/easyproxy/config.sh
+# Second engine: same UCI nodes, rendered as Clash YAML. Loaded best-effort so a
+# missing file cannot break status/start on an older package layout.
+EP_MIHOMO_LIB="${EP_MIHOMO_LIB:-/usr/lib/easyproxy/mihomo.sh}"
+[ -r "$EP_MIHOMO_LIB" ] && . "$EP_MIHOMO_LIB"
 # Entry bypass (M1, 0.8.2): China traffic released in nft before tproxy.
 # Source it *before* transparent.sh: transparent.sh keeps any EP_BYPASS_LIB it
 # finds, so defining the path here lets a test sandbox redirect both modules.
@@ -642,10 +646,13 @@ cmd_rule_del() {
 }
 
 cmd_config_generate() {
-	local engine binary path nodes final checked
+	local engine binary path nodes final checked generated_ok
 	engine="$(ep_get main engine none)"
 	[ "$engine" != "none" ] || { echo "Config generation failed: no proxy engine selected" >&2; return 1; }
-	[ "$engine" = "sing-box" ] || { printf 'Config generation failed: config generation is only implemented for sing-box; %s is 开发中 (dev)\n' "$engine" >&2; return 1; }
+	case "$engine" in
+		sing-box|mihomo) : ;;
+		*) printf 'Config generation failed: no config generator for %s yet (still 开发中 / dev)\n' "$engine" >&2; return 1 ;;
+	esac
 	path="$(ep_engine_config_path "$engine")"
 	binary="$(ep_engine_binary "$engine")"
 	if [ "$(ep_binary_state "$binary")" = "available" ]; then
@@ -654,7 +661,9 @@ cmd_config_generate() {
 		checked=false
 	fi
 
-	if ! ep_config_build "$path"; then
+	generated_ok=0
+	ep_engine_config_generate "$engine" "$path" && generated_ok=1
+	if [ "$generated_ok" != "1" ]; then
 		if [ "$JSON" = "1" ]; then
 			printf '{"ok":false,"error":"%s"}\n' "$(ep_json_escape "$EP_ERR")"
 		fi
@@ -701,7 +710,7 @@ cmd_start() {
 	[ "$enabled" = "1" ] || { echo "EasyProxy is disabled. Set easyproxy.main.enabled=1 to enable." >&2; return 1; }
 	engine="$(ep_get main engine none)"
 	[ "$engine" != "none" ] || { echo "No proxy engine selected." >&2; return 1; }
-	[ "$engine" = "sing-box" ] || { printf '%s is 开发中 (dev): %s\n' "$engine" "$(ep_engine_dev_reason "$engine")" >&2; return 2; }
+	[ "$(ep_engine_is_dev "$engine")" = "0" ] || { printf '%s is 开发中 (dev): %s\n' "$engine" "$(ep_engine_dev_reason "$engine")" >&2; return 2; }
 	binary="$(ep_engine_binary "$engine")"
 	[ "$(ep_binary_state "$binary")" = "available" ] || { echo "Engine binary is missing: $binary" >&2; return 1; }
 
@@ -710,7 +719,7 @@ cmd_start() {
 		return 0
 	fi
 
-	if ! ep_config_build "$(ep_engine_config_path "$engine")"; then
+	if ! ep_engine_config_generate "$engine" "$(ep_engine_config_path "$engine")"; then
 		echo "Config generation failed: $EP_ERR" >&2
 		return 1
 	fi
@@ -911,17 +920,17 @@ cmd_bypass() {
 }
 
 cmd_run() {
-	local engine binary cfg child rc
+	local engine binary cfg child rc adapter
 	# Rule sets are prepared by `config generate`; never block boot on a download
 	EP_RULE_SET_NO_FETCH=1
 	engine="$(ep_get main engine none)"
 	[ "$(ep_bool "$(ep_get main enabled 0)")" = "1" ] || { echo "EasyProxy is disabled." >&2; return 1; }
 	[ "$engine" != "none" ] || { echo "No proxy engine selected." >&2; return 1; }
-	[ "$engine" = "sing-box" ] || { printf '%s is 开发中 (dev): %s\n' "$engine" "$(ep_engine_dev_reason "$engine")" >&2; return 2; }
+	[ "$(ep_engine_is_dev "$engine")" = "0" ] || { printf '%s is 开发中 (dev): %s\n' "$engine" "$(ep_engine_dev_reason "$engine")" >&2; return 2; }
 	binary="$(ep_engine_binary "$engine")"
 	[ "$(ep_binary_state "$binary")" = "available" ] || { echo "Engine binary is missing: $binary" >&2; return 1; }
 	cfg="$(ep_engine_config_path "$engine")"
-	ep_config_build "$cfg" || { echo "Config generation failed: $EP_ERR" >&2; return 1; }
+	ep_engine_config_generate "$engine" "$cfg" || { echo "Config generation failed: $EP_ERR" >&2; return 1; }
 
 	child=""
 	mkdir -p "$EP_RUNTIME_DIR" 2>/dev/null
@@ -936,12 +945,26 @@ cmd_run() {
 	ep_log "starting $engine with $binary"
 	# The engine's own log lands in the same file the panel reads. procd already
 	# captures stdout to syslog, but a file is what "日志中心" and `doctor` look at.
+	# Start through the adapter: sing-box takes `run -c`, mihomo takes `-f -d`,
+	# and only the adapter knows which. It runs in a subshell so its exec
+	# replaces that subshell and the parent still sees the engine's exit code.
+	# Without an adapter (sandbox, partial install) fall back to the sing-box
+	# command line, which is what this code did before mihomo existed.
+	adapter="$(ep_engine_adapter_file "$engine")"
 	if [ -n "${EP_LOG_FILE:-}" ] && [ -d "$(dirname "$EP_LOG_FILE")" ]; then
 		[ -e "$EP_LOG_FILE" ] || { ( umask 077; : >> "$EP_LOG_FILE" ); chmod 600 "$EP_LOG_FILE" 2>/dev/null; }
 		echo "=== $(date '+%Y-%m-%d %H:%M:%S') engine start: $binary ===" >> "$EP_LOG_FILE" 2>/dev/null
-		"$binary" run -c "$cfg" >> "$EP_LOG_FILE" 2>&1 &
+		if [ -n "$adapter" ] && [ -r "$adapter" ]; then
+			( ep_engine_verb "$engine" run ) >> "$EP_LOG_FILE" 2>&1 &
+		else
+			"$binary" run -c "$cfg" >> "$EP_LOG_FILE" 2>&1 &
+		fi
 	else
-		"$binary" run -c "$cfg" &
+		if [ -n "$adapter" ] && [ -r "$adapter" ]; then
+			( ep_engine_verb "$engine" run ) &
+		else
+			"$binary" run -c "$cfg" &
+		fi
 	fi
 	child=$!
 	wait "$child"

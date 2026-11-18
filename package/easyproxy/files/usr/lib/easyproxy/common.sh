@@ -58,7 +58,7 @@ ep_get() {
 
 ep_valid_engine() {
 	case "$1" in
-		none|dae|sing-box) return 0 ;;
+		none|dae|sing-box|mihomo) return 0 ;;
 		*) return 1 ;;
 	esac
 }
@@ -67,7 +67,24 @@ ep_adapter_path() {
 	case "$1" in
 		dae) printf '%s' "$EP_LIB_DIR/adapters/dae.sh" ;;
 		sing-box) printf '%s' "$EP_LIB_DIR/adapters/sing-box.sh" ;;
+		mihomo) printf '%s' "$EP_LIB_DIR/adapters/mihomo.sh" ;;
 		*) return 1 ;;
+	esac
+}
+
+# Generate the config file for the selected engine.
+#
+# cmd_start and the init script both used to call ep_config_build directly on
+# every engine. With a second engine that is not a cosmetic problem: mihomo was
+# handed sing-box JSON, its `check -c` validation argument turned into a stray
+# long-lived process that squatted on 7890, and the panel reported a proxy that
+# was not actually proxying anything. Everything that generates config now goes
+# through here, so adding an engine means touching one place.
+ep_engine_config_generate() {
+	local engine="$1" path="$2"
+	case "$engine" in
+		mihomo) ep_mihomo_config_build "$path" ;;
+		*) ep_config_build "$path" ;;
 	esac
 }
 
@@ -76,6 +93,7 @@ ep_engine_section() {
 	case "$1" in
 		dae) printf '%s' 'dae' ;;
 		sing-box) printf '%s' 'sing_box' ;;
+		mihomo) printf '%s' 'mihomo' ;;
 		*) return 1 ;;
 	esac
 }
@@ -91,6 +109,7 @@ ep_engine_binary() {
 	section="$(ep_engine_section "$1")" || return 0
 	case "$1" in
 		dae) ep_get "$section" binary '/usr/bin/dae' ;;
+		mihomo) ep_get "$section" binary '/usr/bin/mihomo' ;;
 		sing-box) recorded="$(ep_get "$section" binary '/usr/bin/sing-box')" ;;
 		*) return 0 ;;
 	esac
@@ -114,6 +133,7 @@ ep_engine_config_path() {
 	section="$(ep_engine_section "$1")" || return 0
 	case "$1" in
 		dae) ep_get "$section" config_file '/etc/easyproxy/dae.conf' ;;
+		mihomo) ep_get "$section" config_file '/etc/easyproxy/mihomo.yaml' ;;
 		sing-box) ep_get "$section" config_file '/etc/easyproxy/sing-box.json' ;;
 	esac
 }
@@ -233,13 +253,21 @@ ep_rule_set_state() {
 
 # ok | invalid | missing — validated with the engine binary when one is installed
 ep_config_state() {
-	local engine binary path
+	local engine binary path rc
 	engine="$(ep_get main engine none)"
 	binary="$(ep_engine_binary "$engine")"
 	path="$(ep_engine_config_path "$engine")"
 	[ -n "$path" ] && [ -s "$path" ] || { printf '%s' 'missing'; return 0; }
 	if [ "$(ep_binary_state "$binary")" = "available" ]; then
-		if "$binary" check -c "$path" >/dev/null 2>&1; then
+		ep_engine_verb "$engine" validate >/dev/null 2>&1
+		rc=$?
+		# 127 means "this engine has no adapter here" (test sandbox, partial
+		# uninstall), not "the config is broken" - keep the historical check.
+		if [ "$rc" = "127" ]; then
+			"$binary" check -c "$path" >/dev/null 2>&1
+			rc=$?
+		fi
+		if [ "$rc" = "0" ]; then
 			printf '%s' 'ok'
 		else
 			printf '%s' 'invalid'
@@ -272,7 +300,7 @@ ep_utc_now() {
 # implemented: the CLI refuses to start it and status says so instead of
 # pretending something is running.
 ep_engine_list() {
-	printf 'sing-box:stable\ndae:dev\n'
+	printf 'sing-box:stable\nmihomo:stable\ndae:dev\n'
 }
 
 ep_engine_stability() {
@@ -312,10 +340,37 @@ ep_engine_adapter_file() {
 	ep_adapter_path "$1" 2>/dev/null
 }
 
-# First version line of the engine binary, empty when it cannot be asked
+# Function prefix an adapter exposes: sing-box -> sing_box (a dash cannot be
+# part of a shell function name).
+ep_engine_prefix() {
+	printf '%s' "$1" | tr '-' '_'
+}
+
+# Source that engine's adapter and call "<prefix>_<verb>".
+#
+# Why route through here instead of calling the binary directly: validation is
+# `check -c` for sing-box but `-t -f` for mihomo, and the version flag differs
+# the same way. Hardcoding one of them in shared code silently mis-reports the
+# other engine. Returns 127 when the engine has no adapter at all, so a caller
+# can tell "not implemented" apart from "failed".
+ep_engine_verb() {
+	local engine="$1" verb="$2" adapter prefix
+	shift 2
+	adapter="$(ep_adapter_path "$engine" 2>/dev/null)" || return 127
+	[ -r "$adapter" ] || return 127
+	. "$adapter"
+	prefix="$(ep_engine_prefix "$engine")"
+	command -v "${prefix}_${verb}" >/dev/null 2>&1 || return 127
+	"${prefix}_${verb}" "$@"
+}
+
+# First version line of the engine binary, empty when it cannot be asked.
+# The adapter knows the flag (`version` for sing-box, `-v` for mihomo); the
+# direct call stays as a fallback for engines without an adapter.
 ep_engine_version() {
-	local binary="$1"
+	local binary="$1" engine="${2:-sing-box}"
 	[ -n "$binary" ] && [ -x "$binary" ] || return 0
+	ep_engine_verb "$engine" version 2>/dev/null && return 0
 	"$binary" version 2>/dev/null | head -n 1
 }
 
