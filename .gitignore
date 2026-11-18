@@ -3,3 +3,4 @@ test-logs/
 # uploaded next to the current one, and the installer then picked the old one.
 dist/*.ipk
 dist/SHA256SUMS
+build/

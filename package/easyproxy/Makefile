@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=easyproxy
 PKG_VERSION:=0.8.14
-PKG_RELEASE:=2
+PKG_RELEASE:=3
 
 PKG_LICENSE:=MIT
 PKG_MAINTAINER:=EasyProxy Contributors
@@ -13,7 +13,7 @@ define Package/easyproxy
   SECTION:=utils
   CATEGORY:=Utilities
   TITLE:=EasyProxy proxy manager
-  DEPENDS:=+uci +luci-base
+  DEPENDS:=+uci +luci-base +sing-box
   PKGARCH:=all
 endef
 

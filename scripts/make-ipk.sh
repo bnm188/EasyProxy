@@ -88,7 +88,7 @@ SIZE="$(du -sk "$D" | awk '{print $1}')"
 cat > "$STAGE/control/control" <<EOF
 Package: easyproxy
 Version: ${VER}-${REL}
-Depends: uci, luci-base
+Depends: uci, luci-base, sing-box
 Architecture: ${ARCH}
 Maintainer: EasyProxy Contributors
 Section: utils

@@ -68,3 +68,40 @@ status 取 `ok|warn|fail`。脚本据此判断，不必解析文本。
 
 `ep_adapter_path` 用 `EP_LIB_DIR`（默认 `/usr/lib/easyproxy`）拼路径，测试可整体
 搬到沙箱里跑。要接第三个内核，只需加一个适配器文件并在 `ep_engine_list` 注册。
+
+## 内核独立发包
+
+内核二进制不再塞进 `easyproxy` 主包。主包是 shell 脚本、`PKGARCH:=all`，内核是
+按架构编译的 ELF，两者混在一起有两个后果：一个 `all` 包里可能装着 amd64 二进制
+被装到 ARM 路由器上，以及每改一行脚本都要重传几十兆。
+
+于是拆成两个包：
+
+| 包 | 内容 | 架构 | 版本 |
+|---|---|---|---|
+| `easyproxy` | 脚本 + 配置 + 面板，约 79 KB | `all` | 0.8.14-N（`PKG_RELEASE` 递增） |
+| `sing-box` | 只有引擎二进制，装在 `/usr/bin/sing-box` | 具体架构，不能是 `all` | 跟随引擎自身，如 `1.14.4-ob45` |
+
+主包声明 `DEPENDS:=+sing-box`，装主包时引擎自动带下来；升级主包只拉 79 KB。
+
+### 构建
+
+```
+sh scripts/make-kernel-ipk.sh sing-box x86_64 dist      # 上游下载 + sha256 校验
+EP_SRC=/path/to/musl-sing-box sh scripts/make-kernel-ipk.sh sing-box x86_64 dist
+```
+
+两条路：默认从上游 Release 下载并核对内置 sha256；`EP_SRC` 则打包本机已有的二进制
+（版本号从二进制自己读，`-openbox-45` 归一成 `-ob45`，因为 opkg 把最后一个 `-`
+切成 version 和 release）。
+
+### 一条真机踩过的坑：glibc 版在 musl 固件上装得上、跑不起来
+
+上游 `linux-amd64` 是 glibc 构建。在 Kwrt（musl）上 `opkg install` 成功，执行时
+报 `cannot execute: required file not found` —— 二进制指定的动态链接器是 glibc 的
+`/lib64/ld-linux-x86-64.so.2`，而这台机器只有 `/lib/ld-musl-x86_64.so.1`。所以
+musl 固件必须用 `EP_SRC` 打包一个 musl 构建的内核，不能直接用上游包。
+
+另一个坑是容器格式：`opkg` 拒收 27 MB 的 `ar` 布局包（`pkg_init_from_file:
+Malformed package file`），同一内容改成 gzip tar 布局就正常安装。两个打包脚本
+现在都用 gzip tar。
