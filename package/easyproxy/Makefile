@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=easyproxy
 PKG_VERSION:=0.8.14
-PKG_RELEASE:=12
+PKG_RELEASE:=13
 
 PKG_LICENSE:=MIT
 PKG_MAINTAINER:=EasyProxy Contributors

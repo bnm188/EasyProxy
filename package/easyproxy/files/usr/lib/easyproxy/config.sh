@@ -161,6 +161,38 @@ ep_route_mode() {
 	printf '%s' 'direct'
 }
 
+# Route mode as the selected engine will really behave, not as sing-box alone
+# would. sing-box needs geosite-cn.srs / geoip-cn.srs on disk before it may split;
+# mihomo answers GEOIP,CN from the geoip.metadb shipped inside its own package,
+# so a box with nodes but no .srs files is splitting under mihomo and direct
+# under sing-box. Reporting the sing-box answer while mihomo is selected told the
+# panel "direct only" on a box whose traffic was in fact fully proxied.
+ep_effective_route_mode() {
+	local engine nodes
+	engine="${1:-$(ep_get main engine none)}"
+	nodes="${2:-0}"
+	[ "$nodes" -gt 0 ] 2>/dev/null || nodes=0
+	case "$engine" in
+		mihomo)
+			if [ "$nodes" -gt 0 ]; then printf 'split'; else printf 'direct'; fi
+			;;
+		*)
+			ep_route_mode "$nodes"
+			;;
+	esac
+}
+
+# Rule sets are a sing-box concept. mihomo carries its geo database inside the
+# package, so for the panel's "CN rule set" tile that state is always ready.
+ep_effective_rule_set_state() {
+	local engine
+	engine="${1:-$(ep_get main engine none)}"
+	case "$engine" in
+		mihomo) printf 'ready' ;;
+		*) ep_rule_set_state ;;
+	esac
+}
+
 # The two safety knobs are locked ON. Both are still readable as UCI keys so old
 # configs load, but their values are not honoured; a wrong value only produces a
 # warning explaining that the lock kept the safe behaviour.

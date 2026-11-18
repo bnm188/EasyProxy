@@ -339,6 +339,20 @@ if [ -s "$MIHOMO_YAML" ]; then
 	# those domains were still decided by GEOIP,CN alone. Assert they land in
 	# the YAML, and that they sit in front of the geo rule.
 	grep -q '  - DOMAIN-SUFFIX,youtube.com,PROXY' "$MIHOMO_YAML" && ok "平台规则进 YAML（YouTube）" || no "平台规则进 YAML"
+	# status must speak for the engine that is actually selected: mihomo splits
+	# without the sing-box .srs files, so a box with nodes but no rule sets was
+	# being reported as "direct only" while every packet went through the proxy.
+	rm -f "$SB/rules/"*.srs 2>/dev/null
+	out="$("$EP" status --json)"
+	json_py "import json,sys;d=json.loads(sys.argv[1]);print(d.get('engine'),d.get('route_mode'),d.get('rule_set_state'))" "$out" > "$SB/mh-mode" 2>/dev/null || printf 'parse-error' > "$SB/mh-mode"
+	[ "$(cat "$SB/mh-mode")" = "mihomo split ready" ] && ok "mihomo 下 status 报 split（不因缺 srs 误报 direct）" || no "mihomo 下 status 报 split" "$(cat "$SB/mh-mode")"
+	write_ucis 1 sing-box "$SB/bin/sing-box" 7890 1
+	out="$("$EP" status --json)"
+	json_py "import json,sys;d=json.loads(sys.argv[1]);print(d.get('engine'),d.get('route_mode'),d.get('rule_set_state'))" "$out" > "$SB/sb-mode" 2>/dev/null || printf 'parse-error' > "$SB/sb-mode"
+	[ "$(cat "$SB/sb-mode")" = "sing-box direct missing" ] && ok "同一台机器切回 sing-box 仍按 srs 缺失报 direct（fail closed 不变）" || no "sing-box 侧判定未被放宽" "$(cat "$SB/sb-mode")"
+	write_ucis 1 mihomo "$SB/bin/sing-box" 7890 1
+	printf '%s\n' 'easyproxy.mihomo.config_file='$MIHOMO_YAML 'easyproxy.mihomo.binary='$SB/bin/mihomo 'easyproxy.mihomo.home='$SB/etc/mihomo >> "$SB/etc/uci.db"
+
 	mode_line="$(sh "$SB/probe-mihomo.sh" 2>/dev/null | sed -n 's/^MODE=//p' | tail -1)"
 	case "$mode_line" in
 		split) ok "摘要不会把 mihomo 误报成 direct only" ;;

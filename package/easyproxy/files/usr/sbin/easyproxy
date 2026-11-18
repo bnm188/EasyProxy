@@ -117,12 +117,14 @@ cmd_status_text() {
 	printf 'Proxy policy: %s\n' "$proxy"
 	printf 'Fail closed: %s\n' "$fail_closed"
 	printf 'Nodes: %s\n' "$nodes"
-	if [ "$(ep_rule_set_state)" = "ready" ]; then
+	if [ "$(ep_get main engine none)" = "mihomo" ]; then
+		printf 'Rule sets: builtin (geoip.metadb ships with mihomo)\n'
+	elif [ "$(ep_rule_set_state)" = "ready" ]; then
 		printf 'Rule sets: ready (%s)\n' "$(ep_rule_set_dir)"
 	else
 		printf 'Rule sets: missing (%s)\n' "$(ep_rule_set_dir)"
 	fi
-	case "$(ep_route_mode "$nodes")" in
+	case "$(ep_effective_route_mode "$(ep_get main engine none)" "$nodes")" in
 		split)
 			printf 'Routing: split (China direct, others proxied)\n' ;;
 		*)
@@ -179,7 +181,7 @@ cmd_status_json() {
 	nodes_enabled="$(ep_node_count_enabled)"
 	[ -n "$nodes" ] || nodes="0"
 	[ -n "$nodes_enabled" ] || nodes_enabled="0"
-	rule_set_state="$(ep_rule_set_state)"
+	rule_set_state="$(ep_effective_rule_set_state "$engine")"
 	transparent="$(ep_bool "$(ep_get transparent enabled 0)")"
 	tproxy_port="$(ep_tproxy_port)"
 	tproxy_state="$(ep_transparent_state)"
@@ -201,7 +203,7 @@ cmd_status_json() {
 	listen_port="$(ep_get main listen_port 7890)"
 	listen_open="$(ep_port_listening "$listen_port")"
 
-	route_mode="$(ep_route_mode "$nodes_enabled")"
+	route_mode="$(ep_effective_route_mode "$engine" "$nodes_enabled")"
 	if [ "$route_mode" = "split" ]; then
 		china_rule=1
 		route_rules=2
