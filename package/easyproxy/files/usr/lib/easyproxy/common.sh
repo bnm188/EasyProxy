@@ -2,7 +2,7 @@
 
 EP_CONFIG="easyproxy"
 EP_CONFIG_FILE="${EP_CONFIG_FILE:-/etc/config/easyproxy}"
-EP_VERSION="0.8.13"
+EP_VERSION="0.8.14"
 EP_STAGE="7"
 
 EP_RUNTIME_DIR="${EP_RUNTIME_DIR:-/var/run/easyproxy}"
@@ -344,12 +344,21 @@ ep_port_listening() {
 	fi
 }
 
-# Milliseconds since the epoch, second granularity when %N is unavailable
+# Monotonic milliseconds from /proc/uptime. busybox `date` ignores %3N and
+# silently prints plain seconds, so a probe that finished inside one second
+# always subtracted to 0 ms and the panel showed "latency 0".
 ep_now_ms() {
-	local ms
-	ms="$(date +%s%3N 2>/dev/null)"
+	local up ms
+	up="$(cut -d' ' -f1 /proc/uptime 2>/dev/null)"
+	case "$up" in
+		*.*)
+			ms="$(printf '%s' "$up" | awk -F. '{printf "%d", $1 * 1000 + substr($2 "00", 1, 2) * 10}' 2>/dev/null)"
+			;;
+		''|*[!0-9]*) ms="" ;;
+		*) ms="$(( ${up:-0} * 1000 ))" ;;
+	esac
 	case "$ms" in
-		''|*[!0-9]*) ms=$(( $(date +%s) * 1000 )) ;;
+		''|*[!0-9]*) ms="$(( $(date +%s 2>/dev/null || echo 0) * 1000 ))" ;;
 	esac
 	printf '%s' "$ms"
 }
@@ -525,8 +534,12 @@ ep_node_resolve() {
 }
 
 # Region bucket for automatic grouping; unknown names land in "other"
+# Region of a node: "<name> [server]". The name is the primary source; when it
+# carries no country the server token (jp01, hk2, us3 ...) decides, because a
+# renamed node ("11") lost its region and fell into auto-other.
 ep_node_region() {
-	local name
+	local name server token
+	name="$1"; server="${2:-}"
 	case "$1" in
 		# unnamed nodes fall back to their UCI id ("@node[3]"), which must not
 		# be scanned for region keywords: "node" contains "de".
@@ -534,17 +547,26 @@ ep_node_region() {
 	esac
 	name="$(printf '%s' "$1" | tr 'A-Z' 'a-z')"
 	case "$name" in
-		*hk*|*hongkong*|*"hong kong"*|*香港*) printf 'hk' ;;
-		*tw*|*taiwan*|*台湾*|*台灣*) printf 'tw' ;;
-		*jp*|*japan*|*日本*|*东京*|*東京*|*大阪*) printf 'jp' ;;
-		*sg*|*singapore*|*新加坡*) printf 'sg' ;;
-		*us*|*unitedstates*|*"united states"*|*美国*|*美國*|*洛杉矶*|*硅谷*) printf 'us' ;;
-		*uk*|*gb*|*london*|*英国*|*英國*|*伦敦*) printf 'uk' ;;
-		*de*|*germany*|*德国*|*德國*|*法兰克福*) printf 'de' ;;
-		*kr*|*korea*|*韩国*|*韓國*|*首尔*) printf 'kr' ;;
-		*ru*|*russia*|*俄罗斯*|*俄羅斯*|*莫斯科*) printf 'ru' ;;
-		*) printf 'other' ;;
+		*hk*|*hongkong*|*"hong kong"*|*香港*) printf 'hk' ; return 0 ;;
+		*tw*|*taiwan*|*台湾*|*台灣*) printf 'tw' ; return 0 ;;
+		*jp*|*japan*|*日本*|*东京*|*東京*|*大阪*) printf 'jp' ; return 0 ;;
+		*sg*|*singapore*|*新加坡*) printf 'sg' ; return 0 ;;
+		*us*|*unitedstates*|*"united states"*|*美国*|*美國*|*洛杉矶*|*硅谷*) printf 'us' ; return 0 ;;
+		*uk*|*gb*|*london*|*英国*|*英國*|*伦敦*) printf 'uk' ; return 0 ;;
+		*de*|*germany*|*德国*|*德國*|*法兰克福*) printf 'de' ; return 0 ;;
+		*kr*|*korea*|*韩国*|*韓國*|*首尔*) printf 'kr' ; return 0 ;;
+		*ru*|*russia*|*俄罗斯*|*俄羅斯*|*莫斯科*) printf 'ru' ; return 0 ;;
+		*) ;;
 	esac
+	[ -n "$server" ] || { printf 'other'; return 0; }
+	# Only a two-letter country code hugging digits ("jp01", "hk-2") counts:
+	# a bare "us" inside a hostname is too easy to match by accident.
+	token="$(printf '%s' "$server" | tr 'A-Z.\-_' 'a-z///' |
+		awk -F/ '{for (i = 1; i <= NF; i++) if ($i ~ /^(hk|tw|jp|sg|us|uk|gb|de|kr|ru)[0-9]/) { print substr($i, 1, 2); exit }}')"
+	case "$token" in
+		hk|tw|jp|sg|us|uk|gb|de|kr|ru) printf '%s' "$token"; return 0 ;;
+	esac
+	printf 'other'
 }
 
 # Distinct regions across enabled nodes, "other" last
@@ -555,7 +577,7 @@ ep_node_regions() {
 		[ "$(ep_get "$section" enabled 1)" = "1" ] || continue
 		# a section with no type is a placeholder, not a node: no group for it
 		[ -n "$(ep_get "$section" type '')" ] || continue
-		region="$(ep_node_region "$(ep_node_tag "$section")")"
+		region="$(ep_node_region "$(ep_node_tag "$section")" "$(ep_get "$section" server '')")"
 		case " $seen " in
 			*" $region "*) continue ;;
 		esac
@@ -575,7 +597,7 @@ ep_node_sections_in_region() {
 	for section in $(ep_node_sections); do
 		[ "$(ep_get "$section" enabled 1)" = "1" ] || continue
 		[ -n "$(ep_get "$section" type '')" ] || continue
-		[ "$(ep_node_region "$(ep_node_tag "$section")")" = "$1" ] && printf '%s\n' "$section"
+		[ "$(ep_node_region "$(ep_node_tag "$section")" "$(ep_get "$section" server '')")" = "$1" ] && printf '%s\n' "$section"
 	done
 }
 

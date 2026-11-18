@@ -109,6 +109,12 @@ vjson="$(env PATH="$SB/bin:$PATH" EP_TEST_UCI_DB="$SB/etc/uci.db" "$EP" version 
 [ "$(printf '%s' "$out" | json_get "['binary_ok']")" = "1" ] && ok "binary_ok=1（二进制可执行）" || no "binary_ok=1"
 [ "$(printf '%s' "$out" | json_get "['route_mode']")" = "direct" ] && ok "route_mode=direct（无规则集，fail_closed 默认 1）" || no "route_mode=direct" "$(printf '%s' "$out" | json_get "['route_mode']")"
 
+# --- 2b. command JSON parity: subscribe / diag --------------------------------
+out="$("$EP" subscribe --json 2>/dev/null)"
+printf '%s' "$out" | python3 -m json.tool >/dev/null 2>&1 && ok "subscribe --json 是合法 JSON" || no "subscribe --json 是合法 JSON" "$out"
+printf '%s' "$out" | grep -q 'remem' && ok "subscribe --json 带 remembered 字段" || no "subscribe --json 带 remembered 字段" "$out"
+printf '%s' "$out" | grep -q 'token=' && no "subscribe --json 不泄露订阅 token" "$out" || ok "subscribe --json 泄漏检查"
+
 # --- 2. missing binary is reported, not invented ----------------------------
 mv "$SB/bin/sing-box" "$SB/bin/sing-box.off"
 out="$("$EP" status --json)"

@@ -450,7 +450,7 @@ cmd_node_list() {
 	if [ "$JSON" = "1" ]; then
 		printf '{"ok":true,"nodes":['
 		for section in $(ep_node_sections); do
-			region="$(ep_node_region "$(ep_node_tag "$section")")"
+			region="$(ep_node_region "$(ep_node_tag "$section")" "$(ep_get "$section" server '')")"
 			[ "$first" = "1" ] || printf ','
 			first=0
 			printf '{"section":"%s","name":"%s","type":"%s","server":"%s","port":"%s","region":"%s","group":"auto-%s","enabled":%s}' \
@@ -477,7 +477,7 @@ cmd_node_list() {
 	fi
 	printf '%-20s %-14s %-24s %-8s %s\n' "NODE" "TYPE" "SERVER:PORT" "REGION" "GROUP"
 	for section in $(ep_node_sections); do
-		region="$(ep_node_region "$(ep_node_tag "$section")")"
+		region="$(ep_node_region "$(ep_node_tag "$section")" "$(ep_get "$section" server '')")"
 		printf '%-20s %-14s %-24s %-8s %s\n' \
 			"$(ep_node_tag "$section")" \
 			"$(ep_get "$section" type '')" \
@@ -1350,7 +1350,7 @@ diag_upload() {
 }
 
 cmd_diag() {
-	local upload path rc auto
+	local upload path rc auto bytes
 	upload=0
 	auto=0
 	case "$SUB" in
@@ -1366,7 +1366,20 @@ cmd_diag() {
 	esac
 	path="${EP_DIAG_OUT:-/tmp/easyproxy-diag-$(date -u '+%Y%m%dT%H%M%SZ').txt}"
 	diag_collect "$path" >/dev/null 2>&1
-	[ "$auto" = 1 ] || echo "diagnostic bundle: $path ($(wc -c < "$path" 2>/dev/null | tr -d ' ') bytes)"
+	bytes="$(wc -c < "$path" 2>/dev/null | tr -d ' ')"
+	if [ "$JSON" = "1" ]; then
+		if [ "$upload" = 1 ]; then
+			if diag_upload "$path" >/dev/null 2>&1; then up=true; else up=false; fi
+			printf '{"ok":%s,"path":"%s","bytes":%s,"uploaded":%s}\n' \
+				"$up" "$(ep_json_escape "$path")" "${bytes:-0}" "$up"
+			[ "$up" = "true" ] && return 0
+			return 1
+		fi
+		printf '{"ok":true,"path":"%s","bytes":%s,"uploaded":false}\n' \
+			"$(ep_json_escape "$path")" "${bytes:-0}"
+		return 0
+	fi
+	[ "$auto" = 1 ] || echo "diagnostic bundle: $path (${bytes:-0} bytes)"
 	if [ "$upload" = 1 ]; then
 		diag_upload "$path" || return $?
 		return 0
@@ -1744,10 +1757,46 @@ sub_update() {
 	cmd_subscribe "$url" "$prefix"
 }
 
+# Never print the subscription token: the URL is a credential, so JSON only
+# carries the host and whether a subscription is remembered at all.
+sub_status_json() {
+	local url="" prefix="" host="" daily=0
+	if [ -r "$EP_SUB_CONF" ]; then
+		prefix="$(sed -n 's/^prefix=//p' "$EP_SUB_CONF" 2>/dev/null)"
+		url="$(sed -n 's/^url=//p' "$EP_SUB_CONF" 2>/dev/null)"
+		case "$url" in
+			http://*|https://*)
+				host="${url#*://}"
+				host="${host%%/*}"
+				host="${host%%\?*}"
+				;;
+		esac
+	fi
+	if crontab -l 2>/dev/null | grep -q 'easyproxy-sub-daily'; then
+		daily=1
+	fi
+	printf '{"ok":true,"remembered":%s,"prefix":"%s","host":"%s","daily":%s}\n' \
+		"$([ -n "$url" ] && printf true || printf false)" \
+		"$(ep_json_escape "$prefix")" \
+		"$(ep_json_escape "$host")" \
+		"$daily"
+}
+
 cmd_subscribe() {
 	local url="${1:-}"
 	local prefix="${2:-}"
 	local lib="${EP_SUBSCRIBE_LIB:-/usr/lib/easyproxy/subscribe.sh}"
+	if [ "$JSON" = "1" ]; then
+		case "$url" in
+			"") sub_status_json; return 0 ;;
+			--show|show) sub_status_json; return 0 ;;
+			--update|update) JSON=1; sub_update; return $? ;;
+			--forget)
+				[ -f "$EP_SUB_CONF" ] && rm -f "$EP_SUB_CONF"
+				printf '{"ok":true,"remembered":false,"cleared":true}\n'
+				return 0 ;;
+		esac
+	fi
 	case "$url" in
 		--update|update) sub_update; return $? ;;
 		--daily|daily) sub_daily "${prefix:-}"; return $? ;;

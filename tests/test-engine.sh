@@ -229,6 +229,14 @@ out="$("$EP" node test 2>&1)"; rc=$?
 [ "$rc" -ne 0 ] && ok "全部不可达时 node test 退出码非 0" || no "全部不可达时 node test 退出码非 0" "rc=$rc"
 printf '%s' "$out" | grep -q 'unreachable' && ok "node test 报 unreachable" || no "node test 报 unreachable" "$out"
 
+# The probe clock must be millisecond-precise: busybox date prints seconds
+# for %3N, which made every sub-second handshake report latency 0.
+delta="$(sh -c ". '$SRC/package/easyproxy/files/usr/lib/easyproxy/common.sh'; a=\$(ep_now_ms); sleep 0.12; b=\$(ep_now_ms); echo \$((b-a))" 2>/dev/null)"
+case "$delta" in
+	''|*[!0-9]*) no "探测时钟是毫秒级" "got=$delta" ;;
+	*) if [ "$delta" -ge 50 ] && [ "$delta" -le 400 ]; then ok "探测时钟是毫秒级"; else no "探测时钟是毫秒级" "delta=$delta"; fi ;;
+esac
+
 # --- 7. config generation refinements -------------------------------------
 write_ucis 1 sing-box
 "$EP" config generate >/dev/null 2>&1

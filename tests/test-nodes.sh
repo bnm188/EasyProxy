@@ -194,6 +194,15 @@ json_py "import json;d=json.load(open('$SB/list.json'));print(sorted(g['tag'] fo
 json_py "import json;d=json.load(open('$SB/list.json'));print([n['group'] for n in d['nodes'] if n['name']=='hk-04'][0])" > "$SB/n3"
 [ "$(cat "$SB/n3")" = "auto-hk" ] && ok "单节点也能报出所属分组" || no "单节点也能报出所属分组" "$(cat "$SB/n3")"
 
+# --- 5b. region fallback: a renamed node must still find its group ----------
+reg() { sh -c ". '$SB/usr/lib/easyproxy/common.sh'; ep_node_region \"$1\" \"$2\""; }
+r="$(reg "11" "3.d.s.p.r.x.0.8.d.jp01-ae5.entry.v51124-4.qpon")"
+[ "$r" = "jp" ] && ok "名称为空泛时按服务器 token 判地区" || no "服务器 token 判地区" "got=$r"
+r="$(reg "任意名" "host.us3.example.com")"
+[ "$r" = "us" ] && ok "服务器 us3 token 判 us" || no "服务器 us3 token 判 us" "got=$r"
+r="$(reg "任意名" "")"
+[ "$r" = "other" ] && ok "名称与地址都无线索才判 other" || no "无线索判 other" "got=$r"
+
 # --- 6. export round-trip ----------------------------------------------------
 say "== node export =="
 out="$("$EP" node export hk-05 2>&1)"
