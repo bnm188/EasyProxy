@@ -17,6 +17,7 @@ return view.extend({
 	render: function (d) {
 		app.injectStyle();
 		return E('div', { class: 'ep-wrap' }, [
+			app.topBar(),
 			app.tabs([
 				['kernel', '内核管理', app.pageEngines(d)]
 			])

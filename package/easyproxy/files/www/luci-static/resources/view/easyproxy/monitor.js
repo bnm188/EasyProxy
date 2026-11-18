@@ -18,6 +18,7 @@ return view.extend({
 	render: function (d) {
 		app.injectStyle();
 		return E('div', { class: 'ep-wrap' }, [
+			app.topBar(),
 			app.tabs([
 				['live', '实时连接', app.pageLive(d.status, d.conn)],
 				['conn', '入站设置', app.pageConn({ cfg: d.cfg })],

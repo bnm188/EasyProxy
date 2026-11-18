@@ -18,6 +18,7 @@ return view.extend({
 	render: function (d) {
 		app.injectStyle();
 		return E('div', { class: 'ep-wrap' }, [
+			app.topBar(),
 			app.tabs([
 				['upd', '更新与诊断', app.pageUpdate({ status: d.status, doctor: d.doctor })]
 			])

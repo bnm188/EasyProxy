@@ -23,6 +23,7 @@ return view.extend({
 	render: function (d) {
 		app.injectStyle();
 		return E('div', { class: 'ep-wrap' }, [
+			app.topBar(),
 			app.tabs([
 				['basic', '基础设置', app.pageSettings(d.set)],
 				['safety', '管理密码', app.pageSafety()],

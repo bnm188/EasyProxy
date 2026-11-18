@@ -15,6 +15,7 @@ return view.extend({
 	render: function (d) {
 		app.injectStyle();
 		return E('div', { class: 'ep-wrap' }, [
+			app.topBar(),
 			app.tabs([
 				['split', '分流策略', app.pageSplit({ status: d.status, cfg: d.cfg })],
 				['rules', '规则集', app.pageRules({ rules: d.rules })]

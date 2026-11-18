@@ -9,7 +9,7 @@ return view.extend({
 	render: function (status) {
 		app.injectStyle();
 		return E('div', { class: 'ep-wrap' }, [
-			app.clockBar(),
+			app.topBar(),
 			app.kpiLive(status),
 			app.pageOverview(status)
 		]);

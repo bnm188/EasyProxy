@@ -21,8 +21,8 @@ var CSS = [
 '.ep-wrap{position:relative;isolation:isolate;font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Noto Sans SC","Segoe UI",system-ui,sans-serif;color:#1b2229;padding:16px 16px 28px;border-radius:18px;background:linear-gradient(155deg,rgba(230,240,251,.96) 0%,rgba(234,242,247,.96) 30%,rgba(242,240,251,.96) 62%,rgba(248,243,236,.96) 100%)}',
 '.ep-wrap::before{content:"";position:absolute;inset:0;border-radius:18px;pointer-events:none;background:radial-gradient(720px 460px at 4% 0%,rgba(56,132,232,.16),transparent 66%),radial-gradient(680px 420px at 100% 6%,rgba(38,196,214,.14),transparent 66%),radial-gradient(720px 460px at 96% 100%,rgba(255,168,124,.11),transparent 66%)}',
 '.ep-wrap>*{position:relative;z-index:1}',
-'.ep-hero{padding:16px 20px;border-radius:20px;border:1px solid rgba(255,255,255,.72);box-shadow:0 14px 38px rgba(22,60,110,.10),inset 0 1px 0 rgba(255,255,255,.9);background:rgba(255,255,255,.52);-webkit-backdrop-filter:blur(32px) saturate(180%);backdrop-filter:blur(32px) saturate(180%);margin-bottom:14px}',
-'.ep-hero h2{margin:0 0 5px;font-size:22px;font-weight:650;letter-spacing:-.3px;color:#141c24}',
+'.ep-hero{padding:14px 18px;border-radius:20px;border:1px solid rgba(255,255,255,.72);box-shadow:0 14px 38px rgba(22,60,110,.10),inset 0 1px 0 rgba(255,255,255,.9);background:rgba(255,255,255,.52);-webkit-backdrop-filter:blur(32px) saturate(180%);backdrop-filter:blur(32px) saturate(180%);margin-bottom:14px}',
+'.ep-hero h2{margin:0 0 4px;font-size:19px;font-weight:650;letter-spacing:-.3px;color:#141c24}',
 '.ep-hero .ep-sub{font-size:12.5px;color:#63727f;line-height:1.6}',
 '.ep-hero-line{height:0;margin:0}',
 '.ep-grid{display:grid;grid-template-columns:1fr;gap:1px;margin:0;background:rgba(120,150,190,.14);border-top:1px solid rgba(255,255,255,.5)}',
@@ -99,6 +99,27 @@ var CSS = [
 '.ep-clock{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 12px;font-size:12px;color:#4c5b6a}',
 '.ep-clock b{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:15px;color:#16202a;letter-spacing:.4px}',
 '.ep-clock .ep-dot-live{width:7px;height:7px;border-radius:50%;background:#0f8bff;display:inline-block;box-shadow:0 0 0 3px rgba(15,139,255,.16)}',
+'.ep-topbar{display:flex;align-items:center;gap:11px;flex-wrap:wrap;padding:9px 14px;margin:0 0 12px;border-radius:14px;border:1px solid rgba(255,255,255,.72);background:rgba(255,255,255,.54);-webkit-backdrop-filter:blur(28px) saturate(180%);backdrop-filter:blur(28px) saturate(180%);box-shadow:0 8px 24px rgba(22,60,110,.08),inset 0 1px 0 rgba(255,255,255,.9)}',
+'.ep-topbar .ep-dot-on{background:#22c55e}',
+'.ep-topbar .ep-dot-off{background:#c2ccd7}',
+'.ep-topbar .ep-top-state{font-size:13px;font-weight:600;color:#16202a;margin-left:-3px}',
+'.ep-topbar .ep-top-state.is-off{color:#7e8c9b;font-weight:500}',
+'.ep-topbar .ep-top-node{font-size:12px;color:#5e6d7d;max-width:46vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+'.ep-topbar .ep-spacer{flex:1 1 auto;min-width:0}',
+'.ep-topbar .ep-top-time{display:flex;align-items:baseline;gap:7px;font-size:11.5px;color:#5e6d7d}',
+'.ep-topbar .ep-top-time b{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px;color:#16202a;letter-spacing:.4px}',
+'.ep-topbar .ep-switch{width:38px;height:22px;flex:0 0 38px}',
+'.ep-topbar .ep-switch:after{width:18px;height:18px}',
+'.ep-topbar .ep-switch:checked:after{left:18px}',
+'.ep-node-tbl td:last-child{overflow:visible}',
+'.ep-node-tbl .ep-node-name{font-weight:600;color:#16202a}',
+'.ep-menu{position:relative;display:inline-block}',
+'.ep-menu summary{list-style:none;cursor:pointer;padding:2px 8px;border-radius:8px;color:#5e6d7d;font-size:15px;line-height:1.2;-webkit-user-select:none;user-select:none}',
+'.ep-menu summary::-webkit-details-marker{display:none}',
+'.ep-menu summary:hover{background:rgba(255,255,255,.85);color:#16202a}',
+'.ep-menu[open] summary{background:rgba(255,255,255,.92)}',
+'.ep-menu-body{position:absolute;right:0;top:27px;z-index:9;display:flex;flex-direction:column;gap:6px;padding:8px;min-width:126px;border-radius:12px;border:1px solid rgba(255,255,255,.85);background:#fff;box-shadow:0 14px 34px rgba(22,60,110,.20)}',
+'.ep-menu-body .ep-btn{margin:0;width:100%;text-align:center}',
 '.ep-pw{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end}',
 '.ep-pw .ep-in{min-width:180px}',
 '@media (prefers-reduced-transparency: reduce){.ep-kpi{background:#fff;-webkit-backdrop-filter:none;backdrop-filter:none}}'
@@ -415,6 +436,93 @@ function tabs(items) {
 	return E('div', { class: 'ep-tabs' }, [nav, E('div', { class: 'ep-subbody' }, panels)]);
 }
 
+/* ===== 顶栏：代理总开关 + 运行状态 + 当前节点 + 北京时间 ===== */
+// 挂在每个页面顶部。总开关同时改 UCI 的 main.enabled 并启停服务，所以重启后
+// 状态不会回滚；节点名取第一个启用的节点，多于一个时带「等 N 个」。
+function topBar() {
+	var dot = E('span', { class: 'ep-dot ep-dot-off' }, '');
+	var state = E('span', { class: 'ep-top-state is-off' }, '读取中');
+	var node = E('span', { class: 'ep-top-node' }, '');
+	var time = E('b', {}, '--:--:--');
+	var dateEl = E('span', {}, '');
+	var sw = E('input', { type: 'checkbox', class: 'ep-switch', title: '代理总开关' });
+	var busy = false;
+	var timer = null;
+	var root = E('div', { class: 'ep-topbar' }, [
+		dot, state, node,
+		E('span', { class: 'ep-spacer' }, ''),
+		E('span', { class: 'ep-top-time' }, [time, dateEl]),
+		sw
+	]);
+
+	function tick() {
+		var now = new Date();
+		try {
+			time.textContent = now.toLocaleTimeString('zh-CN', {
+				timeZone: 'Asia/Shanghai', hour12: false,
+				hour: '2-digit', minute: '2-digit', second: '2-digit'
+			});
+			dateEl.textContent = now.toLocaleDateString('zh-CN', {
+				timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit', weekday: 'short'
+			}).replace(/\//g, '-');
+		} catch (e) {
+			time.textContent = new Date().toTimeString().slice(0, 8);
+		}
+	}
+
+	function paint(st, names) {
+		var running = !!st && st.runtime === 'running';
+		sw.checked = running;
+		dot.className = 'ep-dot ' + (running ? 'ep-dot-on' : 'ep-dot-off');
+		state.className = 'ep-top-state' + (running ? '' : ' is-off');
+		state.textContent = running ? '运行中' : '已停止';
+		var n = st ? (st.nodes_enabled || 0) : 0;
+		if (n > 0)
+			node.textContent = (names.length ? names[0] + (names.length > 1 ? ' 等 ' + n + ' 个节点' : '') : n + ' 个节点') + '启用';
+		else
+			node.textContent = '未启用节点，代理不生效';
+	}
+
+	function refresh() {
+		return Promise.all([cliJson(['status']), cliJson(['node', 'list'])]).then(function (res) {
+			var names = [];
+			var list = res[1];
+			if (list && list.nodes)
+				list.nodes.forEach(function (x) { if (x.enabled) names.push(x.name || x.section); });
+			paint(res[0], names);
+		}).catch(function () {
+			state.textContent = '状态不可读';
+		});
+	}
+
+	sw.addEventListener('change', function () {
+		if (busy) { return; }
+		busy = true;
+		var on = sw.checked;
+		saveUci({ 'main.enabled': on ? '1' : '0' }).then(function () {
+			return run([on ? 'start' : 'stop']);
+		}).then(function (r) {
+			notify((r.stdout || r.stderr || (on ? '已启动代理' : '已停止代理')).trim(), r.code === 0 ? 'success' : 'error');
+		}).catch(function (e) {
+			notify('切换失败：' + e, 'error');
+		}).then(function () {
+			busy = false;
+			return refresh();
+		});
+	});
+
+	tick();
+	timer = window.setInterval(function () {
+		if (typeof document !== 'undefined' && document.body && !document.body.contains(root)) {
+			window.clearInterval(timer);
+			return;
+		}
+		tick();
+	}, 1000);
+	refresh();
+	return root;
+}
+
 /* ===== 北京时间时钟 ===== */
 function clockBar() {
 	var time = E('b', {}, '--:--:--');
@@ -706,49 +814,65 @@ function pageOverview(status) {
 function nodeTable(nodes) {
 	if (!nodes || !nodes.length)
 		return E('div', { class: 'ep-hint', style: 'margin:0' }, '还没有节点。用「导入链接」粘一条 ss:// vmess:// vless:// trojan:// hysteria2:// 链接，或到订阅管理页拉一份订阅。');
-	return E('table', { class: 'ep-tbl' }, [
-		E('thead', {}, E('tr', {}, ['名称', '类型', '服务器', '区域', '分组', '状态', ''].map(function (h) { return E('th', {}, h); }))),
+
+	function testNode(n) {
+		return cliJson(['node', 'test']).then(function (t) {
+			if (!t)
+				return notify('测速失败', 'error');
+			var hit = (t.nodes || []).filter(function (x) { return x.section === n.section; })[0];
+			notify(hit ? (hit.name + '：' + hit.state + (hit.latency_ms == null ? '' : ' ' + hit.latency_ms + ' ms')) : '未找到测速结果',
+				hit && hit.state === 'reachable' ? 'success' : 'error');
+		});
+	}
+
+	return E('table', { class: 'ep-tbl ep-node-tbl' }, [
+		E('colgroup', {}, [
+			E('col', { style: 'width:23%' }), E('col', { style: 'width:10%' }),
+			E('col', { style: 'width:31%' }), E('col', { style: 'width:10%' }),
+			E('col', { style: 'width:17%' }), E('col', { style: 'width:19%' })
+		]),
+		E('thead', {}, E('tr', {}, ['节点', '类型', '服务器', '区域', '启用', '操作'].map(function (h) { return E('th', {}, h); }))),
 		E('tbody', {}, nodes.map(function (n) {
+			var sw = E('input', { type: 'checkbox', class: 'ep-switch', checked: n.enabled ? 'checked' : null, title: n.enabled ? '点击停用' : '点击启用' });
+			sw.addEventListener('change', function () {
+				sw.disabled = true;
+				var on = sw.checked;
+				run(['node', on ? 'enable' : 'disable', n.section]).then(function (r) {
+					notify((r.stdout || r.stderr || 'done').trim(), r.code === 0 ? 'success' : 'error');
+					if (r.code === 0)
+						return reload();
+					sw.disabled = false;
+					sw.checked = !on;
+				});
+			});
 			return E('tr', {}, [
-				E('td', {}, n.name || n.section),
-				E('td', {}, n.type || '-'),
-				E('td', {}, (n.server || '-') + ':' + (n.port || '')),
-				E('td', {}, n.region || '-'),
-				E('td', {}, n.group || '-'),
-				E('td', {}, n.enabled ? E('span', { class: 'ep-ok' }, '启用') : E('span', { class: 'ep-off' }, '停用')),
-				E('td', {}, [
-					button('测速', '', function () {
-						return cliJson(['node', 'test']).then(function (t) {
-							if (!t)
-								return notify('测速失败', 'error');
-							var hit = (t.nodes || []).filter(function (x) { return x.section === n.section; })[0];
-							notify(hit ? (hit.name + '：' + hit.state + (hit.latency_ms == null ? '' : ' ' + hit.latency_ms + ' ms')) : '未找到测速结果',
-								hit && hit.state === 'reachable' ? 'success' : 'error');
-						});
-					}),
-					button(n.enabled ? '停用' : '启用', n.enabled ? '' : 'ep-primary', function () {
-						return run(['node', n.enabled ? 'disable' : 'enable', n.section]).then(function (r) {
-							notify((r.stdout || r.stderr || 'done').trim(), r.code === 0 ? 'success' : 'error');
-							if (r.code === 0) reload();
-						});
-					}),
-					button('导出', '', function () {
-						return run(['node', 'export', n.section]).then(function (r) {
-							if (r.code !== 0)
-								return notify((r.stderr || r.stdout || '导出失败').trim(), 'error');
-							// 分享链接很长，用可复制的输入框而不是 toast
-							window.prompt('分享链接（Ctrl+C 复制）', (r.stdout || '').trim());
-						});
-					}),
-					button('删除', 'ep-danger', function () {
-						if (!window.confirm('确定删除节点 ' + (n.name || n.section) + '？'))
-							return;
-						return run(['node', 'del', n.section]).then(function (r) {
-							notify((r.stdout || r.stderr || 'done').trim(), r.code === 0 ? 'success' : 'error');
-							if (r.code === 0) reload();
-						});
-					})
-				])
+				E('td', { title: n.name || n.section }, E('span', { class: 'ep-node-name' }, n.name || n.section)),
+				E('td', {}, n.type || '—'),
+				E('td', { class: 'ep-mono', title: (n.server || '') + ':' + (n.port || '') }, (n.server || '—') + ':' + (n.port || '')),
+				E('td', {}, n.region || '—'),
+				E('td', {}, sw),
+				E('td', {}, E('details', { class: 'ep-menu' }, [
+					E('summary', { title: '更多操作' }, '⋯'),
+					E('div', { class: 'ep-menu-body' }, [
+						button('测速', '', function () { return testNode(n); }),
+						button('导出链接', '', function () {
+							return run(['node', 'export', n.section]).then(function (r) {
+								if (r.code !== 0)
+									return notify((r.stderr || r.stdout || '导出失败').trim(), 'error');
+								window.prompt('分享链接（Ctrl+C 复制）', (r.stdout || '').trim());
+							});
+						}),
+						button('删除', 'ep-danger', function () {
+							if (!window.confirm('确定删除节点 ' + (n.name || n.section) + '？'))
+								return;
+							return run(['node', 'del', n.section]).then(function (r) {
+								notify((r.stdout || r.stderr || 'done').trim(), r.code === 0 ? 'success' : 'error');
+								if (r.code === 0)
+									return reload();
+							});
+						})
+					])
+				]))
 			]);
 		}))
 	]);
@@ -1543,6 +1667,7 @@ return baseclass.extend({
 	pageSettings: pageSettings,
 	tabs: tabs,
 	clockBar: clockBar,
+	topBar: topBar,
 	kpiLive: kpiLive,
 	pageSafety: pageSafety,
 	pageLive: pageLive,

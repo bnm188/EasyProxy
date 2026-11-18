@@ -15,6 +15,7 @@ return view.extend({
 	render: function (d) {
 		app.injectStyle();
 		return E('div', { class: 'ep-wrap' }, [
+			app.topBar(),
 			app.tabs([
 				['nodes', '节点管理', app.pageNodes({ list: d.list })],
 				['sub', '订阅管理', app.pageSubscription()],
