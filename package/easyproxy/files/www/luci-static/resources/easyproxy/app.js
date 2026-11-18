@@ -29,6 +29,17 @@ var CSS = [
 '@media(min-width:560px){.ep-grid{grid-template-columns:repeat(2,1fr)}}',
 '@media(min-width:960px){.ep-grid{grid-template-columns:repeat(4,1fr)}}',
 '.ep-tile{background:rgba(255,255,255,.44);padding:15px 17px;min-width:0;transition:background .2s}',
+'.ep-tbl{width:100%;border-collapse:collapse;table-layout:fixed;font-size:12.5px}',
+'.ep-tbl th,.ep-tbl td{padding:7px 9px;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+'.ep-tbl thead th{font-weight:600;color:#5c6b78;border-bottom:1px solid rgba(120,150,190,.26)}',
+'.ep-tbl tbody tr{border-bottom:1px solid rgba(120,150,190,.12)}',
+'.ep-tbl tbody tr:hover{background:rgba(255,255,255,.5)}',
+'.ep-tbl .ep-num{text-align:right;font-variant-numeric:tabular-nums}',
+'.ep-mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}',
+'.ep-kpi-inline{display:flex;flex-wrap:wrap;gap:8px 18px;font-size:12.5px;color:#41505c}',
+'.ep-kpi-inline span{font-variant-numeric:tabular-nums}',
+'.ep-kpi-inline .ep-muted{color:#8794a1;font-size:11.5px}',
+
 '.ep-tile:hover{background:rgba(255,255,255,.62)}',
 '.ep-tile .ep-lab{font-size:11.5px;color:#5e6d7d;letter-spacing:.02em;margin-bottom:7px}',
 '.ep-tile .ep-val{font-size:22px;font-weight:600;letter-spacing:-.4px;color:#16202a;line-height:1.3;word-break:break-all}',
@@ -408,7 +419,6 @@ function tabs(items) {
 function clockBar() {
 	var time = E('b', {}, '--:--:--');
 	var dateEl = E('span', {}, '');
-	var zone = E('span', { class: 'ep-tag' }, '北京时间 UTC+8');
 
 	function tick() {
 		try {
@@ -432,7 +442,7 @@ function clockBar() {
 
 	return E('div', { class: 'ep-clock' }, [
 		E('span', { class: 'ep-dot-live' }, ''),
-		E('span', {}, '当前时间'), time, dateEl, zone
+		E('span', {}, '当前时间'), time, dateEl
 	]);
 }
 
@@ -1283,6 +1293,148 @@ function pageConn(data) {
 	]);
 }
 
+// Live connections come from mihomo's Clash API through the CLI. They are the
+// only place the panel can show what a flow actually used: which node carried
+// it, where it came from, how long it has been open. sing-box offers no
+// equivalent, so the page has to say that plainly instead of showing an empty
+// table that looks like a bug.
+function liveConnections() {
+	return cliJson(['connections']).catch(function () {
+		return { ok: false, error: '无法读取连接列表' };
+	});
+}
+
+function fmtBytes(n) {
+	n = Number(n) || 0;
+	if (n < 1024) return n + ' B';
+	if (n < 1048576) return (n / 1024).toFixed(1) + ' KB';
+	if (n < 1073741824) return (n / 1048576).toFixed(1) + ' MB';
+	return (n / 1073741824).toFixed(2) + ' GB';
+}
+
+function fmtDuration(ms) {
+	if (ms == null) return '\u2014';
+	var sec = Math.round(Number(ms) / 1000);
+	if (!(sec >= 0)) return '\u2014';
+	if (sec < 60) return sec + 's';
+	var min = Math.floor(sec / 60);
+	if (min < 60) return min + 'm' + (sec % 60 ? (sec % 60) + 's' : '');
+	return Math.floor(min / 60) + 'h' + (min % 60 ? (min % 60) + 'm' : '');
+}
+
+function connRows(list) {
+	if (!list || !list.length)
+		return [E('tr', {}, [E('td', { colspan: '6', class: 'ep-hint', style: 'margin:0' }, '当前没有活动连接')])];
+	var out = [];
+	list.forEach(function (c) {
+		out.push(E('tr', {}, [
+			E('td', { class: 'ep-mono', title: c.host || '' }, c.host || '\u2014'),
+			E('td', { class: 'ep-mono' }, c.source || '\u2014'),
+			E('td', {}, c.node || '\u2014'),
+			E('td', { class: 'ep-num' }, fmtBytes(c.upload)),
+			E('td', { class: 'ep-num' }, fmtBytes(c.download)),
+			E('td', { class: 'ep-num' }, fmtDuration(c.elapsed_ms))
+		]));
+	});
+	return out;
+}
+
+function connTable(list) {
+	return E('table', { class: 'ep-tbl' }, [
+		E('colgroup', {}, [
+			E('col', { style: 'width:34%' }), E('col', { style: 'width:16%' }),
+			E('col', { style: 'width:16%' }), E('col', { style: 'width:12%' }),
+			E('col', { style: 'width:12%' }), E('col', { style: 'width:10%' })
+		]),
+		E('thead', {}, [E('tr', {}, [
+			E('th', {}, '目标'), E('th', {}, '来源 IP'), E('th', {}, '节点'),
+			E('th', { class: 'ep-num' }, '上行'), E('th', { class: 'ep-num' }, '下行'),
+			E('th', { class: 'ep-num' }, '时长')
+		])]),
+		E('tbody', {}, connRows(list))
+	]);
+}
+
+function pageLive(status, conn) {
+	injectStyle();
+	var engine = (status && status.engine) || '';
+	var api = (status && status.clash_api) || 'absent';
+
+	if (engine !== 'mihomo') {
+		return E('div', { class: 'ep-wrap' }, [
+			hero('实时连接', '连接级可观测性来自 mihomo 的 Clash API；当前引擎没有这个接口。'),
+			card('当前引擎没有连接接口',
+				E('div', {}, '实时连接、来源 IP、目标域名、所用节点这些数据只有 mihomo 提供。当前引擎是 ' +
+					(engine || 'none') + '，切到 mihomo 后这里会自动出现连接表。'),
+				'切换内核在「内核管理」里；切过去之后需要重启一次服务。')
+		]);
+	}
+
+	var body = E('tbody', {}, connRows((conn && conn.connections) || []));
+	var countEl = E('span', { class: 'ep-tag' }, ((conn && conn.connections) || []).length + ' 条活动连接');
+	var table = E('table', { class: 'ep-tbl' }, [
+		E('colgroup', {}, [
+			E('col', { style: 'width:34%' }), E('col', { style: 'width:16%' }),
+			E('col', { style: 'width:16%' }), E('col', { style: 'width:12%' }),
+			E('col', { style: 'width:12%' }), E('col', { style: 'width:10%' })
+		]),
+		E('thead', {}, [E('tr', {}, [
+			E('th', {}, '目标'), E('th', {}, '来源 IP'), E('th', {}, '节点'),
+			E('th', { class: 'ep-num' }, '上行'), E('th', { class: 'ep-num' }, '下行'),
+			E('th', { class: 'ep-num' }, '时长')
+		])]),
+		body
+	]);
+
+	// Built by appending rather than in one literal: the wrapper is referenced by
+	// the refresh timer below, and a self-referencing array element would be
+	// undefined at construction time.
+	var wrap = E('div', { class: 'ep-wrap' }, []);
+	wrap.appendChild(hero('实时连接', '每 3 秒从本机 Clash API 拉一次：目标域名、来源 IP、实际承载节点与字节数。'));
+	if (api === 'absent')
+		wrap.appendChild(errCard('Clash API 当前不可达（127.0.0.1:9090）：引擎可能没在运行，或 controller 端口被改过。'));
+	var kConn = E('span', {}, '连接数 \u2014');
+	var kUp = E('span', {}, '本会话上行 \u2014');
+	var kDown = E('span', {}, '本会话下行 \u2014');
+	var kMem = E('span', {}, '内核内存 \u2014');
+	var kStamp = E('span', { class: 'ep-muted' }, '');
+	function paintKpi(st, list) {
+		var n = (list && list.length) || (st && st.connections) || 0;
+		kConn.textContent = '连接数 ' + n;
+		kUp.textContent = '本会话上行 ' + fmtBytes(st && st.conn_up);
+		kDown.textContent = '本会话下行 ' + fmtBytes(st && st.conn_down);
+		// mihomo reports memory as 0 on builds without gopsutil support; showing
+		// "0 B" there reads as a broken gauge, so an unreported value is a dash.
+		kMem.textContent = '内核内存 ' + ((st && Number(st.conn_memory)) > 0 ? fmtBytes(st.conn_memory) : '\u2014');
+		kStamp.textContent = '更新于 ' + new Date().toLocaleTimeString('zh-CN', {
+			timeZone: 'Asia/Shanghai', hour12: false,
+			hour: '2-digit', minute: '2-digit', second: '2-digit'
+		});
+	}
+	paintKpi(status, (conn && conn.connections) || []);
+	wrap.appendChild(card('KPI', [
+		E('div', { class: 'ep-kpi-inline' }, [kConn, kUp, kDown, kMem, kStamp])
+	], 'Clash 的累计值在引擎重启后归零，面板把它当作本会话的流量。'));
+	wrap.appendChild(card('活动连接', [E('div', { class: 'ep-row', style: 'margin-bottom:8px' }, countEl), table],
+		'列表只显示当前仍在传输的连接；已关闭的连接不会被保留。'));
+
+	// Refresh in place so the page does not flicker; stop as soon as the view is
+	// torn down, otherwise every visit would leave another timer behind.
+	var timer = setInterval(function () {
+		if (!document.body.contains(wrap)) { clearInterval(timer); return; }
+		Promise.all([liveConnections(), cliJson(['status']).catch(function () { return null; })]).then(function (r) {
+			if (!document.body.contains(wrap)) return;
+			var list = (r[0] && r[0].connections) || [];
+			while (body.firstChild) body.removeChild(body.firstChild);
+			connRows(list).forEach(function (tr) { body.appendChild(tr); });
+			countEl.textContent = list.length + ' 条活动连接';
+			paintKpi(r[1], list);
+		});
+	}, 3000);
+
+	return wrap;
+}
+
 function pageSettings(data) {
 	injectStyle();
 	var cfg = (data && data.cfg) || {};
@@ -1392,5 +1544,9 @@ return baseclass.extend({
 	tabs: tabs,
 	clockBar: clockBar,
 	kpiLive: kpiLive,
-	pageSafety: pageSafety
+	pageSafety: pageSafety,
+	pageLive: pageLive,
+	liveConnections: liveConnections,
+	fmtBytes: fmtBytes,
+	fmtDuration: fmtDuration
 });

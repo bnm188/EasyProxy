@@ -349,7 +349,7 @@ body.setup-open{overflow:hidden}
       <span class="brand-sub">LuCI 控制台 · v0.8.13</span>
     </div>
     <div class="top-right">
-      <span class="top-clock" id="top-clock">北京时间 --</span>
+      <span class="top-clock" id="top-clock">--</span>
     </div>
   </div>
 </header>
@@ -966,9 +966,9 @@ function pageMonitor(){
     '<p class="page-desc">实时连接、来源、目标、节点归因、流量与日志</p></div>',
 
     sec('conn',
-    '<div class="card"><div class="card-hd"><h3>实时连接</h3><span class="hd-note">5 条 active</span></div>'+
+    '<div class="card"><div class="card-hd"><h3>实时连接</h3><span class="hd-note" id="conn-count">5 条 active · 更新于 --:--:--</span></div>'+
       '<div class="tbl-wrap"><table><colgroup><col style="width:18%"><col style="width:32%"><col style="width:18%"><col style="width:16%"><col style="width:16%"></colgroup>'+
-      '<thead><tr><th>来源 IP</th><th>目标</th><th>使用节点</th><th>流量</th><th>时长</th></tr></thead><tbody>'+connRows+'</tbody></table></div>'+
+      '<thead><tr><th>来源 IP</th><th>目标</th><th>使用节点</th><th>流量</th><th>时长</th></tr></thead><tbody id="conn-body">'+connRows+'</tbody></table></div>'+
       '<div class="bar"><button class="btn" data-act="conn-refresh">刷新</button><button class="btn" data-act="conn-copy">复制入站地址</button></div></div>'+
     resultBox('r-mn')),
 
@@ -1458,6 +1458,7 @@ function render(){
   bindPage();
   applySub();
   syncTop();
+  startConn();
 }
 function applySub(){
   Array.prototype.forEach.call(document.querySelectorAll('.sec'), function(el){
@@ -1478,7 +1479,7 @@ function fmtClock(withLabel){
   var p=function(n){ return (n<10?'0':'')+n; };
   var t=d.getUTCFullYear()+'-'+p(d.getUTCMonth()+1)+'-'+p(d.getUTCDate())+' '+wk+' '+
          p(d.getUTCHours())+':'+p(d.getUTCMinutes())+':'+p(d.getUTCSeconds());
-  return withLabel ? '<b>北京时间</b>'+t : t;
+  return t;
 }
 function startClock(){
   if(CLOCK){ clearInterval(CLOCK); CLOCK=null; }
@@ -1491,6 +1492,49 @@ function startClock(){
   };
   tick();
   CLOCK=setInterval(tick,1000);
+}
+
+var CONN_TIMER=null, CONN_T=0;
+// The demo stream mirrors what the Clash API gives the real panel: bytes only
+// grow, durations only grow, and rows appear/disappear. A table frozen at its
+// first paint reads as broken, not as a snapshot.
+var CONN_SEED=[
+  {ip:'10.10.10.20', host:'www.youtube.com:443',  node:'节点 JP-01', up:1840, down:1502, t:38},
+  {ip:'10.10.10.20', host:'github.com:443',       node:'节点 JP-01', up:620,  down:284,  t:12},
+  {ip:'10.10.10.21', host:'www.baidu.com:443',    node:'直连',       up:80,   down:92,   t:3},
+  {ip:'10.10.10.21', host:'www.qq.com:443',       node:'直连',       up:40,   down:41,   t:2},
+  {ip:'10.10.10.1',  host:'223.5.5.5:53',         node:'直连',       up:6,    down:3,    t:0}
+];
+function fmtMT(sec){
+  if(sec < 60) return '00:' + (sec<10?'0':'') + sec;
+  var m = Math.floor(sec/60), s2 = sec%60;
+  return (m<10?'0':'')+m+':'+(s2<10?'0':'')+s2;
+}
+function fmtKB(kb){
+  return kb >= 1024 ? (kb/1024).toFixed(1) + ' MB' : Math.round(kb) + ' KB';
+}
+function startConn(){
+  if(CONN_TIMER){ clearInterval(CONN_TIMER); CONN_TIMER=null; }
+  CONN_T=0;
+  CONN_TIMER = setInterval(function(){
+    var body = document.getElementById('conn-body');
+    if(!body){ clearInterval(CONN_TIMER); CONN_TIMER=null; return; }
+    CONN_T++;
+    CONN_SEED.forEach(function(c){ c.t += 3; c.down += c.node==='直连'?3+Math.random()*9:40+Math.random()*160; c.up += 2+Math.random()*12; });
+    var rows = CONN_SEED.slice(0, 3 + (CONN_T % 3));
+    body.innerHTML = rows.map(function(r){
+      var dir = r.node === '直连';
+      return '<tr><td class="mono">'+r.ip+'</td><td class="mono">'+esc(r.host)+'</td>'+
+        '<td><span class="tag '+(dir?'n':'ok')+'">'+esc(r.node)+'</span></td>'+
+        '<td class="mono">'+fmtKB(r.down)+'</td><td class="mono">'+fmtMT(r.t)+'</td></tr>';
+    }).join('');
+    var cnt = document.getElementById('conn-count');
+    if(cnt){
+      var d=new Date(Date.now()+8*3600000);
+      var p2=function(n){ return (n<10?'0':'')+n; };
+      cnt.textContent = rows.length + ' 条 active · 更新于 ' + p2(d.getUTCHours())+':'+p2(d.getUTCMinutes())+':'+p2(d.getUTCSeconds());
+    }
+  }, 3000);
 }
 
 var KPI_TIMER=null, KPI_T=0;

@@ -6,6 +6,10 @@
 # missing file cannot break status/start on an older package layout.
 EP_MIHOMO_LIB="${EP_MIHOMO_LIB:-/usr/lib/easyproxy/mihomo.sh}"
 [ -r "$EP_MIHOMO_LIB" ] && . "$EP_MIHOMO_LIB"
+# Clash API reader: only useful for mihomo, but sourced unconditionally so
+# `status` can report live connections without knowing which engine is set.
+EP_CLASH_LIB="${EP_CLASH_LIB:-/usr/lib/easyproxy/clash.sh}"
+[ -r "$EP_CLASH_LIB" ] && . "$EP_CLASH_LIB"
 # Entry bypass (M1, 0.8.2): China traffic released in nft before tproxy.
 # Source it *before* transparent.sh: transparent.sh keeps any EP_BYPASS_LIB it
 # finds, so defining the path here lets a test sandbox redirect both modules.
@@ -32,6 +36,7 @@ Usage:
   easyproxy engine                 Show selected engine and binary availability
   easyproxy engine list            List available engines and their stability
   easyproxy engine health [--json] Diagnose binary, config, runtime and listen port
+  easyproxy connections [--json]   Live flows via the mihomo Clash API
   easyproxy engine version         Print the engine binary's own version line
   easyproxy node list [--json]     List nodes with their auto group
   easyproxy node add <link> [name] Import one share link as a node
@@ -161,6 +166,7 @@ cmd_status_json() {
 	local runtime pid up config_state config_path nodes_enabled china_rule route_rules dns_mode rule_set_state route_mode
 	local transparent tproxy_port tproxy_state ipv6_policy ipv6_state bypass_state bypass_cidr bypass_enabled
 	local engine_stability engine_dev listen_port listen_open
+	local snap rest clash_api conn_count conn_up conn_down conn_memory
 	enabled="$(ep_bool "$(ep_get main enabled 0)")"
 	engine="$(ep_get main engine none)"
 	binary="$(ep_engine_binary "$engine")"
@@ -212,7 +218,23 @@ cmd_status_json() {
 	config_path="$(ep_engine_config_path "$engine")"
 	config_state="$(ep_config_state)"
 
-	printf '{"ok":true,"package":"%s","version":"%s","stage":%s,"enabled":%s,"engine":"%s","engine_stability":"%s","engine_dev":%s,"binary":"%s","binary_ok":%s,"china_policy":"%s","proxy_policy":"%s","fail_closed":%s,"nodes":%s,"nodes_enabled":%s,"runtime":"%s","runtime_pid":%s,"runtime_uptime":%s,"listen_port":%s,"listen_open":%s,"china_rule":%s,"route_rules":%s,"dns_mode":"%s","rule_set_state":"%s","route_mode":"%s","transparent":%s,"tproxy_port":%s,"tproxy_state":"%s","ipv6_policy":"%s","ipv6_state":"%s","bypass_state":"%s","bypass_cidr":%s,"bypass_enabled":%s,"config_state":"%s","config_path":"%s","config_file":"%s","generated":"%s"}\n' \
+	# Live connection snapshot. One curl to the loopback controller, capped at
+	# 2 s, and only for mihomo; on sing-box it returns "absent" without a call.
+	if command -v ep_clash_snapshot >/dev/null 2>&1; then
+		snap="$(ep_clash_snapshot)"
+		clash_api="${snap%%	*}"
+		rest="${snap#*	}"
+		conn_count="${rest%%	*}"
+		rest="${rest#*	}"
+		conn_up="${rest%%	*}"
+		rest="${rest#*	}"
+		conn_down="${rest%%	*}"
+		conn_memory="${rest##*	}"
+	else
+		clash_api="absent"; conn_count=0; conn_up=0; conn_down=0; conn_memory=0
+	fi
+
+	printf '{"ok":true,"package":"%s","version":"%s","stage":%s,"enabled":%s,"engine":"%s","engine_stability":"%s","engine_dev":%s,"binary":"%s","binary_ok":%s,"china_policy":"%s","proxy_policy":"%s","fail_closed":%s,"nodes":%s,"nodes_enabled":%s,"runtime":"%s","runtime_pid":%s,"runtime_uptime":%s,"listen_port":%s,"listen_open":%s,"china_rule":%s,"route_rules":%s,"dns_mode":"%s","rule_set_state":"%s","route_mode":"%s","transparent":%s,"tproxy_port":%s,"tproxy_state":"%s","ipv6_policy":"%s","ipv6_state":"%s","bypass_state":"%s","bypass_cidr":%s,"bypass_enabled":%s,"config_state":"%s","config_path":"%s","config_file":"%s","generated":"%s","clash_api":"%s","connections":%s,"conn_up":%s,"conn_down":%s,"conn_memory":%s}\n' \
 		"$(ep_json_escape "$PROG")" \
 		"$(ep_json_escape "$EP_VERSION")" \
 		"$EP_STAGE" \
@@ -248,7 +270,43 @@ cmd_status_json() {
 		"$(ep_json_escape "$config_state")" \
 		"$(ep_json_escape "$config_path")" \
 		"$(ep_json_escape "$EP_CONFIG_FILE")" \
-		"$(ep_utc_now)"
+		"$(ep_utc_now)" \
+		"$(ep_json_escape "$clash_api")" \
+		"$conn_count" \
+		"$conn_up" \
+		"$conn_down" \
+		"$conn_memory"
+}
+
+# Live connections, mihomo only. Text mode is for humans over ssh; --json is
+# what the panel consumes, already normalised so the LuCI page never has to
+# understand Clash's schema.
+cmd_connections() {
+	local mode
+	mode="$1"
+	if ! command -v ep_clash_applicable >/dev/null 2>&1 || ! ep_clash_applicable; then
+		case "$mode" in
+			--json|json) printf '{"ok":false,"error":"clash API is only available on the mihomo engine"}\n' ;;
+			*) echo "Clash API is only available on the mihomo engine (current: $(ep_get main engine none))." ;;
+		esac
+		return 1
+	fi
+	if [ -z "$(ep_clash_get /version)" ]; then
+		case "$mode" in
+			--json|json) printf '{"ok":false,"error":"clash API unreachable on %s"}\n' "$(ep_clash_controller)" ;;
+			*) echo "Clash API unreachable on $(ep_clash_controller): is the engine running?" ;;
+		esac
+		return 1
+	fi
+	case "$mode" in
+		--json|json)
+			ep_clash_connections_json ;;
+		*)
+			ep_clash_connections | awk -F'\t' '
+				BEGIN { printf "%-44s %-16s %-14s %10s %10s %9s\n", "HOST", "SOURCE", "NODE", "UP", "DOWN", "ELAPSED" }
+				{ printf "%-44s %-16s %-14s %10s %10s %9s\n", $1, $2, $3, $4, $5, ($6 == "-" || $6 == "" ? "-" : int($6 / 1000) "s") }'
+			;;
+	esac
 }
 
 cmd_validate_text() {
@@ -1924,6 +1982,11 @@ case "$CMD" in
 			del|delete|rm) cmd_rule_del "$SUB2" ;;
 			*) echo "Unknown rule action: $SUB" >&2; exit 2 ;;
 		esac
+		;;
+	connections|conn)
+		# --json is consumed by the argument loop above, not handed down as a
+		# positional, so it has to be passed on explicitly here.
+		if [ "$JSON" = "1" ]; then cmd_connections --json; else cmd_connections; fi
 		;;
 	config)
 		case "$SUB" in

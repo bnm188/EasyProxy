@@ -26,6 +26,7 @@ cp "$SRC/package/easyproxy/files/usr/lib/easyproxy/common.sh" "$SB/usr/lib/easyp
 cp "$SRC/package/easyproxy/files/usr/lib/easyproxy/config.sh" "$SB/usr/lib/easyproxy/config.sh"
 cp "$SRC/package/easyproxy/files/usr/lib/easyproxy/transparent.sh" "$SB/usr/lib/easyproxy/transparent.sh"
 cp "$SRC/package/easyproxy/files/usr/lib/easyproxy/mihomo.sh" "$SB/usr/lib/easyproxy/mihomo.sh"
+cp "$SRC/package/easyproxy/files/usr/lib/easyproxy/clash.sh" "$SB/usr/lib/easyproxy/clash.sh"
 cp "$SRC/package/easyproxy/files/usr/lib/easyproxy/adapters/"*.sh "$SB/usr/lib/easyproxy/adapters/"
 sed -e "s#/usr/lib/easyproxy/common.sh#$SB/usr/lib/easyproxy/common.sh#" \
     -e "s#/usr/lib/easyproxy/config.sh#$SB/usr/lib/easyproxy/config.sh#" \
@@ -381,6 +382,30 @@ ep_engine_verb nope validate
 echo "rc=\$?"
 PROBE
 sh "$SB/probe-verb.sh" 2>/dev/null | grep -q 'rc=127' && ok "未知引擎的 verb 返回 127" || no "未知引擎的 verb 返回 127"
+
+# `easyproxy connections --json` used to print the text table: the generic
+# argument loop eats --json into JSON=1, so the subcommand never saw the flag
+# and the panel's JSON.parse() got a table. The mode now has to be passed on
+# explicitly, and this asserts it stays that way.
+export EP_CLASH_LIB="$SB/usr/lib/easyproxy/clash.sh"
+write_ucis 1 mihomo "$SB/bin/sing-box" 7890 1
+CONN_JSON="$("$EP" connections --json 2>/dev/null)"
+case "$CONN_JSON" in
+	'{"ok":false'*) ok "--json 走 JSON 分支（API 不可达时给出错误对象，不是表格）" ;;
+	*) no "--json 走 JSON 分支" "得到：$(printf '%s' "$CONN_JSON" | head -1)" ;;
+esac
+case "$CONN_JSON" in
+	*HOST*) no "--json 不混入表格表头" "输出里有 HOST" ;;
+	*) ok "--json 不混入表格表头" ;;
+esac
+
+# and the same call on an engine without the API must fail cleanly, not hang
+write_ucis 1 sing-box "$SB/bin/sing-box" 7890 1
+CONN_BOX="$("$EP" connections --json 2>/dev/null)"
+case "$CONN_BOX" in
+	'{"ok":false'*'mihomo'*) ok "非 mihomo 引擎下 --json 明确说明原因" ;;
+	*) no "非 mihomo 引擎下 --json 明确说明原因" "得到：$(printf '%s' "$CONN_BOX" | head -1)" ;;
+esac
 
 say ""
 say "结果：$PASS 通过，$FAIL 失败"
