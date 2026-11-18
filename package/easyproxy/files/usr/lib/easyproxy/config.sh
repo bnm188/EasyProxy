@@ -582,8 +582,20 @@ ep_config_build() {
 		# --- outbounds -----------------------------------------------------
 		printf '  "outbounds": [\n'
 		if [ "$nodes" -gt 0 ]; then
-			# Node outbounds followed by the latency groups and the selector
-			awk '{ printf "    %s,\n", $0 }' "$out"
+			# Node outbounds followed by the latency groups and the selector.
+			# Every node outbound carries its own domain_resolver: without it
+			# the engine resolved the node's hostname through dns-remote, whose
+			# DoH request detours through `proxy` - but `proxy` is the very
+			# outbound being dialled, so the lookup waited on a connection that
+			# could not exist until the lookup finished and timed out with
+			# "exchange4/exchange6: context deadline exceeded". Pointing the
+			# dial-time lookup at dns-local breaks that loop: the hostname is
+			# resolved directly, the connection goes out, and DNS-over-HTTPS
+			# stays available for everything that travels through the tunnel.
+			awk '{
+				sub(/}$/, ", \"domain_resolver\": \"dns-local\" }")
+				printf "    %s,\n", $0
+			}' "$out"
 			# One latency group per region ("auto-hk", "auto-us", ...): urltest
 			# keeps re-picking the fastest node inside that region, which is the
 			# "自动选择可用节点" behaviour without any extra daemon.

@@ -165,6 +165,14 @@ printf '%s' "$out" | grep -q '1.14.4' && ok "engine version 透传版本号" || 
 # --- 4. health: all good ---------------------------------------------------
 write_ucis 1 sing-box
 "$EP" config generate >/dev/null 2>&1
+
+# Node outbounds must carry their own resolver: a DoH lookup with detour=proxy
+# deadlocks on the very outbound it is trying to open.
+if grep -q '"domain_resolver": "dns-local"' "$CFG" 2>/dev/null; then
+	ok "节点出站自带 domain_resolver=dns-local"
+else
+	no "节点出站自带 domain_resolver=dns-local" "$(grep -o '"type":"[a-z0-9]*"' "$CFG" 2>/dev/null | head -3)"
+fi
 PORT="$(python3 - <<'PY'
 import socket
 s = socket.socket()
