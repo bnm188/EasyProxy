@@ -284,9 +284,51 @@ speed.cloudflare.com     127.0.0.1    11     1778   6325650    4s
 造流量必须限速：不限速时 30 MB 两秒下完，连接已关闭，`/connections` 自然返回空数组，
 看起来像是解析坏了。`curl --limit-rate 200k` 拉 10 MB 才能稳定拿到一条活连接。
 
+## mihomo 的分流规则（0.8.14-12）
+
+面板「智能分流」页把三个平台开关和自定义规则写进 UCI，sing-box writer 一直读它们，
+mihomo writer 从前只有 `GEOIP,CN,DIRECT` + `MATCH,PROXY`：**开关点了、规则存了，实际
+不生效**。0.8.14-12 把这段接上，规则顺序与 sing-box 一致：
+
+```
+内网五段 CIDR（192.168/10/172.16/127/100.64）→ 自定义 → 平台三组 → GEOIP,CN → MATCH,PROXY
+```
+
+三个必须记住的点：
+
+1. **不能复用 `ep_route_mode()`**。它靠 `geosite-cn.srs` / `geoip-cn.srs` 是否就位来判
+   split，而 mihomo 用的是包内 `geoip.metadb`，根本不读那两个文件。复用会把「有节点但没
+   下过 srs」的机器判成 direct——面板看着健康，实际一个字节都没代理。mihomo 侧自己判断：
+   有 enabled 节点就走 split。
+2. **平台规则必须排在 `GEOIP,CN` 前面**。youtube / netflix 的 CDN 段落进 CN 段是常事，
+   geo 规则在前会把它们判成直连，开关也就白开了。
+3. **摘要要跟着改**。`config generate` 的 `Routing mode:` 读 `EP_ROUTE_MODE`，mihomo
+   生成器不设置它，于是打印 "direct only (nothing is proxied)"，与刚落盘的 YAML 自相
+   矛盾——这正是最容易骗过人的那种「看着正常」。现在 mihomo 成功后写 `EP_ROUTE_MODE=split`。
+
+`ep_node_server_cidrs()` 的节点旁路在 mihomo 下不需要：出站连节点不走 rules。
+
+真机证据（0.8.14-12，Kwrt x86_64，mihomo 1.19.34）：
+
+```
+direct_cn     220.200.54.136        # 不过代理
+proxy_cn      220.200.54.136        # 经 7890 访问 ip.3322.net，GEOIP,CN 判定直连
+proxy_foreign 103.151.173.95        # 经 7890 访问 api.ipify.org，走节点出口
+google204=204  youtube=200  baidu_via_7890=200
+```
+
+对比出口 IP 是验证分流唯一可信的办法。`curl -x 7890 <国内域名>` 返回 200 什么都说明不了
+——被代理也能 200。
+
+测试：`test-engine.sh` 加了 8 条（平台规则进 YAML、内网排在 GEOIP 前、自定义
+domain-suffix / block→REJECT / IP-CIDR 带 no-resolve、关 YouTube 不影响 Netflix、
+摘要不误报 direct only）。变异检查：注释掉 `ep_mihomo_platform_rules` 会红 3 条。
+
 ## 尚未做完
 
 - Clash API 的 `/traffic`、`/memory` 还没接；`/connections` 已接（见上一节）。
 - `engine use` 的切换事务（先 validate 再停旧、失败回滚）未做，现在靠人工切。
-- mihomo 的规则层只有 `GEOIP,CN,DIRECT` + `MATCH,PROXY`，sing-box 已有的
-  YouTube / Netflix / TikTok 独立策略还没在这个 writer 里实现。
+- mihomo 的 DNS 段仍是 `redir-host` + 仅本地 nameserver：`dns_remote_server`、
+  fallback、防泄漏、缓存都还没有，与 sing-box 侧不等价。
+- 平台开关目前只能整体走 PROXY，没有 url-test / fallback 组，也就没有自动选最快和
+  故障剔除的载体。

@@ -33,6 +33,105 @@ ep_mihomo_nameservers() {
 	printf '%s\n' "$list"
 }
 
+# --- routing ----------------------------------------------------------------
+# mihomo does NOT need the sing-box rule-set files: GEOIP,CN is answered from
+# the bundled geoip.metadb. Reusing ep_route_mode() here would pin a box that
+# has nodes but never downloaded geosite-cn.srs to "direct" - the panel would
+# look perfectly healthy while nothing was actually proxied.
+ep_mihomo_has_node() {
+	local section
+	for section in $(ep_node_sections 2>/dev/null); do
+		[ "$(ep_bool "$(ep_get "$section" enabled 1)")" = "1" ] || continue
+		return 0
+	done
+	return 1
+}
+
+# Clash outbound names for the three EasyProxy-facing policy values
+ep_mihomo_out() {
+	case "$1" in
+		direct) printf 'DIRECT' ;;
+		block) printf 'REJECT' ;;
+		*) printf 'PROXY' ;;
+	esac
+}
+
+# Operator rules, same "type:value:outbound" store and the same order as the
+# sing-box writer: they sit in front of GEOIP,CN so a custom entry always wins.
+ep_mihomo_custom_rules() {
+	local raw entry typ rest val out key old_ifs
+	raw="$(ep_get routing custom_rules '')"
+	[ -n "$raw" ] || return 0
+	old_ifs="$IFS"
+	IFS=';'
+	for entry in $raw; do
+		entry="$(printf '%s' "$entry" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+		[ -n "$entry" ] || continue
+		typ="${entry%%:*}"
+		rest="${entry#*:}"
+		val="${rest%%:*}"
+		out="${rest#*:}"
+		[ -n "$val" ] || continue
+		case "$out" in
+			direct|proxy|block) ;;
+			*) continue ;;
+		esac
+		case "$typ" in
+			domain) key=DOMAIN ;;
+			domain-suffix|suffix) key=DOMAIN-SUFFIX ;;
+			domain-keyword|keyword) key=DOMAIN-KEYWORD ;;
+			ip|ip-cidr) key=IP-CIDR ;;
+			*) continue ;;
+		esac
+		if [ "$key" = "IP-CIDR" ]; then
+			printf '  - IP-CIDR,%s,%s,no-resolve\n' "$val" "$(ep_mihomo_out "$out")"
+		else
+			printf '  - %s,%s,%s\n' "$key" "$val" "$(ep_mihomo_out "$out")"
+		fi
+	done
+	IFS="$old_ifs"
+}
+
+# YouTube / Netflix / TikTok. Same inline domain lists as the sing-box writer and
+# they must come before GEOIP,CN: the CDN domains of a platform resolve into CN
+# ranges often enough that the geo rule would claim them first.
+ep_mihomo_platform_rules() {
+	local key domains d
+	for key in youtube netflix tiktok; do
+		[ "$(ep_bool "$(ep_get routing "platform_${key}" 1)")" = "1" ] || continue
+		case "$key" in
+			youtube) domains="youtube.com youtu.be googlevideo.com ytimg.com youtube-nocookie.com yt3.ggpht.com" ;;
+			netflix) domains="netflix.com netflix.net nflxext.com nflximg.com nflximg.net nflxso.net nflxvideo.net" ;;
+			tiktok) domains="tiktok.com tiktokv.com tiktokcdn.com byteoversea.com ibytedtos.com muscdn.com" ;;
+			*) continue ;;
+		esac
+		for d in $domains; do
+			printf '  - DOMAIN-SUFFIX,%s,PROXY\n' "$d"
+		done
+	done
+}
+
+# One rule block. With no enabled node everything goes DIRECT: same failure
+# closed behaviour as sing-box, so a box with no node can never pretend to proxy.
+ep_mihomo_rules() {
+	if ! ep_mihomo_has_node; then
+		printf '  - MATCH,DIRECT\n'
+		return 0
+	fi
+	# LAN traffic reaches the mixed inbound from other hosts on the box, and it
+	# must never leave through the proxy.
+	printf '  - IP-CIDR,192.168.0.0/16,DIRECT,no-resolve\n'
+	printf '  - IP-CIDR,10.0.0.0/8,DIRECT,no-resolve\n'
+	printf '  - IP-CIDR,172.16.0.0/12,DIRECT,no-resolve\n'
+	printf '  - IP-CIDR,127.0.0.0/8,DIRECT,no-resolve\n'
+	printf '  - IP-CIDR,100.64.0.0/10,DIRECT,no-resolve\n'
+	ep_mihomo_custom_rules
+	ep_mihomo_platform_rules
+	printf '  - GEOIP,CN,DIRECT\n'
+	printf '  - MATCH,PROXY\n'
+}
+
+
 # The controller port is only bound to loopback; the panel reads stats from it
 ep_mihomo_controller() {
 	local value
@@ -221,8 +320,9 @@ ep_mihomo_config_build() {
 		done
 		printf '\n'
 		printf 'rules:\n'
-		printf '  - GEOIP,CN,DIRECT\n'
-		printf '  - MATCH,PROXY\n'
+		# Custom, platform, LAN, then the CN geo rule: the same precedence the
+		# sing-box writer documents, so a node behaves identically on either engine.
+		ep_mihomo_rules
 	} > "$tmp.body" || {
 		# ep_err inside the block wrote to EP_ERR_FILE, not to this shell
 		if [ -s "$tmp.errmsg" ]; then
@@ -248,6 +348,10 @@ ep_mihomo_config_build() {
 	mv "$tmp.body" "$outfile" || { rm -f "$tmp"*; EP_ERR="cannot write $outfile"; return 1; }
 	EP_NODES="$count"
 	EP_FINAL="proxy"
+	# The CLI summary reads this variable. Without it `config generate` printed
+	# "direct only (nothing is proxied)" on a mihomo box whose config was in fact
+	# splitting - a reassuring-looking line that contradicted the YAML.
+	EP_ROUTE_MODE="split"
 	rm -f "$tmp" "$tmp.errmsg" "$tmp.tags" "$tmp.check"
 	return 0
 }

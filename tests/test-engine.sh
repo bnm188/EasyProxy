@@ -315,7 +315,9 @@ PROBE
 chmod +x "$SB/probe-mihomo.sh"
 
 # binary 不存在时不校验，直接落盘
-printf 'ep_mihomo_config_build "%s"\n' "$MIHOMO_YAML" >> "$SB/probe-mihomo.sh"
+# The trailing echo must not swallow the build's exit status: "no enabled
+# nodes" is asserted by exit code further down.
+printf 'ep_mihomo_config_build "%s"; rc=$?; echo "MODE=$EP_ROUTE_MODE"; exit $rc\n' "$MIHOMO_YAML" >> "$SB/probe-mihomo.sh"
 if sh "$SB/probe-mihomo.sh" >/dev/null 2>&1; then
 	ok "无二进制时也能生成 mihomo 配置"
 else
@@ -332,6 +334,41 @@ if [ -s "$MIHOMO_YAML" ]; then
 	grep -q '  - name: PROXY' "$MIHOMO_YAML" && ok "生成 PROXY 选择组" || no "生成 PROXY 选择组"
 	grep -q 'GEOIP,CN,DIRECT' "$MIHOMO_YAML" && ok "国内流量直连规则" || no "国内流量直连规则"
 	grep -q 'MATCH,PROXY' "$MIHOMO_YAML" && ok "其余流量走代理" || no "其余流量走代理"
+	# The panel used to write platform switches and custom rules into UCI and
+	# nothing read them on the mihomo side: the boxes looked configured while
+	# those domains were still decided by GEOIP,CN alone. Assert they land in
+	# the YAML, and that they sit in front of the geo rule.
+	grep -q '  - DOMAIN-SUFFIX,youtube.com,PROXY' "$MIHOMO_YAML" && ok "平台规则进 YAML（YouTube）" || no "平台规则进 YAML"
+	mode_line="$(sh "$SB/probe-mihomo.sh" 2>/dev/null | sed -n 's/^MODE=//p' | tail -1)"
+	case "$mode_line" in
+		split) ok "摘要不会把 mihomo 误报成 direct only" ;;
+		*) no "摘要不会把 mihomo 误报成 direct only" "MODE=$mode_line" ;;
+	esac
+
+	grep -q '  - DOMAIN-SUFFIX,nflxvideo.net,PROXY' "$MIHOMO_YAML" && ok "平台规则进 YAML（Netflix CDN）" || no "Netflix 规则进 YAML"
+	LANLINE="$(grep -n 'IP-CIDR,192.168.0.0/16,DIRECT,no-resolve' "$MIHOMO_YAML" | cut -d: -f1)"
+	GEOLINE="$(grep -n 'GEOIP,CN,DIRECT' "$MIHOMO_YAML" | cut -d: -f1)"
+	if [ -n "$LANLINE" ] && [ -n "$GEOLINE" ] && [ "$LANLINE" -lt "$GEOLINE" ]; then
+		ok "内网直连排在 GEOIP 之前"
+	else
+		no "内网直连排在 GEOIP 之前" "lan=$LANLINE geo=$GEOLINE"
+	fi
+
+	# custom rules: same type:value:outbound store as sing-box
+	printf '%s\n' 'easyproxy.routing.custom_rules=domain-suffix:example.com:direct;domain:blocked.test:block;ip-cidr:1.2.3.0/24:proxy' >> "$SB/etc/uci.db"
+	printf '%s\n' 'easyproxy.routing.platform_youtube=0' >> "$SB/etc/uci.db"
+	if sh "$SB/probe-mihomo.sh" >/dev/null 2>&1; then
+		grep -q '  - DOMAIN-SUFFIX,example.com,DIRECT' "$MIHOMO_YAML" && ok "自定义域名规则映射为 DOMAIN-SUFFIX,DIRECT" || no "自定义域名规则未进 YAML"
+		grep -q '  - DOMAIN,blocked.test,REJECT' "$MIHOMO_YAML" && ok "自定义 block 映射为 REJECT" || no "block 未映射为 REJECT"
+		grep -q '  - IP-CIDR,1.2.3.0/24,PROXY,no-resolve' "$MIHOMO_YAML" && ok "自定义 IP 段带 no-resolve" || no "自定义 IP 段未进 YAML"
+		grep -q 'youtube.com,PROXY' "$MIHOMO_YAML" && no "关闭 YouTube 开关后不再有 youtube 规则" || ok "关闭 YouTube 开关后不再有 youtube 规则"
+		grep -q 'nflxvideo.net,PROXY' "$MIHOMO_YAML" && ok "关闭 YouTube 不影响 Netflix 规则" || no "Netflix 规则被误删"
+	else
+		no "带自定义规则时仍能生成" "$(sh "$SB/probe-mihomo.sh" 2>&1 | tail -2)"
+	fi
+	# restore the switches the later cases depend on
+	sed -i '/^easyproxy.routing.custom_rules=/d; /^easyproxy.routing.platform_youtube=/d' "$SB/etc/uci.db"
+	sh "$SB/probe-mihomo.sh" >/dev/null 2>&1
 else
 	no "生成了非空的 mihomo.yaml"
 fi
