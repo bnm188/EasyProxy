@@ -232,6 +232,34 @@ case "$SB1" in
 esac
 
 say ""
+say "== 机场名前缀 =="
+# normalize stamps the airport. The plan used to be tab separated, and IFS treats
+# tab as whitespace, so the empty feature slot collapsed into one delimiter: the
+# airport name shifted left into the feature position and rendered as
+# "美国-我的机场-01" instead of "我的机场 | 美国-01".
+OUTP="$(run ep_node_normalize "我的机场" 2>&1)"; RCP=$?
+[ "$RCP" -eq 0 ] && ok "normalize 带机场名执行成功" || no "normalize 带机场名执行成功" "$OUTP"
+N1="$(run sh -c '. "$0/lib/common.sh"; . "$0/lib/node.sh"; ep_get "$(ep_node_sections | head -n 1)" name ""' "$SB")"
+case "$N1" in
+	"我的机场 | "*) ok "机场名落在前缀位" ;;
+	*) no "机场名落在前缀位" "got=$N1" ;;
+esac
+case "$N1" in
+	*-我的机场-[0-9]*) no "机场名没被当成线路" "got=$N1" ;;
+	*) ok "机场名没被当成线路" ;;
+esac
+PRV="$(run sh -c '. "$0/lib/common.sh"; . "$0/lib/node.sh"; ep_get "$(ep_node_sections | head -n 1)" provider ""' "$SB")"
+[ "$PRV" = "我的机场" ] && ok "provider 写进 UCI" || no "provider 写进 UCI" "got=$PRV"
+# Re-running must be a no-op: sequences restart per region instead of continuing
+# from the stored count, so naming stays stable.
+OUTP2="$(run ep_node_normalize "我的机场" 2>&1)"
+case "$OUTP2" in
+	*"renamed: "*) no "重复 normalize 幂等" "$OUTP2" ;;
+	*"normalize: 0 renamed"*) ok "重复 normalize 幂等" ;;
+	*) no "重复 normalize 幂等" "$OUTP2" ;;
+esac
+
+say ""
 say "== 删除清理 =="
 run ep_node_delete "$S1" > /dev/null 2>&1
 [ -f "$SB/clash/$RAW1" ] && no "删除节点时清掉原始块文件" "文件还在" || ok "删除节点时清掉原始块文件"

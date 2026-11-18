@@ -202,6 +202,17 @@ r="$(reg "任意名" "host.us3.example.com")"
 [ "$r" = "us" ] && ok "服务器 us3 token 判 us" || no "服务器 us3 token 判 us" "got=$r"
 r="$(reg "任意名" "")"
 [ "$r" = "other" ] && ok "名称与地址都无线索才判 other" || no "无线索判 other" "got=$r"
+# --- 5c. the airport prefix must not hijack the region -----------------------
+# "nodebuf" contains the substring "de"; a bare two-letter substring match
+# tagged every stamped node as German and dropped it out of its real group.
+r="$(reg "nodebuf | 日本-01" "")"
+[ "$r" = "jp" ] && ok "机场名前缀不影响地区判断" || no "机场名前缀不影响地区判断" "got=$r"
+r="$(reg "nodebuf | 其他-01" "")"
+[ "$r" = "other" ] && ok "机场名含 de 不误判德国" || no "机场名含 de 不误判德国" "got=$r"
+r="$(reg "🇺🇸_US_美国_IPV4" "")"
+[ "$r" = "us" ] && ok "英文双字母整词仍能识别" || no "英文双字母整词仍能识别" "got=$r"
+r="$(reg "must-plus-01" "")"
+[ "$r" = "other" ] && ok "substring us 不算美国" || no "substring us 不算美国" "got=$r"
 
 # --- 6. export round-trip ----------------------------------------------------
 say "== node export =="

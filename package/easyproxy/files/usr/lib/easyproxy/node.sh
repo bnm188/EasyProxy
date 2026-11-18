@@ -551,9 +551,13 @@ ep_node_normalize() {
 		feature="$(ep_node_feature "$orig")"
 		provider="$force_provider"
 		[ -n "$provider" ] || provider="$(ep_node_provider "$section")"
-		printf '%s\t%s\t%s\t%s\n' "$section" "$region" "$feature" "$provider" >> "$tmpd/plan"
+		printf '%s|%s|%s|%s\n' "$section" "$region" "$feature" "$provider" >> "$tmpd/plan"
 	done
-	while IFS="$(printf '\t')" read -r section region feature provider; do
+	# `|` and not a tab: IFS keeps a tab as whitespace, so two adjacent tabs collapse
+	# into one delimiter and an empty field (no line feature, no airport) silently
+	# shifts every later field left - the airport name would land in the feature
+	# slot and render as "美国-nodebuf-07".
+	while IFS='|' read -r section region feature provider; do
 		[ -n "$section" ] || continue
 		seqf="$tmpd/seq-$region"
 		seq=$(( $(cat "$seqf" 2>/dev/null || echo 0) + 1 ))

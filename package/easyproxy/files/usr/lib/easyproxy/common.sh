@@ -593,7 +593,7 @@ ep_node_resolve() {
 # carries no country the server token (jp01, hk2, us3 ...) decides, because a
 # renamed node ("11") lost its region and fell into auto-other.
 ep_node_region() {
-	local name server token
+	local name server token words w
 	name="$1"; server="${2:-}"
 	case "$1" in
 		# unnamed nodes fall back to their UCI id ("@node[3]"), which must not
@@ -601,18 +601,31 @@ ep_node_region() {
 		@*) printf 'other'; return 0 ;;
 	esac
 	name="$(printf '%s' "$1" | tr 'A-Z' 'a-z')"
+	# Chinese labels and spelled-out country names may be matched anywhere: a
+	# four-letter word like "japan" cannot appear inside a host-like token by
+	# accident.
 	case "$name" in
-		*hk*|*hongkong*|*"hong kong"*|*香港*) printf 'hk' ; return 0 ;;
-		*tw*|*taiwan*|*台湾*|*台灣*) printf 'tw' ; return 0 ;;
-		*jp*|*japan*|*日本*|*东京*|*東京*|*大阪*) printf 'jp' ; return 0 ;;
-		*sg*|*singapore*|*新加坡*) printf 'sg' ; return 0 ;;
-		*us*|*unitedstates*|*"united states"*|*美国*|*美國*|*洛杉矶*|*硅谷*) printf 'us' ; return 0 ;;
-		*uk*|*gb*|*london*|*英国*|*英國*|*伦敦*) printf 'uk' ; return 0 ;;
-		*de*|*germany*|*德国*|*德國*|*法兰克福*) printf 'de' ; return 0 ;;
-		*kr*|*korea*|*韩国*|*韓國*|*首尔*) printf 'kr' ; return 0 ;;
-		*ru*|*russia*|*俄罗斯*|*俄羅斯*|*莫斯科*) printf 'ru' ; return 0 ;;
+		*hongkong*|*"hong kong"*|*香港*) printf 'hk' ; return 0 ;;
+		*taiwan*|*台湾*|*台灣*) printf 'tw' ; return 0 ;;
+		*japan*|*日本*|*东京*|*東京*|*大阪*) printf 'jp' ; return 0 ;;
+		*singapore*|*新加坡*) printf 'sg' ; return 0 ;;
+		*unitedstates*|*"united states"*|*美国*|*美國*|*洛杉矶*|*硅谷*) printf 'us' ; return 0 ;;
+		*london*|*英国*|*英國*|*伦敦*) printf 'uk' ; return 0 ;;
+		*germany*|*德国*|*德國*|*法兰克福*) printf 'de' ; return 0 ;;
+		*korea*|*韩国*|*韓國*|*首尔*) printf 'kr' ; return 0 ;;
+		*russia*|*俄罗斯*|*俄羅斯*|*莫斯科*) printf 'ru' ; return 0 ;;
 		*) ;;
 	esac
+	# Two-letter codes count only as a whole word ("us", "us-01", "🇺🇸_US_美国").
+	# A bare substring match tags anything host-like: the airport name "nodebuf"
+	# contains "de", so after stamping a provider every node would land in the
+	# German bucket and lose its real region group.
+	words="$(printf '%s' "$name" | tr -c 'a-z0-9' ' ')"
+	for w in $words; do
+		case "$w" in
+			hk|tw|jp|sg|us|uk|gb|de|kr|ru) printf '%s' "$w" ; return 0 ;;
+		esac
+	done
 	[ -n "$server" ] || { printf 'other'; return 0; }
 	# Only a two-letter country code hugging digits ("jp01", "hk-2") counts:
 	# a bare "us" inside a hostname is too easy to match by accident.
