@@ -172,10 +172,51 @@ case 分支的最后一条命令，整个 `ep_mihomo_node` 就返回失败，一
 `ep_engine_config_generate`，`tests/test-engine.sh` 里有断言守着「CLI 和 init 脚本
 不得直接调用 `ep_config_build`」。
 
+## 独立内核包
+
+mihomo 和 sing-box 一样单独发包，互不牵连：
+
+```
+sh scripts/make-kernel-ipk.sh mihomo x86_64 dist
+EP_SRC=/path/to/mihomo EP_META=/path/to/geoip.metadb \
+  sh scripts/make-kernel-ipk.sh mihomo x86_64 dist
+```
+
+产出 `dist/mihomo_1.19.34_x86_64.ipk`（约 26 MB，内含 61 MB 二进制与 8.4 MB
+geodata）。包内落两个文件：
+
+| 路径 | 内容 |
+|---|---|
+| `/usr/bin/mihomo` | statically linked，musl 可直接跑 |
+| `/etc/easyproxy/mihomo/geoip.metadb` | geodata，避免首次启动联网下载 |
+
+上游资产的命名三种架构不一致：amd64 有 v1/v2/v3 三档微架构分级（`v1` 是最兼容
+的那档，也是唯一能保证所有 x86_64 机器跑得动的），arm64 与 armv7 则不带这段前缀。
+脚本按 `$UARCH` 分别拼，sha256 三档都 pin 了。
+
+`EP_META` 不传时从 `MetaCubeX/meta-rules-dat` 的 `latest` 拉 —— 那个 tag 会随上游
+更新翻滚，没法 pin sha，脚本改为校验「体积 > 5 MB」，明显截断的包直接拒收。
+
+主包**不**把 mihomo 写进 `DEPENDS`：为 26 MB 的引擎强制拉依赖，只用 sing-box 的
+用户没必要付这个代价。装不装由用户决定，`easyproxy engine list` 的 `available`
+字段会如实反映二进制在不在。
+
+真机干净安装验收（0.8.14-6 + mihomo 包）：
+
+```
+rm -f /usr/bin/mihomo; rm -rf /etc/easyproxy/mihomo    # 清掉之前手工放的文件
+opkg install /tmp/mihomo_1.19.34_x86_64.ipk            # opkg list-installed 认得
+uci set easyproxy.main.engine=mihomo && uci commit easyproxy
+/etc/init.d/easyproxy start
+curl -x http://127.0.0.1:7890 https://www.google.com/generate_204   # 204, 0.58s
+```
+
+日志确认 `Load MMDB file: /etc/easyproxy/mihomo/geoip.metadb` —— 用的是包内那份，
+没有联网下载。
+
 ## 尚未做完
 
-- mihomo 二进制（61 MB）目前是手工放到 `/usr/bin/mihomo`，**还没有独立 opkg 包**。
-  `scripts/make-kernel-ipk.sh` 只认 sing-box 和 dae，要加一个 mihomo 分支。
-- geodata 也没进包，现在靠从测试残留里复制。
 - Clash API 的 `/connections`、`/traffic` 还没接进 `easyproxy status` 与面板。
 - `engine use` 的切换事务（先 validate 再停旧、失败回滚）未做，现在靠人工切。
+- mihomo 的规则层只有 `GEOIP,CN,DIRECT` + `MATCH,PROXY`，sing-box 已有的
+  YouTube / Netflix / TikTok 独立策略还没在这个 writer 里实现。

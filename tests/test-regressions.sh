@@ -399,6 +399,30 @@ else
 	no "工作流通过 run-all.sh 统计测试结果" "工作流仍在自己循环跑套件"
 fi
 
+# mihomo ships as its own package too, and it must carry the geodata. Without
+# geoip.metadb the engine silently downloads it on first start, which is a
+# 4.7 s stall with internet and a permanent hang without it.
+MKSH="$SRC/scripts/make-kernel-ipk.sh"
+if grep -q 'mihomo) : ;;\|sing-box|mihomo|dae)' "$MKSH" && grep -q 'mihomo-linux-amd64-v1-v' "$MKSH"; then
+	ok "打包脚本接受 mihomo 并按 amd64-v1 命名取上游包"
+else
+	no "打包脚本支持 mihomo" "没有 mihomo 分支或 amd64 的 -v1- 命名"
+fi
+MKP=0
+for a in amd64 arm64 armv7; do
+	grep -q "mihomo:$a) echo [0-9a-f]" "$MKSH" && MKP=$((MKP + 1))
+done
+if [ "$MKP" -eq 3 ]; then
+	ok "mihomo 三种架构都 pin 了 sha256"
+else
+	no "mihomo 三种架构都 pin 了 sha256" "只有 $MKP 种"
+fi
+if grep -q 'etc/easyproxy/mihomo/geoip.metadb' "$MKSH"; then
+	ok "mihomo 包内携带 geodata"
+else
+	no "mihomo 包内携带 geodata" "包装脚本没有安装 geoip.metadb"
+fi
+
 rm -rf "$SBI"
 say ""
 say "结果：$PASS 通过，$FAIL 失败"
