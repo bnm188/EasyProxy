@@ -434,10 +434,165 @@ ep_node_import() {
 	printf '%s' "$section"
 }
 
+# Where an imported Clash block is kept. The block itself is what gets written
+# into mihomo's proxies list, so it never has to survive a lossy round trip
+# through EasyProxy's own node fields.
+ep_clash_dir() {
+	local d
+	d="$(ep_get main clash_dir '')"
+	printf '%s' "${d:-/etc/easyproxy/clash}"
+}
+
+# Map a Clash proxy "type:" to the type name the rest of EasyProxy uses.
+ep_clash_type() {
+	case "$1" in
+		ss) printf 'shadowsocks' ;;
+		ssr) printf 'shadowsocksr' ;;
+		*) printf '%s' "$1" ;;
+	esac
+}
+
+# Import every proxy of a Clash / Clash.Meta config.
+#
+# Why the raw block is stored instead of field-mapped: a subscription carries
+# reality-opts, ws-opts, xhttp-opts, grpc-opts ... Mapping them into EasyProxy
+# node keys would drop the ones we have no field for, and a vless node that
+# connects with the wrong transport looks healthy in the panel while never
+# carrying a byte. The original block is therefore kept verbatim and handed to
+# mihomo untouched; sing-box refuses those nodes on purpose (see config.sh).
+# Is a node already stored under this display name? Compares the name option
+# directly: a lookup by name through ep_node_resolve cannot be relied on for
+# names with emoji or CJK characters.
+ep_clash_name_taken() {
+	local want="$1" sec
+	for sec in $(ep_node_sections); do
+		[ "$(ep_get "$sec" name '')" = "$want" ] && return 0
+	done
+	return 1
+}
+
+# Is this exact endpoint already stored? Providers publish dozens of entries
+# under one display name, so the name alone decides nothing; the endpoint does.
+ep_clash_endpoint_exists() {
+	local t="$1" s="$2" p="$3" u="$4" pw="$5" sec
+	for sec in $(ep_node_sections); do
+		[ "$(ep_get "$sec" server '')" = "$s" ] || continue
+		[ "$(ep_get "$sec" port '')" = "$p" ] || continue
+		[ "$(ep_get "$sec" type '')" = "$(ep_clash_type "$t")" ] || continue
+		if [ -n "$u" ]; then
+			[ "$(ep_get "$sec" uuid '')" = "$u" ] || continue
+		elif [ -n "$pw" ]; then
+			[ "$(ep_get "$sec" password '')" = "$pw" ] || continue
+		fi
+		return 0
+	done
+	return 1
+}
+
+# Read one top-level key out of a Clash proxy block (4-space indent), with the
+# surrounding quotes YAML may or may not use stripped off.
+clash_field() {
+	sed -n "s/^    $1: *//p" "$2" | head -n 1 | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//"
+}
+
+ep_node_import_clash() {
+	local file="$1" dir tmp blocks blk name base n type server port uuid pw section raw imported skipped failed tag
+
+	[ -n "$file" ] || { echo "usage: easyproxy node import-clash <file.yaml>" >&2; return 1; }
+	[ -s "$file" ] || { echo "no such file or cannot read: $file" >&2; return 1; }
+	dir="$(ep_clash_dir)"
+	mkdir -p "$dir" 2>/dev/null
+	tmp="$(mktemp -d)" || { echo "cannot create a temporary directory" >&2; return 1; }
+
+	# Cut the proxies list into one file per entry. Top-level keys other than
+	# proxies end the list, so proxy-groups / rules after it are ignored.
+	awk -v dir="$tmp" '
+		function flush() {
+			if (n > 0) { f = dir "/blk" ++i; for (j = 1; j <= n; j++) print line[j] > f; close(f); n = 0 }
+		}
+		/^proxies:/ { inp = 1; next }
+		inp && /^[A-Za-z_][A-Za-z0-9_-]*:/ { inp = 0; flush() }
+		inp && /^  - / { flush(); line[++n] = $0; next }
+		inp && n > 0 { line[++n] = $0 }
+		END { flush() }
+	' "$file" > /dev/null 2>&1
+
+	blocks="$(ls "$tmp" 2>/dev/null | sort)"
+	[ -n "$blocks" ] || { rm -rf "$tmp"; echo "no proxies found in $file" >&2; return 1; }
+
+	imported=0; skipped=0; failed=0
+	for blk in $blocks; do
+		# 4-space indent marks a proxy's own keys; the leading "  - " of the
+		# first line is rewritten so the whole entry reads the same way.
+		sed -i -e 's/^  - /    /' "$tmp/$blk" 2>/dev/null
+		name="$(clash_field name "$tmp/$blk")"
+		type="$(clash_field type "$tmp/$blk")"
+		server="$(clash_field server "$tmp/$blk")"
+		port="$(clash_field port "$tmp/$blk")"
+		uuid="$(clash_field uuid "$tmp/$blk")"
+		pw="$(clash_field password "$tmp/$blk")"
+
+		case "$port" in ''|*[!0-9]*) failed=$((failed + 1)); echo "skip (no port): ${name:-$blk}" >&2; continue ;; esac
+		[ -n "$server" ] || { failed=$((failed + 1)); echo "skip (no server): ${name:-$blk}" >&2; continue; }
+		[ -n "$name" ] || name="$type-$port"
+
+		# Same endpoint twice is a real duplicate. The same display name over a
+		# different server is not, so a clash gets a counter suffix instead of
+		# being thrown away: mihomo refuses a config whose proxies share a name.
+		if ep_clash_endpoint_exists "$type" "$server" "$port" "$uuid" "$pw"; then
+			skipped=$((skipped + 1)); echo "skip (duplicate endpoint): $name" >&2; continue
+		fi
+		n=2
+		base="$name"
+		while ep_clash_name_taken "$name"; do
+			name="$base ($n)"
+			n=$((n + 1))
+			[ "$n" -le 100 ] || break
+		done
+		tag="$name"
+		raw=""
+		# Rewrite the name inside the block as well: it has to match the tag the
+		# panel and groups show, otherwise the entry exists but nothing selects it.
+		awk -v n="$tag" '/^    name: / { print "    name: " n; next } { print }' "$tmp/$blk" > "$tmp/$blk.new" 2>/dev/null \
+			&& mv "$tmp/$blk.new" "$tmp/$blk"
+
+		section="$(uci -q add "$EP_CONFIG" node)" || { failed=$((failed + 1)); continue; }
+		raw="$(printf '%s' "$section" | tr -c 'A-Za-z0-9_.-' '_').yaml"
+		# The working copy dropped the "- " list marker so every key reads
+		# uniformly; putting it back is what makes the block a proxies entry
+		# again instead of a stray mapping inside the list.
+		awk 'NR == 1 { sub(/^    /, "  - ") } { print }' "$tmp/$blk" > "$tmp/$blk.raw" 2>/dev/null
+		cp "$tmp/$blk.raw" "$dir/$raw" 2>/dev/null || { failed=$((failed + 1)); continue; }
+
+		uci -q set "${EP_CONFIG}.${section}.name=${tag}"
+		uci -q set "${EP_CONFIG}.${section}.type=$(ep_clash_type "$type")"
+		uci -q set "${EP_CONFIG}.${section}.server=${server}"
+		uci -q set "${EP_CONFIG}.${section}.port=${port}"
+		[ -n "$uuid" ] && uci -q set "${EP_CONFIG}.${section}.uuid=${uuid}"
+		[ -n "$pw" ] && uci -q set "${EP_CONFIG}.${section}.password=${pw}"
+		uci -q set "${EP_CONFIG}.${section}.clash_raw=${raw}"
+		uci -q set "${EP_CONFIG}.${section}.enabled=1"
+		uci -q commit "$EP_CONFIG" 2>/dev/null
+		imported=$((imported + 1))
+		echo "imported: $tag ($section)"
+	done
+
+	rm -rf "$tmp"
+	printf 'clash import: %s imported, %s existed, %s unusable\n' "$imported" "$skipped" "$failed"
+	[ "$imported" -gt 0 ]
+}
+
 # Delete a node section by name, server address or id
 ep_node_delete() {
-	local section
+	local section raw dir
 	section="$(ep_node_resolve "$1")" || { echo "no such node: $1" >&2; return 1; }
+	# An imported Clash block lives in its own file; leaving it behind would
+	# leak one dead file per deleted node forever.
+	raw="$(ep_get "$section" clash_raw '')"
+	if [ -n "$raw" ]; then
+		dir="$(ep_clash_dir)"
+		rm -f "$dir/$raw" 2>/dev/null
+	fi
 	uci -q delete "${EP_CONFIG}.${section}" 2>/dev/null
 	uci -q commit "$EP_CONFIG" 2>/dev/null
 	printf '%s' "$section"

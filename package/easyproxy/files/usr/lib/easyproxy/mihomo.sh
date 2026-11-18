@@ -142,7 +142,31 @@ ep_mihomo_controller() {
 # One proxy entry. Prints nothing and sets EP_ERR when the node is unusable.
 ep_mihomo_node() {
 	local section="$1" tag type server port method password uuid flow
-	local sni tls alter_id
+	local sni tls alter_id raw dir f
+
+	# A node imported from a Clash config keeps its original block, transports
+	# included. Emitting it verbatim is the only way reality / ws / xhttp
+	# options survive; the field-based path below would quietly drop them.
+	raw="$(ep_get "$section" clash_raw '')"
+	if [ -n "$raw" ]; then
+		tag="$(ep_node_uniq_tag "$section")"
+		if command -v ep_clash_dir >/dev/null 2>&1; then
+			dir="$(ep_clash_dir)"
+		else
+			dir="$(ep_get main clash_dir '')"
+			dir="${dir:-/etc/easyproxy/clash}"
+		fi
+		f="$dir/$raw"
+		if [ ! -s "$f" ]; then
+			ep_err "node $tag: imported clash block is missing ($f)"
+			return 1
+		fi
+		# The generated tag is authoritative: it may carry a "-2" suffix when
+		# two nodes share a display name, and a proxy whose name differs from
+		# the one the group selects makes mihomo reject the whole config.
+		awk -v n="$tag" '/^    name: / { print "    name: " n; next } { print }' "$f"
+		return 0
+	fi
 
 	tag="$(ep_node_uniq_tag "$section")"
 	type="$(ep_get "$section" type '')"

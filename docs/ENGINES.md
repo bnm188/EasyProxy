@@ -332,3 +332,20 @@ domain-suffix / block→REJECT / IP-CIDR 带 no-resolve、关 YouTube 不影响 
   fallback、防泄漏、缓存都还没有，与 sing-box 侧不等价。
 - 平台开关目前只能整体走 PROXY，没有 url-test / fallback 组，也就没有自动选最快和
   故障剔除的载体。
+
+## Clash 订阅导入（0.8.14-15 起）
+
+很多机场给的订阅地址返回的不是 base64 节点列表，而是一份完整的 Clash / Clash.Meta YAML 配置，`proxies:` 里每个条目都带 `reality-opts`、`ws-opts`、`xhttp-opts` 这类嵌套字段。
+
+`easyproxy node import-clash <file.yaml>` 会把 `proxies` 段按条目切开，**每条原样存成一个块文件**（`/etc/easyproxy/clash/<section>.yaml`，目录可用 `main.clash_dir` 改），UCI 里只记基础字段加 `clash_raw=<文件名>`。
+
+为什么不做字段映射：EasyProxy 的节点字段覆盖不到 xhttp / grpc / reality 的全部参数，映射一遍必然丢参数，生成出来的节点"能连上但跑不了流量"，面板上还看不出问题。原样保存再原样交给 mihomo，才不会失真。
+
+关键约束：
+
+1. **名字必须与生成的 tag 一致**。两个节点同名时 `ep_build_tag_map` 会给后者加 `-2`，mihomo 的 `proxies` 与 `proxy-groups` 一旦名字不匹配就整份配置报 `proxy group[0]: PROXY: 'xxx' not found` 并拒绝启动。导入时同名会追加 `(2)`、`(3)`，写块文件时改写 `name:` 行；mihomo 写出时再按当前 tag 覆盖一次名字作为兜底。
+2. **端点去重只认 endpoint**（type + server + port + uuid/password）。机场普遍用「🇺🇸_US_美国_IPV4」一个名字挂十几台机器，按名字去重会把订阅砍掉一半。
+3. **sing-box 引擎跳过这些节点**并给出 warning（"only usable with the mihomo engine"），不渲染成半正确的出站。
+4. 删除节点会同时删掉块文件，否则每删一个节点就留一个死文件。
+
+实测（真机 0.8.14-17）：一条 `proxies` 段含 24 个节点的订阅 → `24 imported, 0 existed, 0 unusable`；`config generate` 过 mihomo 自检；25 个节点全部出现在 `proxies`；Clash API 里 PROXY 组能逐个切换。

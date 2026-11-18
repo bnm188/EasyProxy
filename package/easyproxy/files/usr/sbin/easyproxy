@@ -572,6 +572,12 @@ cmd_node_import() {
 	local src="$1" uri section added=0 failed=0
 	[ -n "$src" ] || { echo "usage: easyproxy node import <file|share-link>" >&2; return 2; }
 	if [ -r "$src" ]; then
+		# A Clash / Clash.Meta config is a YAML document, not a list of share
+		# links: route it to the block importer instead of failing every line.
+		if grep -q '^proxies:' "$src" 2>/dev/null; then
+			ep_node_import_clash "$src"
+			return $?
+		fi
 		while IFS= read -r uri; do
 			uri="$(printf '%s' "$uri" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
 			case "$uri" in
@@ -589,6 +595,12 @@ cmd_node_import() {
 		return $?
 	fi
 	cmd_node_import_one "$src" "$2"
+}
+
+cmd_node_import_clash() {
+	local file="$1"
+	[ -n "$file" ] || { echo "usage: easyproxy node import-clash <file.yaml>" >&2; return 2; }
+	ep_node_import_clash "$file"
 }
 
 cmd_node_export() {
@@ -1969,6 +1981,7 @@ case "$CMD" in
 			show) cmd_node_list ;;
 			add) cmd_node_add "$SUB2" "$SUB3" ;;
 			import) cmd_node_import "$SUB2" "$SUB3" ;;
+			import-clash|clash-import) cmd_node_import_clash "$SUB2" ;;
 			export|dump) cmd_node_export "$SUB2" ;;
 			enable) cmd_node_enabled "$SUB2" 1 ;;
 			disable) cmd_node_enabled "$SUB2" 0 ;;

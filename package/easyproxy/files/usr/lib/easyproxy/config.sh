@@ -69,6 +69,10 @@ ep_node_outbound() {
 	case "$port" in
 		''|*[!0-9]*) ep_err "node ${tag}: missing or non-numeric port"; return 1 ;;
 	esac
+	if [ -n "$(ep_get "$section" clash_raw '')" ]; then
+		ep_err "node ${tag}: imported from a Clash config, only the mihomo engine can run it"
+		return 1
+	fi
 
 	tag="$(ep_json_escape "$tag")"
 	server="$(ep_json_escape "$server")"
@@ -502,9 +506,18 @@ ep_config_build() {
 	sections="$(ep_node_sections)"
 	nodes=0
 	tags=""
+	EP_CLASH_SKIPPED=0
 
 	for section in $sections; do
 		[ "$(ep_get "$section" enabled 1)" = "1" ] || continue
+		# Nodes imported from a Clash config are handed to mihomo as their raw
+		# block. sing-box has no equivalent for several of those transports, so
+		# they are skipped instead of being rendered as a node that connects
+		# with the wrong transport and never carries traffic.
+		if [ -n "$(ep_get "$section" clash_raw '')" ]; then
+			EP_CLASH_SKIPPED=$((EP_CLASH_SKIPPED + 1))
+			continue
+		fi
 		line="$(ep_node_outbound "$section")" || {
 			EP_ERR="$(cat "$EP_ERR_FILE" 2>/dev/null)"
 			rm -f "$tmp" "$out" "$EP_ERR_FILE"
@@ -536,6 +549,15 @@ ep_config_build() {
 
 	locked_msg="$(ep_locked_warn)"
 	EP_WARN="$locked_msg"
+	# Say it out loud rather than shipping a config that silently lost nodes.
+	if [ "${EP_CLASH_SKIPPED:-0}" -gt 0 ]; then
+		clash_msg="${EP_CLASH_SKIPPED} node(s) came from a Clash config and are only usable with the mihomo engine; they were left out of this sing-box config"
+		if [ -n "$EP_WARN" ]; then
+			EP_WARN="$EP_WARN; $clash_msg"
+		else
+			EP_WARN="$clash_msg"
+		fi
+	fi
 	if [ "$nodes" -gt 0 ] && [ "$mode" != "split" ]; then
 		if [ -n "$EP_WARN" ]; then
 			EP_WARN="$EP_WARN; china rule sets are unavailable, so routing is pinned to direct: nothing is proxied and foreign sites are unreachable until geosite-cn.srs and geoip-cn.srs exist under $(ep_rule_set_dir). Run 'easyproxy config generate' with network access, or place both files there."
