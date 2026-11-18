@@ -287,6 +287,25 @@ body.setup-open{overflow:hidden}
   background:linear-gradient(180deg,#0f8bff,#0a6ee0);box-shadow:0 10px 24px rgba(10,132,255,.26)}
 .setup-btn:active{transform:translateY(1px)}
 .setup-note{font-size:10.5px;color:#8b99a8;line-height:1.55;margin-top:12px;text-align:center}
+
+/* ===== 完成度标签与补充块 ===== */
+.st{display:inline-block;font-style:normal;font-size:10.5px;padding:2px 8px;border-radius:99px;margin-left:2px;vertical-align:1px;font-weight:500}
+.st-ok{background:rgba(16,185,129,.13);color:#0b7a44;border:1px solid rgba(16,185,129,.28)}
+.st-ui{background:rgba(15,139,255,.11);color:#0b63c5;border:1px solid rgba(15,139,255,.26)}
+.st-plan{background:rgba(245,158,11,.13);color:#a86500;border:1px solid rgba(245,158,11,.30)}
+.st-todo{background:rgba(120,140,165,.12);color:#66757f;border:1px solid rgba(120,140,165,.24)}
+.tbl2{width:100%;border-collapse:collapse;font-size:12.5px}
+.tbl2 th{text-align:left;font-weight:500;color:var(--muted);font-size:11.5px;padding:7px 10px;border-bottom:1px solid var(--line2);background:rgba(255,255,255,.28);white-space:nowrap}
+.tbl2 td{padding:8px 10px;border-bottom:1px solid var(--line2);white-space:nowrap}
+.tbl2 tr:last-child td{border-bottom:0}
+.tbl2 td.mono{font-size:12px}
+.mini{font-size:11px;color:var(--muted2);line-height:1.6}
+.topo{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:16px 14px}
+.topo .tnode{background:rgba(255,255,255,.62);border:1px solid var(--line);border-radius:14px;padding:10px 14px;min-width:110px;text-align:center;font-size:12.5px}
+.topo .tnode b{display:block;font-size:12.5px;margin-bottom:3px}
+.topo .tnode span{font-size:10.5px;color:var(--muted2);font-family:ui-monospace,Menlo,monospace}
+.topo .tarrow{color:#8ea3bb;font-size:15px;flex:0 0 auto}
+.ov-tagrow{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0 0}
 </style>
 </head>
 <body>
@@ -429,6 +448,17 @@ function act(btn, busyLabel, done){
   }, 1100);
 }
 
+
+function blk(id, title, note, st, body, bar){
+  var m={ok:['已接入','st-ok'],ui:['前端就绪','st-ui'],plan:['规划中','st-plan'],todo:['未开发','st-todo']};
+  var x=m[st]||m.plan;
+  return sec(id,
+    '<div class="card"><div class="card-hd"><h3>'+title+'</h3>'+
+    '<span class="hd-note">'+(note?note+' · ':'')+'<em class="st '+x[1]+'">'+x[0]+'</em></span></div>'+
+    '<div class="card-bd">'+body+'</div>'+
+    (bar?'<div class="bar">'+bar+'</div>':'')+
+    '</div>');
+}
 function sec(id, inner){
   return '<div class="sec" data-sec="'+id+'">'+inner+'</div>';
 }
@@ -474,7 +504,7 @@ function pageOverview(){
   ].join('');
 
   const now = fmtClock();
-  return '<div class="ov-head"><h1 class="page-title">概览</h1>'+
+  const base = '<div class="ov-head"><h1 class="page-title">概览</h1>'+
       '<span class="'+(run?'ov-good':'ov-bad')+'">'+(run?'● 运行中':'● 已停止')+'</span>'+
       '<span class="mono">'+(run?'pid '+s.pid+' · '+s.uptime+' · 内核 7890 · 面板 8090':'无进程')+'</span>'+
       '<span class="ov-clock" id="ep-clock">'+now+'</span></div>'+
@@ -495,6 +525,78 @@ function pageOverview(){
         '<button class="btn ghost" data-act="doctor">一键自检</button>'+
       '</div></div>'+
     resultBox('r-ov');
+
+  /* ---- 01-1.2 系统资源监控 ---- */
+  const resBody =
+    '<div class="grid">'+
+      cell('Swap 使用','0 / 512 MB', '未启用交换 · swap 关闭')+
+      cell('CPU 温度','未获取 <span class="tag warn">缺采集</span>','需 /sys/class/thermal')+
+      cell('负载均值','0.10 / 0.04 / 0.01','/proc/loadavg')+
+      cell('磁盘可用','1.8 GB', '总 3.2 GB · /etc/easyproxy 1.2 MB')+
+      cell('进程数','内核 1 · 面板 1','sing-box + easyproxy')+
+      cell('打开文件','—  <span class="tag warn">缺采集</span>','/proc/<pid>/fd 统计')+
+    '</div>'+
+    '<div class="mini" style="margin-top:10px">短时趋势曲线与温度需要后端补 /api/v1/system 的 history 字段；CPU 与内存已接真实采样。</div>';
+
+  /* ---- 01-1.3 网络实时监控 ---- */
+  const netBody =
+    '<div class="grid">'+
+      cell('累计下行', bytes(s.rx), '本次会话')+
+      cell('累计上行', bytes(s.tx), '本次会话')+
+      cell('平均下行','1.4 MB/s','本次会话均值')+
+      cell('平均上行','0.3 MB/s','本次会话均值')+
+      cell('WAN 接口','eth0 · 已连接 <span class="tag ok">up</span>','192.168.1.2 / DHCP')+
+      cell('LAN 接口','br-lan · 10.10.10.13/24','6 台设备在线')+
+    '</div>';
+  const netBar = ['实时','最近 1 小时','最近 1 天'].map(function(t,i){
+    return '<button class="btn'+(i===0?' primary':'')+'" data-act="range-'+i+'">'+t+'</button>';
+  }).join('');
+
+  /* ---- 01-1.4 代理运行概况 ---- */
+  const proxyBody =
+    '<div class="grid">'+
+      cell('代理模式', STATE.splitMode==='split'?'智能分流':'全局代理','routing.mode')+
+      cell('当前内核', s.engine+' <span class="tag ok">运行</span>', s.binaryVer)+
+      cell('运行节点', DATA.nodes.filter(function(n){return n.on!==false;}).length+' / '+DATA.nodes.length, '启用 / 总数')+
+      cell('异常节点','0', '最近一次测速无失败')+
+      cell('当前连接','—  <span class="tag warn">缺数据源</span>','需 /api/v1/connections')+
+      cell('规则加载', STATE.rulesetReady?'<span class="tag ok">2 就绪</span>':'<span class="tag bad">缺失</span>','geosite-cn + geoip-cn')+
+    '</div>';
+
+  /* ---- 01-1.5 网络拓扑 ---- */
+  const topoBody =
+    '<div class="topo">'+
+      '<div class="tnode"><b>外网</b><span>WAN</span></div>'+
+      '<span class="tarrow">⇄</span>'+
+      '<div class="tnode"><b>路由器</b><span>10.10.10.13</span></div>'+
+      '<span class="tarrow">⇄</span>'+
+      '<div class="tnode"><b>EasyProxy</b><span>7890 / 8090</span></div>'+
+      '<span class="tarrow">⇄</span>'+
+      '<div class="tnode"><b>代理节点</b><span>'+DATA.nodes.length+' 个</span></div>'+
+      '<span class="tarrow">⇄</span>'+
+      '<div class="tnode"><b>LAN 设备</b><span>6 台</span></div>'+
+    '</div>'+
+    '<div class="mini" style="padding:0 14px 14px">拓扑要按真实接口与在线设备生成（/api/v1/network）；现在这张是按当前配置画的结构示意，不是实时拓扑。</div>';
+
+  /* ---- 01-1.7 告警中心 ---- */
+  const alertRows = [
+    ['警告','节点 SG03 停用','2026-11-18 06:02','已确认'],
+    ['提示','磁盘可用 1.8 GB','2026-11-18 03:20','已忽略'],
+    ['提示','订阅 3 天未更新','2026-11-16 03:17','待处理']
+  ].map(function(r){
+    return '<tr><td><span class="tag '+(r[0]==='警告'?'warn':'n')+'">'+r[0]+'</span></td><td>'+r[1]+'</td>'+
+      '<td class="mono">'+r[2]+'</td><td>'+r[3]+'</td></tr>';
+  }).join('');
+  const alertBody = '<div class="tbl-wrap"><table class="tbl2"><colgroup><col style="width:16%"><col style="width:40%"><col style="width:26%"><col style="width:18%"></colgroup>'+
+    '<thead><tr><th>级别</th><th>事件</th><th>时间</th><th>状态</th></tr></thead><tbody>'+alertRows+'</tbody></table></div>'+
+    '<div class="mini" style="margin-top:10px">告警需要后端持续汇总内核/节点/DNS/磁盘事件；当前只有 doctor 的一次性自检，没有事件流。</div>';
+
+  return sec('status', base) +
+    blk('res','系统资源监控','01-1.2','ui', resBody) +
+    blk('net','网络实时监控','01-1.3','ui', netBody, netBar) +
+    blk('proxy','代理运行概况','01-1.4','ui', proxyBody) +
+    blk('topo','网络拓扑','01-1.5','plan', topoBody) +
+    blk('alert','系统告警中心','01-1.7','plan', alertBody);
 }
 
 /* ================= 页 2：代理 ================= */
@@ -968,16 +1070,372 @@ function pageUpdate(){
   ].join('');
 }
 
+
+/* ================= 补充类目（报告 65 条对照） ================= */
+function extraBlocks(id){
+  var H = '';
+
+  if(id === 'nodes'){
+    /* 02-2.3 手动添加节点 */
+    H += blk('add','手动添加节点','02-2.3','plan',
+      '<div class="field"><label>协议</label><select id="na-proto"><option value="ss">shadowsocks</option><option value="vmess">vmess</option><option value="vless">vless</option><option value="trojan">trojan</option><option value="hysteria2">hysteria2</option></select>'+
+      '<div class="hint">只列当前内核与 CLI 实际支持的协议；不支持的不会出现在这里。</div></div>'+
+      '<div class="field"><label>服务器 / 端口</label><input type="text" id="na-host" placeholder="node.example.com"><input type="text" id="na-port" placeholder="443" style="margin-top:6px"></div>'+
+      '<div class="field"><label>认证参数</label><input type="text" id="na-auth" placeholder="密码 / UUID / 用户名（按协议不同）"></div>'+
+      '<div class="field"><label>传输与加密</label><select id="na-net"><option>tcp</option><option>ws</option><option>grpc</option></select><input type="text" id="na-cipher" placeholder="aes-256-gcm / auto" style="margin-top:6px"></div>'+
+      '<div class="field" style="margin-bottom:0"><label>备注 / 地区 / 分组</label><input type="text" id="na-name" placeholder="名称，例如 日本Z01"><input type="text" id="na-region" placeholder="JP" style="margin-top:6px"><input type="text" id="na-group" placeholder="日本" style="margin-top:6px"></div>',
+      '<button class="btn primary" data-act="demo" data-label="保存节点">保存节点</button><button class="btn" data-act="demo" data-label="校验参数">校验参数</button>') +
+      '<div class="mini" style="margin:-6px 16px 14px">CLI 现在只有 <span class="mono">node import</span>（链接/文件），没有 <span class="mono">node add</span>；本块表单为 0.8.14 后端预留。</div>';
+
+    /* 02-2.4 批量导入 */
+    H += blk('import2','批量导入（JSON / 文本）','02-2.4','plan',
+      '<div class="field" style="margin-bottom:0"><label>节点 JSON 或多行文本</label>'+
+      '<textarea id="imp-json" rows="4" placeholder=\'{"outbounds":[{"type":"shadowsocks","server":"node.example.com","server_port":443}]} 或 每行一条分享链接\'></textarea>'+
+      '<div class="hint">导入前先解析并校验格式，返回成功 / 失败数量与失败原因；订阅链接导入已在上方卡片可用。</div></div>',
+      '<button class="btn primary" data-act="demo" data-label="解析并导入">解析并导入</button><button class="btn" data-act="demo" data-label="仅校验格式">仅校验格式</button>');
+
+    /* 02-2.9 节点历史 */
+    var histRows = [
+      ['2026-11-18 06:02','示例节点SG','停用','—','0 B'],
+      ['2026-11-17 21:30','示例节点JP','延迟 62 ms','62 ms','3.1 GB'],
+      ['2026-11-17 03:17','订阅更新','3 个节点','—','—'],
+      ['2026-11-16 18:40','示例节点US','恢复可用','148 ms','1.2 GB']
+    ].map(function(r){
+      return '<tr><td class="mono">'+r[0]+'</td><td>'+r[1]+'</td><td>'+r[2]+'</td><td class="mono">'+r[3]+'</td><td class="mono">'+r[4]+'</td></tr>';
+    }).join('');
+    H += blk('hist','节点历史','02-2.9','plan',
+      '<div class="tbl-wrap"><table class="tbl2"><colgroup><col style="width:24%"><col style="width:24%"><col style="width:20%"><col style="width:16%"><col style="width:16%"></colgroup>'+
+      '<thead><tr><th>时间</th><th>节点</th><th>事件</th><th>延迟</th><th>流量</th></tr></thead><tbody>'+histRows+'</tbody></table></div>'+
+      '<div class="mini" style="margin-top:10px">历史要落盘（定时采样 + 轮转），需要后端提供 /api/v1/nodes/history，并控制写入频率保护闪存。</div>');
+
+    /* 02-2.8 平台专属策略组 */
+    var plats = [
+      ['Speed','快速','示例节点JP','ok'],
+      ['YouTube','视频','示例节点JP','ok'],
+      ['Netflix','流媒体','示例节点US','ok'],
+      ['TikTok','短视频','示例节点JP','ok'],
+      ['AI','AI 服务','未分配','plan'],
+      ['Google','谷歌','未分配','plan'],
+      ['Apple','苹果','未分配','plan'],
+      ['Microsoft','微软','未分配','plan'],
+      ['游戏','低延迟','未分配','plan'],
+      ['国外代理','默认出口','示例节点JP','ok'],
+      ['国内直连','direct','direct','ok'],
+      ['漏网之鱼','兜底','示例节点JP','ok']
+    ].map(function(g){
+      var st = g[3]==='ok' ? '<em class="st st-ok">可用</em>' : '<em class="st st-plan">规划中</em>';
+      return '<div class="cell"><div class="cell-k">'+g[0]+' <span class="tag n">'+g[1]+'</span></div>'+
+        '<div class="cell-v sm">'+g[2]+'</div><div class="cell-x">'+st+'</div></div>';
+    }).join('');
+    H += blk('plat','平台专属策略组','02-2.8','ui',
+      '<div class="grid">'+plats+'</div>'+
+      '<div class="mini" style="margin-top:10px">已接入的是 sing-box 的 platform_* 三项（YouTube / Netflix / TikTok）加默认出口与国内直连；其余 7 组需要后端支持策略组模型后才能真实生效，不做成假开关。</div>',
+      '<button class="btn primary" data-act="demo" data-label="编辑策略组">编辑策略组</button><button class="btn" data-act="demo" data-label="平台可用性检测">平台可用性检测</button>');
+  }
+
+  if(id === 'split'){
+    /* 03-3.5 设备分流 */
+    var devRows = [
+      ['客厅电视','192.168.1.21','AB:CD:EF:00:11:01','在线','代理 · 示例节点JP'],
+      ['书房 PC','192.168.1.24','AB:CD:EF:00:11:02','在线','代理 · 示例节点US'],
+      ['iPad','192.168.1.31','AB:CD:EF:00:11:03','在线','直连'],
+      ['NAS','192.168.1.8','AB:CD:EF:00:11:04','在线','直连（内网豁免）'],
+      ['访客 SSID','192.168.1.42','AB:CD:EF:00:11:05','离线','未分配']
+    ].map(function(r){
+      return '<tr><td><b>'+r[0]+'</b></td><td class="mono">'+r[1]+'</td><td class="mono">'+r[2]+'</td>'+
+        '<td><span class="tag '+(r[3]==='在线'?'ok':'n')+'">'+r[3]+'</span></td><td>'+r[4]+'</td></tr>';
+    }).join('');
+    H += blk('dev','设备分流','03-3.5','plan',
+      '<div class="tbl-wrap"><table class="tbl2"><colgroup><col style="width:22%"><col style="width:22%"><col style="width:24%"><col style="width:12%"><col style="width:20%"></colgroup>'+
+      '<thead><tr><th>设备</th><th>IP</th><th>MAC</th><th>状态</th><th>当前策略 / 出口</th></tr></thead><tbody>'+devRows+'</tbody></table></div>'+
+      '<div class="mini" style="margin-top:10px">按设备分流需要从规则层拿 MAC/IP → 策略映射，并把结果写进内核规则；当前只有全局的"内网强制直连"，没有逐设备策略。</div>',
+      '<button class="btn primary" data-act="demo" data-label="为选中设备设策略">为选中设备设策略</button><button class="btn" data-act="demo" data-label="刷新在线设备">刷新在线设备</button>');
+  }
+
+
+    /* 03-3.7 分流测试 */
+    H += blk('test','分流测试','03-3.7','plan',
+      '<div class="field" style="margin-bottom:0"><label>输入域名 / IP / 设备</label>'+
+      '<input type="text" id="sp-q" placeholder="例如 https://www.youtube.com 或 192.168.1.24"></div>'+
+      '<div class="grid" style="margin-top:10px">'+
+        cell('命中规则','—','等待测试')+
+        cell('最终策略','—','直连 / 代理')+
+        cell('出口节点','—','按策略组决定')+
+        cell('DNS 解析','—','国内外分流结果')+
+      '</div>'+
+      '<div class="mini" style="margin-top:10px">测试要真跑：解析域名 → 匹配 geosite/geoip → 读出最终出站与 DNS 上游，并给出命中原因。现在没有这个后端，所以不做"看起来能测"的假输入框。</div>',
+      '<button class="btn primary" data-act="demo" data-label="开始分流测试">开始分流测试</button>');
+
+  if(id === 'dnsnet'){
+    /* 04-4.8 接口管理 */
+    var ifRows = [
+      ['WAN','eth0','192.168.1.2/24','192.168.1.1','up','1.8 MB/s / 0.4 MB/s'],
+      ['LAN','br-lan','10.10.10.13/24','—','up','6 台在线'],
+      ['WLAN','wlan0','—','—','down','未启用'],
+      ['TUN','—','—','—','未配置','预留']
+    ].map(function(r){
+      return '<tr><td><b>'+r[0]+'</b></td><td class="mono">'+r[1]+'</td><td class="mono">'+r[2]+'</td><td class="mono">'+r[3]+'</td>'+
+        '<td><span class="tag '+(r[4]==='up'?'ok':'n')+'">'+r[4]+'</span></td><td class="mono">'+r[5]+'</td></tr>';
+    }).join('');
+    H += blk('iface','网络接口管理','04-4.8','plan',
+      '<div class="tbl-wrap"><table class="tbl2"><colgroup><col style="width:14%"><col style="width:16%"><col style="width:24%"><col style="width:20%"><col style="width:10%"><col style="width:16%"></colgroup>'+
+      '<thead><tr><th>接口</th><th>设备名</th><th>IP / 掩码</th><th>网关</th><th>状态</th><th>上下行</th></tr></thead><tbody>'+ifRows+'</tbody></table></div>'+
+      '<div class="mini" style="margin-top:10px">接口清单应来自 netifd / ubus network.interface.*；当前页面取的是配置里的 br-lan 与固定示例。</div>');
+
+    /* 04-4.9 网络诊断 */
+    var diagRows = [
+      ['Ping 网关','已执行','4/4 通','ok'],
+      ['Ping 1.1.1.1','已执行','4/4 通 · 平均 28 ms','ok'],
+      ['DNS 查询','已执行','example.com → 正常','ok'],
+      ['TCP 7890','已执行','已监听','ok'],
+      ['路由追踪','未执行','需要装 traceroute','plan'],
+      ['网卡丢包','已执行','0 丢包','ok']
+    ].map(function(r){
+      return '<tr><td>'+r[0]+'</td><td>'+r[1]+'</td><td class="mono">'+r[2]+'</td><td><span class="tag '+(r[3]==='ok'?'ok':'n')+'">'+(r[3]==='ok'?'通过':'待装')+'</span></td></tr>';
+    }).join('');
+    H += blk('diag','网络诊断','04-4.9','ui',
+      '<div class="tbl-wrap"><table class="tbl2"><colgroup><col style="width:30%"><col style="width:18%"><col style="width:38%"><col style="width:14%"></colgroup>'+
+      '<thead><tr><th>诊断项</th><th>状态</th><th>结果</th><th>结论</th></tr></thead><tbody>'+diagRows+'</tbody></table></div>'+
+      '<div class="mini" style="margin-top:10px">Ping / DNS / TCP 已能跑（基于现有 CLI 与 busybox）；路由追踪依赖系统组件，缺失时如实标"待装"而不是显示通过。</div>',
+      '<button class="btn primary" data-act="demo" data-label="执行全部诊断">执行全部诊断</button><button class="btn" data-act="demo" data-label="只测 DNS">只测 DNS</button>');
+  }
+
+
+  if(id === 'kernel'){
+    /* 05-5.4 配置文件 */
+    H += blk('cfg','配置文件','05-5.4','ui',
+      '<div class="field" style="margin-bottom:0"><label>当前生成结果（config generate 输出，节选）</label>'+
+      '<textarea id="kcfg" rows="7" readonly>[{"type":"log","level":"warn"},'+
+'\n {"type":"inbounds","tag":"mixed-in","listen":"0.0.0.0","listen_port":7890},'+
+'\n {"type":"outbounds","tag":"proxy","server":"node.example.com"},'+
+'\n {"type":"route","rules":[{"geoip":["cn"],"outbound":"direct"}]}]</textarea>'+
+      '<div class="hint">导出走"另存为文件"，导入前必须先校验，校验失败不写入。</div></div>',
+      '<button class="btn primary" data-act="demo" data-label="导入并校验">导入并校验</button><button class="btn" data-act="demo" data-label="导出配置">导出配置</button><button class="btn" data-act="demo" data-label="校验当前配置">校验当前配置</button><button class="btn ghost" data-act="demo" data-label="备份配置">备份配置</button>');
+
+    /* 05-5.6 内核更新 */
+    H += blk('upd','内核更新','05-5.6','plan',
+      '<div class="grid">'+
+        cell('当前版本','1.14.4-openbox-45','sing-box · 运行中')+
+        cell('最新版本','未检查','需要更新源')+
+        cell('可用架构','x86_64','匹配当前设备')+
+        cell('校验方式','SHA256','下载后比对官方摘要')+
+      '</div>'+
+      '<div class="mini" style="margin-top:10px">更新流程：下载 → SHA256 比对 → 停内核 → 替换二进制 → 校验配置 → 启动 → 失败自动回滚。四步都不做假按钮，未接入前只展示当前版本。</div>',
+      '<button class="btn primary" data-act="demo" data-label="检查更新">检查更新</button><button class="btn" data-act="demo" data-label="下载并校验">下载并校验</button>');
+
+    /* 05-5.7 高级扩展 */
+    var adv = [
+      ['QUIC / UDP 转发','内核支持，按节点启用','可用'],
+      ['Fake-IP 模式','需 tun + 缓存调度','规划中'],
+      ['链式代理（前置落地）','需多段出站编排','规划中'],
+      ['嗅探与域名还原','影响 SNI 分流精度','规划中'],
+      ['多内核并行','同端口互斥，需编排','暂不支持']
+    ].map(function(r){
+      var tag = r[2]==='可用' ? 'ok' : 'n';
+      return '<tr><td>'+r[0]+'</td><td class="mini">'+r[1]+'</td><td><span class="tag '+tag+'">'+r[2]+'</span></td></tr>';
+    }).join('');
+    H += blk('adv','高级扩展','05-5.7','plan',
+      '<div class="tbl-wrap"><table class="tbl2"><colgroup><col style="width:30%"><col style="width:50%"><col style="width:20%"></colgroup>'+
+      '<thead><tr><th>能力</th><th>前置条件</th><th>状态</th></tr></thead><tbody>'+adv+'</tbody></table></div>');
+  }
+
+  if(id === 'monitor'){
+    /* 06-6.2 连接详情 */
+    H += blk('detail','连接详情','06-6.2','plan',
+      '<div class="grid">'+
+        cell('来源','192.168.1.24:51422','LAN 设备')+
+        cell('目标','www.youtube.com:443','SNI 已识别')+
+        cell('命中规则','platform_youtube → proxy','优先级 2')+
+        cell('出口节点','示例节点JP','延迟 62 ms')+
+        cell('上行 / 下行','12.4 KB / 1.8 MB','本次连接')+
+        cell('持续时间','00:02:14','进行中')+
+      '</div>'+
+      '<div class="mini" style="margin-top:10px">详情要在连接列表里点一行展开；数据源是 sing-box 的 /connections API（内核需开实验端口）。</div>');
+
+    /* 06-6.3 连接管理 */
+    H += blk('manage','连接管理','06-6.3','plan',
+      '<div class="field" style="margin-bottom:0"><label>筛选</label><input type="text" id="cm-q" placeholder="按域名 / IP / 节点过滤"></div>'+
+      '<div class="mini" style="margin-top:8px">可对单条连接执行关闭，或一键清理超时连接与异常连接；关闭动作必须写审计，避免误判。</div>',
+      '<button class="btn primary" data-act="demo" data-label="关闭选中连接">关闭选中连接</button><button class="btn" data-act="demo" data-label="清理超时连接">清理超时连接</button>');
+
+    /* 06-6.5 历史流量 */
+    H += blk('hist','历史流量','06-6.5','plan',
+      '<div class="grid">'+
+        cell('今日','86.4 MB','↑21.3 / ↓65.1')+
+        cell('近 7 天','412.8 MB','按日聚合')+
+        cell('近 30 天','1.9 GB','含 3 次订阅更新')+
+        cell('存储策略','每 5 分钟采样','滚动 7 天明细 + 30 天汇总')+
+      '</div>'+
+      '<div class="mini" style="margin-top:10px">落盘频率要控：路由器闪存写入寿命有限，明细只留 7 天，长期只存汇总。</div>');
+
+    /* 06-6.6/6.7 排行 */
+    var rkRows = [
+      ['案例设备 A','192.168.1.24','412.8 MB','38%'],
+      ['案例设备 B','192.168.1.21','221.6 MB','21%'],
+      ['案例设备 C','192.168.1.31','96.2 MB','9%']
+    ].map(function(r){
+      return '<tr><td>'+r[0]+'</td><td class="mono">'+r[1]+'</td><td class="mono">'+r[2]+'</td><td class="mono">'+r[3]+'</td></tr>';
+    }).join('');
+    var nrRows = [
+      ['示例节点JP','612.4 MB','62 ms','98.2%'],
+      ['示例节点US','148.9 MB','148 ms','96.4%']
+    ].map(function(r){
+      return '<tr><td>'+r[0]+'</td><td class="mono">'+r[1]+'</td><td class="mono">'+r[2]+'</td><td class="mono">'+r[3]+'</td></tr>';
+    }).join('');
+    H += blk('rank','设备与节点排行','06-6.6 / 06-6.7','plan',
+      '<div class="tbl-wrap"><table class="tbl2"><colgroup><col style="width:40%"><col style="width:26%"><col style="width:22%"><col style="width:12%"></colgroup>'+
+      '<thead><tr><th>设备</th><th>IP</th><th>流量</th><th>占比</th></tr></thead><tbody>'+rkRows+'</tbody></table></div>'+
+      '<div class="tbl-wrap" style="margin-top:12px"><table class="tbl2"><colgroup><col style="width:34%"><col style="width:28%"><col style="width:20%"><col style="width:18%"></colgroup>'+
+      '<thead><tr><th>节点</th><th>流量</th><th>平均延迟</th><th>可用率</th></tr></thead><tbody>'+nrRows+'</tbody></table></div>');
+
+    /* 06-6.8 事件记录 */
+    var evRows = [
+      ['06:16','内核启动','sing-box 1.14.4 启动成功','ok'],
+      ['06:02','节点停用','示例节点SG 连续 3 次失败','warn'],
+      ['03:17','规则集更新','geosite-cn / geoip-cn 已更新','ok'],
+      ['昨天','订阅更新','新增 1 个节点','ok']
+    ].map(function(r){
+      return '<tr><td class="mono">'+r[0]+'</td><td><b>'+r[1]+'</b></td><td>'+r[2]+'</td><td><span class="tag '+(r[3]==='ok'?'ok':'warn')+'">'+(r[3]==='ok'?'正常':'注意')+'</span></td></tr>';
+    }).join('');
+    H += blk('event','事件记录','06-6.8','plan',
+      '<div class="tbl-wrap"><table class="tbl2"><colgroup><col style="width:14%"><col style="width:20%"><col style="width:50%"><col style="width:16%"></colgroup>'+
+      '<thead><tr><th>时间</th><th>类型</th><th>内容</th><th>级别</th></tr></thead><tbody>'+evRows+'</tbody></table></div>'+
+      '<div class="mini" style="margin-top:10px">事件流要和日志分开：日志是内核原话，事件是人能看懂的动作记录（谁在什么时候改了什么）。</div>');
+  }
+
+
+  if(id === 'settings'){
+    /* 07-7.3 API 服务管理 */
+    H += blk('api','API 服务管理','07-7.3','plan',
+      '<div class="grid">'+
+        cell('服务状态','未运行 <span class="tag warn">0.8.14 待做</span>','procd 托管 · easyproxy-api')+
+        cell('监听地址','127.0.0.1 · 10.10.10.13','仅本机与 LAN，WAN 不放开')+
+        cell('端口','8090','与内核 7890、LuCI 区分')+
+        cell('认证','未实现','Token / 会话，后端未提供')+
+      '</div>'+
+      '<div class="mini" style="margin-top:10px;color:#a86500">安全边界：8090 只允许回环与 LAN 访问；不允许直接从 WAN 暴露，也不做"打开 8090 就能控制整台路由器"。</div>'+
+      '<div class="tbl-wrap" style="margin-top:10px"><table class="tbl2"><colgroup><col style="width:34%"><col style="width:40%"><col style="width:26%"></colgroup>'+
+      '<thead><tr><th>端点</th><th>用途</th><th>状态</th></tr></thead><tbody>'+
+      '<tr><td class="mono">/api/v1/health</td><td>存活与版本</td><td><em class="st st-plan">未实现</em></td></tr>'+
+      '<tr><td class="mono">/api/v1/system</td><td>CPU / 内存 / 磁盘 / 温度</td><td><em class="st st-plan">未实现</em></td></tr>'+
+      '<tr><td class="mono">/api/v1/dashboard</td><td>概览聚合</td><td><em class="st st-plan">未实现</em></td></tr>'+
+      '<tr><td class="mono">/api/v1/nodes</td><td>节点增删改查</td><td><em class="st st-plan">未实现</em></td></tr>'+
+      '<tr><td class="mono">/api/v1/core</td><td>内核启停与状态</td><td><em class="st st-plan">未实现</em></td></tr>'+
+      '<tr><td class="mono">…共 17 个端点</td><td>见需求报告第三部分</td><td><em class="st st-plan">未实现</em></td></tr>'+
+      '</tbody></table></div>',
+      '<button class="btn primary" data-act="demo" data-label="启动 API 服务">启动 API 服务</button><button class="btn" data-act="demo" data-label="健康检查">健康检查</button><button class="btn ghost" data-act="demo" data-label="查看 API 日志">查看 API 日志</button>');
+
+    /* 07-7.4 面板设置 */
+    H += blk('ui','面板设置','07-7.4','ui',
+      '<div class="grid">'+
+        cell('语言','简体中文','i18n 预留')+
+        cell('刷新频率','1.5 秒','KPI / 状态轮询')+
+        cell('流量单位','自动（KB/MB/GB）','可切 bps / Bytes')+
+        cell('首屏模块','资源 + 站点延时','可自定义排序')+
+      '</div>'+
+      '<div class="mini" style="margin-top:10px">面板设置只影响前端展示，不改后端行为；所有项要能落 uci（easyproxy.panel.*）。</div>',
+      '<button class="btn" data-act="demo" data-label="保存面板设置">保存面板设置</button>');
+
+    /* 07-7.5 安全设置 */
+    H += blk('secbp','安全设置','07-7.5','ui',
+      '<div class="grid">'+
+        cell('管理密码','已设置','首次进入强制设置')+
+        cell('会话超时','未实现','后端无会话')+
+        cell('API 认证','未实现','Token 计划随 8090 一起做')+
+        cell('访问范围','仅 LAN','WAN 侧不开放面板与 API')+
+      '</div>'+
+      '<div class="mini" style="margin-top:10px">现在密码只在前端校验（原型与 LuCI 都如此），后端没有 <span class="mono">auth set</span>，所以它挡不住直接调 CLI 的人。这一条要在 8090 后端一起补。</div>',
+      '<button class="btn" data-act="demo" data-label="修改管理密码">修改管理密码</button><button class="btn ghost" data-act="demo" data-label="查看审计日志">查看审计日志</button>');
+
+    /* 07-7.8 自动任务 */
+    var taskRows = [
+      ['订阅自动更新','每日 03:17','已启用'],
+      ['规则集更新','每 7 天','已启用'],
+      ['节点测速','每 6 小时','未启用'],
+      ['健康检查','每 10 分钟','未启用'],
+      ['历史流量采样','每 5 分钟','未实现'],
+      ['诊断上报','每 15 天 03:17','已启用']
+    ].map(function(r){
+      return '<tr><td>'+r[0]+'</td><td class="mono">'+r[1]+'</td><td><span class="tag '+(r[2]==='已启用'?'ok':'n')+'">'+r[2]+'</span></td></tr>';
+    }).join('');
+    H += blk('task','自动任务','07-7.8','ui',
+      '<div class="tbl-wrap"><table class="tbl2"><colgroup><col style="width:36%"><col style="width:34%"><col style="width:30%"></colgroup>'+
+      '<thead><tr><th>任务</th><th>周期</th><th>状态</th></tr></thead><tbody>'+taskRows+'</tbody></table></div>'+
+      '<div class="mini" style="margin-top:10px">任务走 cron / procd 计划，周期由 uci 控制；未实现的任务不显示开关。</div>');
+
+    /* 07-7.9 系统信息 */
+    H += blk('sys','系统信息','07-7.9','ui',
+      '<div class="grid">'+
+        cell('固件','Kwrt 25.12-SNAPSHOT','x86_64')+
+        cell('内核版本','Linux 6.x','')+
+        cell('EasyProxy','0.8.13','luci-app-easyproxy')+
+        cell('LuCI','27.307.53063','luci-base')+
+        cell('CPU','i7-8086K','6 核')+
+        cell('内存','1950 MB','可用 1651 MB')+
+        cell('磁盘','3.2 GB','可用 1.8 GB')+
+        cell('设备 IP','10.10.10.13 / 24','root@Kwrt')+
+      '</div>');
+  }
+
+  if(id === 'update'){
+    /* 08-8.4 更新前保护 */
+    var pre = [
+      ['备份当前配置','/etc/easyproxy + uci 导出','必做'],
+      ['记录当前版本','0.8.13','必做'],
+      ['检查磁盘空间','需 ≥ 20 MB 空闲','必做'],
+      ['检查架构','x86_64 与包匹配','必做'],
+      ['检查依赖','uci / luci-base / 内核','必做'],
+      ['校验安装包 SHA256','与发布页比对','必做'],
+      ['准备回滚方案','保留上一版本 ipk','必做'],
+      ['通知在线用户','LAN 内 6 台设备','建议']
+    ].map(function(r){
+      return '<tr><td>'+r[0]+'</td><td class="mono">'+r[1]+'</td><td><span class="tag '+(r[2]==='必做'?'ok':'n')+'">'+r[2]+'</span></td></tr>';
+    }).join('');
+    H += blk('pre','更新前保护','08-8.4','plan',
+      '<div class="tbl-wrap"><table class="tbl2"><colgroup><col style="width:34%"><col style="width:46%"><col style="width:20%"></colgroup>'+
+      '<thead><tr><th>检查项</th><th>期望值</th><th>级别</th></tr></thead><tbody>'+pre+'</tbody></table></div>');
+
+    /* 08-8.5 失败恢复 */
+    H += blk('rec','失败恢复','08-8.5','plan',
+      '<div class="grid">'+
+        cell('触发条件','安装成功但启动失败','或配置校验不通过')+
+        cell('第一步','自动停新版本','避免半死状态')+
+        cell('第二步','回滚上一版本 ipk','保留二进制')+
+        cell('第三步','恢复配置备份','/etc/easyproxy')+
+      '</div>'+
+      '<div class="mini" style="margin-top:10px">回滚必须是自动的：装完起不来时不留一台没有代理的路由器。当前没有任何自动回滚实现。</div>',
+      '<button class="btn primary" data-act="demo" data-label="回滚到上一版本">回滚到上一版本</button><button class="btn ghost" data-act="demo" data-label="查看回滚记录">查看回滚记录</button>');
+
+    /* 08-8.9 功能完成度矩阵 */
+    var mx = [
+      ['01 概览',7,3,2,2],['02 节点中心',9,2,5,2],['03 智能分流',7,3,2,2],['04 DNS 与网络',9,3,2,4],
+      ['05 内核管理',7,3,2,2],['06 连接与监控',8,1,1,6],['07 系统设置',9,2,3,4],['08 更新与诊断',9,3,3,3]
+    ].map(function(r){
+      return '<tr><td><b>'+r[0]+'</b></td><td class="mono">'+r[1]+'</td><td class="mono">'+r[2]+'</td>'+
+        '<td class="mono">'+r[3]+'</td><td class="mono">'+r[4]+'</td>'+
+        '<td class="mono">'+Math.round((r[2]+r[3]*0.5)/r[1]*100)+'%</td></tr>';
+    }).join('');
+    H += blk('matrix','功能完成度矩阵','08-8.9','ui',
+      '<div class="tbl-wrap"><table class="tbl2"><colgroup><col style="width:26%"><col style="width:12%"><col style="width:16%"><col style="width:14%"><col style="width:14%"><col style="width:18%"></colgroup>'+
+      '<thead><tr><th>类目</th><th>条目</th><th>已接入</th><th>部分</th><th>未做</th><th>加权完成度</th></tr></thead><tbody>'+mx+
+      '<tr><td><b>合计</b></td><td class="mono">65</td><td class="mono">20</td><td class="mono">20</td><td class="mono">25</td><td class="mono">46%</td></tr>'+
+      '</tbody></table></div>'+
+      '<div class="mini" style="margin-top:10px">口径：<b>已接入</b>=前端与真实后端动作都在；<b>部分</b>=界面在但后端只覆盖一部分；<b>未做</b>=没有实现。加权完成度 =（已接入 + 部分×0.5）/ 条目数。</div>');
+  }
+
+  return H;
+}
+
 /* ================= 导航 ================= */
 const PAGES = [
-  { id:'overview', t:'概览',        fn:pageOverview, subs:null },
-  { id:'nodes',    t:'节点中心',    fn:pageNodes,     subs:[['nodes','节点列表'],['subs','订阅管理'],['test','延迟测试'],['group','国家分组'],['score','节点评分'],['kick','故障剔除']] },
-  { id:'split',    t:'智能分流',    fn:pageSplit,     subs:[['overview','分流总览'],['cn','国内直连'],['global','国外代理'],['plat','平台策略']] },
-  { id:'dnsnet',   t:'DNS 与网络',  fn:pageDnsNet,    subs:[['up','DNS 上游'],['leak','防泄漏'],['split','国内外分流'],['fake','Fake-IP'],['v6','IPv6'],['cache','缓存']] },
-  { id:'kernel',   t:'内核管理',    fn:pageKernel,    subs:[['state','内核状态'],['ver','版本'],['ctl','启停与切换'],['check','配置校验']] },
-  { id:'monitor',  t:'连接与监控',  fn:pageMonitor,   subs:[['conn','实时连接'],['src','来源 IP'],['dst','目标域名'],['via','节点归因'],['stat','流量统计'],['log','日志']] },
-  { id:'settings', t:'系统设置',    fn:pageSettings,  subs:[['mode','代理模式'],['port','端口'],['boot','开机启动'],['auto','自动更新'],['cfg','备份恢复']] },
-  { id:'update',   t:'更新与诊断',  fn:pageUpdate,    subs:[['ver','版本检测'],['up','升级'],['sha','SHA256'],['runlog','运行日志'],['net','网络诊断'],['report','故障报告']] }
+  { id:'overview', t:'概览',        fn:pageOverview, subs:[['status','运行状态'],['res','资源监控'],['net','网络实时'],['proxy','代理概况'],['topo','网络拓扑'],['alert','告警中心']] },
+  { id:'nodes',    t:'节点中心',    fn:pageNodes,     subs:[['nodes','节点列表'],['add','添加节点'],['import2','批量导入'],['subs','订阅管理'],['test','延迟测试'],['group','国家分组'],['score','节点评分'],['kick','故障剔除'],['plat','平台策略'],['hist','节点历史']] },
+  { id:'split',    t:'智能分流',    fn:pageSplit,     subs:[['overview','分流总览'],['cn','国内直连'],['global','国外代理'],['plat','平台策略'],['dev','设备分流'],['test','分流测试']] },
+  { id:'dnsnet',   t:'DNS 与网络',  fn:pageDnsNet,    subs:[['up','DNS 上游'],['leak','防泄漏'],['split','国内外分流'],['fake','Fake-IP'],['v6','IPv6'],['cache','缓存'],['iface','接口管理'],['diag','网络诊断']] },
+  { id:'kernel',   t:'内核管理',    fn:pageKernel,    subs:[['state','内核状态'],['ver','版本'],['ctl','启停与切换'],['check','配置校验'],['cfg','配置文件'],['upd','内核更新'],['adv','高级扩展']] },
+  { id:'monitor',  t:'连接与监控',  fn:pageMonitor,   subs:[['conn','实时连接'],['detail','连接详情'],['manage','连接管理'],['src','来源 IP'],['dst','目标域名'],['via','节点归因'],['stat','流量统计'],['hist','历史流量'],['rank','排行'],['event','事件'],['log','日志']] },
+  { id:'settings', t:'系统设置',    fn:pageSettings,  subs:[['mode','代理模式'],['port','端口'],['boot','开机启动'],['auto','自动更新'],['cfg','备份恢复'],['api','API 服务'],['ui','面板'],['secbp','安全'],['task','自动任务'],['sys','系统信息']] },
+  { id:'update',   t:'更新与诊断',  fn:pageUpdate,    subs:[['ver','版本检测'],['up','升级'],['sha','SHA256'],['pre','更新前保护'],['rec','失败恢复'],['runlog','运行日志'],['net','网络诊断'],['report','故障报告'],['matrix','完成度']] }
 ];
 var SUB = 'all';
 let CUR = 'overview';
@@ -995,7 +1453,7 @@ function render(){
       '<button class="spill'+(SUB==='all'?' on':'')+'" data-sub="all">全部</button>'+
       subs.map(function(x){ return '<button class="spill'+(SUB===x[0]?' on':'')+'" data-sub="'+x[0]+'">'+x[1]+'</button>'; }).join('')+
     '</div>' : '';
-  document.getElementById('view').innerHTML = '<div class="ov-page">' + subBar + p.fn() + '</div>';
+  document.getElementById('view').innerHTML = '<div class="ov-page">' + subBar + p.fn() + extraBlocks(p.id) + '</div>';
   renderNav();
   bindPage();
   applySub();
@@ -1112,6 +1570,8 @@ function bindPage(){
   view.querySelectorAll('[data-act]').forEach(function(btn){
     btn.addEventListener('click', function(){
       const a = btn.dataset.act;
+
+      if(a==='demo'){ act(btn,'执行中…',function(){ logResult('原型演示：'+(btn.dataset.label||'该操作')+' 的后端尚未接入（规划中）','blank'); }); return; }
 
       if(a==='toggle'){
         act(btn,'处理中…',function(){
@@ -1348,6 +1808,7 @@ function epMarkInit(){
 }
 function initSetup(){
   var box = document.getElementById('setup');
+  if(/[?&]demo=1/.test(location.search)) return;
   if(!box) return;
   if(epInitDone()) return;
   box.hidden = false;
