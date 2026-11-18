@@ -119,8 +119,9 @@ gen; rc=$?
 [ "$rc" -eq 0 ] && ok "生成成功（china=direct）" || no "生成成功（china=direct）" "rc=$rc $(cat "$SB/g.err")"
 
 json_py "import json,sys;d=json.load(open('$CFG'));print(len(d.get('route',{}).get('rules',[])))" > "$SB/n1"
-# 6 = 内网直连 + 节点服务器直连（防环路）+ YouTube/Netflix/TikTok 分流 + 大陆直连
-[ "$(cat "$SB/n1")" = "6" ] && ok "route.rules 有 6 条（内网直连 + 节点服务器直连 + 三个平台分流 + 大陆直连）" || no "route.rules 有 6 条" "实际 $(cat "$SB/n1") 条"
+# 14 = 内网直连 + 节点服务器直连（防环路）+ 10 个场景共 11 条分流（AI 拆成
+# domain_suffix 与 domain 两段）+ 大陆直连。场景规则取代了原来写死的三条平台规则。
+[ "$(cat "$SB/n1")" = "14" ] && ok "route.rules 有 14 条（内网直连 + 节点服务器直连 + 10 个场景分流 + 大陆直连）" || no "route.rules 有 14 条" "实际 $(cat "$SB/n1") 条"
 
 json_py "import json,sys;d=json.load(open('$CFG'));rs=d['dns']['rules'];print('ip_is_private' in rs[0], '.lan' in rs[1]['domain_suffix'], any('.cn' in r.get('domain_suffix',[]) for r in rs))" > "$SB/n6"
 [ "$(cat "$SB/n6")" = "True True True" ] && ok "分流模式下 DNS 先内网后大陆，其余走远端" || no "分流模式 DNS 顺序" "$(cat "$SB/n6")"

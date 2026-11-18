@@ -141,6 +141,28 @@ fi
 # control metadata still names the right files
 tar xzf "$OUT/x/control.tar.gz" -C "$OUT/x" >/dev/null 2>&1
 grep -q '/etc/config/easyproxy' "$OUT/x/conffiles" 2>/dev/null && ok "control 声明 conffiles" || no "control 声明 conffiles"
+
+# The standalone panel must travel in the package: a release that installs only
+# the CLI leaves a fresh box without a UI, which is exactly the situation that
+# forced hand-copying eight files over SSH after every upgrade.
+want_file www/easyproxy/index.html
+want_file www/easyproxy/panel.js
+want_file www/easyproxy/panel.css
+want_file www/easyproxy/cgi-bin/api.sh
+want_file etc/lighttpd-easyproxy.conf
+want_file etc/init.d/easyproxy-panel
+
+if [ -n "${OUT}" ] && [ -f "$OUT/d/www/easyproxy/cgi-bin/api.sh" ]; then
+	mode="$(stat -c %a "$OUT/d/www/easyproxy/cgi-bin/api.sh" 2>/dev/null || echo "")"
+	[ "$mode" = "755" ] && ok "cgi-bin/api.sh 可执行（lighttpd 要 exec 它）" || no "api.sh 权限 755" "实际 $mode"
+fi
+if [ -f "$OUT/d/etc/init.d/easyproxy-panel" ]; then
+	mode="$(stat -c %a "$OUT/d/etc/init.d/easyproxy-panel" 2>/dev/null || echo "")"
+	[ "$mode" = "755" ] && ok "面板 init 脚本可执行" || no "面板 init 脚本权限 755" "实际 $mode"
+fi
+[ -f "$OUT/x/postinst" ] && ok "control 带 postinst（装完即起面板）" || no "control 带 postinst" "$(ls "$OUT/x")"
+grep -q '/etc/lighttpd-easyproxy.conf' "$OUT/x/conffiles" 2>/dev/null && ok "conffiles 声明面板配置（升级不覆盖端口改动）" || no "conffiles 声明面板配置" "$(cat "$OUT/x/conffiles" 2>/dev/null)"
+grep -q 'lighttpd' "$OUT/x/control" 2>/dev/null && ok "Depends 声明 lighttpd" || no "Depends 声明 lighttpd" "$(grep Depends "$OUT/x/control" 2>/dev/null)"
 grep -q '^Architecture: all$' "$OUT/x/control" 2>/dev/null && ok "默认包 Architecture: all" || no "默认包 Architecture: all" "$(grep Architecture "$OUT/x/control" 2>/dev/null)"
 
 # The release also ships a package stamped for a concrete target: an opkg build

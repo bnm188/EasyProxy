@@ -54,7 +54,8 @@ mkdir -p "$D/etc/config" "$D/etc/init.d" "$D/etc/hotplug.d/iface" "$D/usr/sbin" 
 	"$D/www/luci-static/resources/view/easyproxy" \
 	"$D/usr/share/luci/menu.d" "$D/usr/share/rpcd/acl.d" \
 	"$D/usr/share/rpcd/ucode" \
-	"$D/etc/easyproxy/ruleset"
+	"$D/etc/easyproxy/ruleset" \
+	"$D/www/easyproxy/cgi-bin"
 
 F="$SRC_DIR/files"
 install -m 0644 "$F/etc/config/easyproxy" "$D/etc/config/easyproxy"
@@ -84,11 +85,21 @@ install -m 0644 "$F/usr/share/rpcd/acl.d/luci-app-easyproxy.json" \
 install -m 0644 "$F/usr/share/rpcd/ucode/luci.easyproxy.uc" \
 	"$D/usr/share/rpcd/ucode/luci.easyproxy.uc"
 
+# The standalone panel (lighttpd on 8090) rides in the package: without this a
+# fresh install ships a CLI with no UI, and every release meant hand-copying
+# eight files over SSH. api.sh is 0755 because lighttpd execs it via cgi.assign.
+for f in "$F"/www/easyproxy/*.html "$F"/www/easyproxy/*.js "$F"/www/easyproxy/*.css; do
+	install -m 0644 "$f" "$D/www/easyproxy/$(basename "$f")"
+done
+install -m 0755 "$F/www/easyproxy/cgi-bin/api.sh" "$D/www/easyproxy/cgi-bin/api.sh"
+install -m 0644 "$F/etc/lighttpd-easyproxy.conf" "$D/etc/lighttpd-easyproxy.conf"
+install -m 0755 "$F/etc/init.d/easyproxy-panel" "$D/etc/init.d/easyproxy-panel"
+
 SIZE="$(du -sk "$D" | awk '{print $1}')"
 cat > "$STAGE/control/control" <<EOF
 Package: easyproxy
 Version: ${VER}-${REL}
-Depends: uci, luci-base, sing-box
+Depends: uci, luci-base, sing-box, lighttpd
 Architecture: ${ARCH}
 Maintainer: EasyProxy Contributors
 Section: utils
@@ -102,10 +113,22 @@ Description: Modular proxy management framework for ImmortalWrt.
  traffic through an nftables tproxy table (fully reversible), supervises the
  runtime through procd and shows live state in the LuCI panel.
 EOF
-printf '/etc/config/easyproxy\n' > "$STAGE/control/conffiles"
+printf '/etc/config/easyproxy\n/etc/lighttpd-easyproxy.conf\n' > "$STAGE/control/conffiles"
+
+# Start the panel right after install so a fresh box has a UI without a reboot.
+# Skipped when opkg runs against a staging root (image builds) rather than a
+# live system.
+cat > "$STAGE/control/postinst" <<'PS'
+#!/bin/sh
+[ -n "${IPKG_INSTROOT}" ] && exit 0
+/etc/init.d/easyproxy-panel enable >/dev/null 2>&1
+/etc/init.d/easyproxy-panel restart >/dev/null 2>&1
+exit 0
+PS
+chmod 0755 "$STAGE/control/postinst"
 
 tar --owner=0 --group=0 --numeric-owner -czf "$STAGE/control.tar.gz" \
-	-C "$STAGE/control" ./control ./conffiles
+	-C "$STAGE/control" ./control ./conffiles ./postinst
 tar --owner=0 --group=0 --numeric-owner -czf "$STAGE/data.tar.gz" -C "$D" .
 printf '2.0\n' > "$STAGE/debian-binary"
 

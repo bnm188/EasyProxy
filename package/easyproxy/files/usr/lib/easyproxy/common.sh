@@ -685,3 +685,70 @@ ep_region_label() {
 	esac
 }
 
+
+# --- platform scenes --------------------------------------------------------
+# One table, two engines. mihomo emits DOMAIN-SUFFIX lines from it and sing-box
+# emits one domain_suffix rule per scene, so "Netflix goes to Japan" means the
+# same thing whichever kernel is running. Keeping the domains in a single place
+# is the only way they cannot drift apart.
+#
+# The order is the rule order and it matters: Speed goes first so a benchmark
+# is never classified as platform traffic, AI sits in front of Google
+# (gemini.google.com), and Youtube in front of Google (googlevideo.com).
+ep_scene_names() {
+	printf '%s\n' Speed Youtube Netflix TikTok AI Github Microsoft Apple Games Google
+}
+
+# "<kind>:<domain>" per line, kind is suffix or exact.
+ep_scene_domains() {
+	case "$1" in
+	Speed)
+		printf '%s\n' suffix:speedtest.net suffix:fast.com suffix:speedtest.cn ;;
+	Youtube)
+		printf '%s\n' suffix:youtube.com suffix:youtu.be suffix:googlevideo.com \
+			suffix:ytimg.com suffix:youtube-nocookie.com suffix:yt3.ggpht.com ;;
+	Netflix)
+		printf '%s\n' suffix:netflix.com suffix:netflix.net suffix:nflxext.com \
+			suffix:nflximg.com suffix:nflximg.net suffix:nflxso.net suffix:nflxvideo.net ;;
+	TikTok)
+		printf '%s\n' suffix:tiktok.com suffix:tiktokv.com suffix:tiktokcdn.com \
+			suffix:byteoversea.com suffix:ibytedtos.com suffix:muscdn.com ;;
+	AI)
+		printf '%s\n' suffix:openai.com suffix:chatgpt.com suffix:oaistatic.com \
+			suffix:oaiusercontent.com suffix:anthropic.com suffix:claude.ai \
+			suffix:perplexity.ai suffix:poe.com suffix:midjourney.com suffix:huggingface.co \
+			exact:gemini.google.com exact:aistudio.google.com ;;
+	Github)
+		printf '%s\n' suffix:github.com suffix:githubusercontent.com \
+			suffix:githubassets.com suffix:github.io ;;
+	Microsoft)
+		printf '%s\n' suffix:microsoft.com suffix:live.com suffix:outlook.com \
+			suffix:msn.com suffix:bing.com suffix:windowsupdate.com \
+			suffix:office.com suffix:azure.com ;;
+	Apple)
+		printf '%s\n' suffix:apple.com suffix:icloud.com suffix:mzstatic.com \
+			suffix:cdn-apple.com ;;
+	Games)
+		printf '%s\n' suffix:steamcommunity.com suffix:steamstatic.com \
+			suffix:steamcontent.com suffix:epicgames.com suffix:blizzard.com \
+			suffix:battlenet.com suffix:riotgames.com suffix:playstation.com suffix:xbox.com ;;
+	Google)
+		printf '%s\n' suffix:google.com suffix:googleapis.com suffix:gstatic.com \
+			suffix:googleusercontent.com suffix:gmail.com suffix:gvt1.com \
+			suffix:gvt2.com suffix:ggpht.com suffix:withgoogle.com ;;
+	*) return 1 ;;
+	esac
+}
+
+# Only the three services with an operator switch can be turned off; the rest
+# are structural and always on.
+ep_scene_enabled() {
+	case "$1" in
+		Youtube|Netflix|TikTok)
+			local key
+			key="$(printf '%s' "$1" | tr 'A-Z' 'a-z')"
+			[ "$(ep_bool "$(ep_get routing "platform_$key" 1)")" = "1" ]
+			;;
+		*) return 0 ;;
+	esac
+}

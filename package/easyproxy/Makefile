@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=easyproxy
 PKG_VERSION:=0.8.14
-PKG_RELEASE:=23
+PKG_RELEASE:=24
 
 PKG_LICENSE:=MIT
 PKG_MAINTAINER:=EasyProxy Contributors
@@ -13,7 +13,7 @@ define Package/easyproxy
   SECTION:=utils
   CATEGORY:=Utilities
   TITLE:=EasyProxy proxy manager
-  DEPENDS:=+uci +luci-base +sing-box
+  DEPENDS:=+uci +luci-base +sing-box +lighttpd
   PKGARCH:=all
 endef
 
@@ -54,6 +54,18 @@ endef
 
 define Package/easyproxy/conffiles
 /etc/config/easyproxy
+/etc/lighttpd-easyproxy.conf
+endef
+
+# The standalone panel runs its own lighttpd on 8090 so it cannot disturb LuCI
+# on 80. Started here so a fresh install has a UI without a reboot; skipped
+# during image builds, where IPKG_INSTROOT points at a staging root.
+define Package/easyproxy/postinst
+#!/bin/sh
+[ -n "$${IPKG_INSTROOT}" ] && exit 0
+/etc/init.d/easyproxy-panel enable >/dev/null 2>&1
+/etc/init.d/easyproxy-panel restart >/dev/null 2>&1
+exit 0
 endef
 
 define Build/Compile
@@ -96,6 +108,13 @@ define Package/easyproxy/install
 	$(INSTALL_DATA) ./files/usr/share/rpcd/acl.d/luci-app-easyproxy.json $(1)/usr/share/rpcd/acl.d/luci-app-easyproxy.json
 	$(INSTALL_DIR) $(1)/usr/share/rpcd/ucode
 	$(INSTALL_DATA) ./files/usr/share/rpcd/ucode/luci.easyproxy.uc $(1)/usr/share/rpcd/ucode/luci.easyproxy.uc
+	$(INSTALL_DIR) $(1)/www/easyproxy/cgi-bin
+	$(INSTALL_DATA) ./files/www/easyproxy/index.html $(1)/www/easyproxy/index.html
+	$(INSTALL_DATA) ./files/www/easyproxy/panel.js $(1)/www/easyproxy/panel.js
+	$(INSTALL_DATA) ./files/www/easyproxy/panel.css $(1)/www/easyproxy/panel.css
+	$(INSTALL_BIN) ./files/www/easyproxy/cgi-bin/api.sh $(1)/www/easyproxy/cgi-bin/api.sh
+	$(INSTALL_CONF) ./files/etc/lighttpd-easyproxy.conf $(1)/etc/lighttpd-easyproxy.conf
+	$(INSTALL_BIN) ./files/etc/init.d/easyproxy-panel $(1)/etc/init.d/easyproxy-panel
 	$(INSTALL_DIR) $(1)/etc/easyproxy/ruleset
 endef
 

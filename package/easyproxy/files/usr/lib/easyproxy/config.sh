@@ -269,34 +269,60 @@ ep_route_rule_sets() {
 # Platform split: which well-known services must leave through the node group.
 # Each one is a UCI switch (default on) so an operator can keep a service on
 # the direct path when the node cannot handle it.
-ep_platform_enabled() {
+ep_scene_switch_enabled() {
 	[ "$(ep_bool "$(ep_get routing "platform_$1" 1)")" = "1" ]
 }
 
-ep_platform_rule_line() {
-	local key="$1" domains="$2"
-	ep_platform_enabled "$key" || return 0
-	printf '      { "domain_suffix": [%s], "outbound": "proxy" }' "$domains"
-}
-
-# Youtube / Netflix / TikTok: domain lists are inline so no extra rule-set has
-# to be downloaded and the split works on a fresh install without network.
-ep_platform_rules_json() {
-	local items="" _r
-	_r="$(ep_platform_rule_line youtube '"youtube.com", "youtu.be", "googlevideo.com", "ytimg.com", "youtube-nocookie.com", "yt3.ggpht.com"')"
-	[ -n "$_r" ] && items="$_r"
-	_r="$(ep_platform_rule_line netflix '"netflix.com", "netflix.net", "nflxext.com", "nflximg.com", "nflximg.net", "nflxso.net", "nflxvideo.net"')"
-	[ -n "$_r" ] && items="${items:+$items,
-}$_r"
-	_r="$(ep_platform_rule_line tiktok '"tiktok.com", "tiktokv.com", "tiktokcdn.com", "byteoversea.com", "ibytedtos.com", "muscdn.com"')"
-	[ -n "$_r" ] && items="${items:+$items,
-}$_r"
+# One rule object per scene. Scenes come from the table in common.sh, so this
+# engine and mihomo always split the same domains, and each scene points at its
+# own selector: moving Netflix to Japan is a panel click, not a rule edit.
+ep_singbox_scene_rules() {
+	local items="" scene entry kind dom suffix exact rule
+	for scene in $(ep_scene_names); do
+		ep_scene_enabled "$scene" || continue
+		suffix=""; exact=""
+		for entry in $(ep_scene_domains "$scene"); do
+			kind="${entry%%:*}"
+			dom="${entry#*:}"
+			[ -n "$dom" ] || continue
+			if [ "$kind" = "exact" ]; then
+				exact="${exact:+$exact, }\"$dom\""
+			else
+				suffix="${suffix:+$suffix, }\"$dom\""
+			fi
+		done
+		rule=""
+		[ -n "$suffix" ] && rule="      { \"domain_suffix\": [$suffix], \"outbound\": \"$scene\" }"
+		[ -n "$exact" ] && rule="${rule:+$rule,
+}      { \"domain\": [$exact], \"outbound\": \"$scene\" }"
+		[ -n "$rule" ] && items="${items:+$items,
+}$rule"
+	done
 	printf '%s' "$items"
 }
 
-# Custom rules, "type:value:outbound" entries separated by ';'. The operator
-# order is preserved and they sit between the LAN rules and the CN rule, so a
-# custom entry can force a domain through the proxy or block it outright.
+# The scene selectors themselves: proxy first (all regions, auto), then the
+# per-region groups, then direct, mirroring the mihomo member order.
+ep_singbox_scene_groups() {
+	local regions="$1" scene region
+	for scene in $(ep_scene_names); do
+		printf '    { "type": "selector", "tag": "%s", "outbounds": ["proxy"' "$scene"
+		for region in $regions; do
+			printf ', "auto-%s"' "$region"
+		done
+		printf ', "direct"], "default": "proxy" },\n'
+	done
+}
+
+# The panel talks to one controller regardless of which kernel is running; the
+# engines are mutually exclusive so sharing the port is safe.
+ep_singbox_controller() {
+	local value
+	value="$(uci -q get easyproxy.sing_box.controller 2>/dev/null)"
+	[ -n "$value" ] || value="$(uci -q get easyproxy.mihomo.controller 2>/dev/null)"
+	printf '%s' "${value:-127.0.0.1:9090}"
+}
+
 ep_custom_rules_json() {
 	local raw entry typ rest val out items old_ifs key obj
 	raw="$(ep_get routing custom_rules '')"
@@ -653,8 +679,9 @@ ep_config_build() {
 			# One latency group per region ("auto-hk", "auto-us", ...): urltest
 			# keeps re-picking the fastest node inside that region, which is the
 			# "自动选择可用节点" behaviour without any extra daemon.
+			regions="$(ep_node_regions)"
 			default_region=""
-			for region in $(ep_node_regions); do
+			for region in $regions; do
 				[ -n "$default_region" ] || default_region="$region"
 				printf '    { "type": "urltest", "tag": "auto-%s", "outbounds": [' "$region"
 				member_first=1
@@ -669,12 +696,13 @@ ep_config_build() {
 			# options are the region groups, default is the first region.
 			printf '    { "type": "selector", "tag": "proxy", "outbounds": ['
 			group_first=1
-			for region in $(ep_node_regions); do
+			for region in $regions; do
 				[ "$group_first" = "1" ] || printf ', '
 				printf '"auto-%s"' "$region"
 				group_first=0
 			done
 			printf '], "default": "auto-%s" },\n' "$default_region"
+			ep_singbox_scene_groups "$regions"
 		fi
 		printf '    { "type": "direct", "tag": "direct" }'
 		if [ "$(ep_custom_uses_block)" = "1" ]; then
@@ -716,7 +744,7 @@ ep_config_build() {
 			if [ -n "$custom_rules" ]; then
 				printf ',\n%s' "$custom_rules"
 			fi
-			platform_rules="$(ep_platform_rules_json)"
+			platform_rules="$(ep_singbox_scene_rules)"
 			if [ -n "$platform_rules" ]; then
 				printf ',\n%s' "$platform_rules"
 			fi
@@ -737,8 +765,10 @@ ep_config_build() {
 		# Keep the rule-set cache across restarts: re-checking a 10 MB .srs file
 		# on every boot is what makes small routers time out on startup.
 		printf '  "experimental": {\n'
-		printf '    "cache_file": { "enabled": true, "path": "%s" }\n' \
+		printf '    "cache_file": { "enabled": true, "path": "%s" },\n' \
 			"$(ep_json_escape "$(ep_cache_file)")"
+		printf '    "clash_api": { "external_controller": "%s" }\n' \
+			"$(ep_json_escape "$(ep_singbox_controller)")"
 		printf '  }\n'
 		printf '}\n'
 	} > "$tmp.file" || { rm -f "$tmp" "$out" "$tmp.file"; EP_ERR="cannot write config"; return 1; }

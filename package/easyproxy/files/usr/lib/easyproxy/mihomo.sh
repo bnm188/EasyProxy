@@ -115,44 +115,19 @@ ep_mihomo_scene_groups() {
 # Google (googlevideo). Speed comes first so a benchmark is never classified as
 # platform traffic.
 ep_mihomo_scene_rules() {
-	local d
-	for d in speedtest.net fast.com speedtest.cn; do
-		printf '  - DOMAIN-SUFFIX,%s,Speed\n' "$d"
-	done
-	if [ "$(ep_bool "$(ep_get routing platform_youtube 1)")" = "1" ]; then
-		for d in youtube.com youtu.be googlevideo.com ytimg.com youtube-nocookie.com yt3.ggpht.com; do
-			printf '  - DOMAIN-SUFFIX,%s,Youtube\n' "$d"
+	local scene entry kind dom
+	for scene in $(ep_scene_names); do
+		ep_scene_enabled "$scene" || continue
+		ep_scene_domains "$scene" | while IFS= read -r entry; do
+			[ -n "$entry" ] || continue
+			kind="${entry%%:*}"
+			dom="${entry#*:}"
+			if [ "$kind" = "exact" ]; then
+				printf '  - DOMAIN,%s,%s\n' "$dom" "$scene"
+			else
+				printf '  - DOMAIN-SUFFIX,%s,%s\n' "$dom" "$scene"
+			fi
 		done
-	fi
-	if [ "$(ep_bool "$(ep_get routing platform_netflix 1)")" = "1" ]; then
-		for d in netflix.com netflix.net nflxext.com nflximg.com nflximg.net nflxso.net nflxvideo.net; do
-			printf '  - DOMAIN-SUFFIX,%s,Netflix\n' "$d"
-		done
-	fi
-	if [ "$(ep_bool "$(ep_get routing platform_tiktok 1)")" = "1" ]; then
-		for d in tiktok.com tiktokv.com tiktokcdn.com byteoversea.com ibytedtos.com muscdn.com; do
-			printf '  - DOMAIN-SUFFIX,%s,TikTok\n' "$d"
-		done
-	fi
-	for d in openai.com chatgpt.com oaistatic.com oaiusercontent.com anthropic.com claude.ai perplexity.ai poe.com midjourney.com huggingface.co; do
-		printf '  - DOMAIN-SUFFIX,%s,AI\n' "$d"
-	done
-	printf '  - DOMAIN,gemini.google.com,AI\n'
-	printf '  - DOMAIN,aistudio.google.com,AI\n'
-	for d in github.com githubusercontent.com githubassets.com github.io; do
-		printf '  - DOMAIN-SUFFIX,%s,Github\n' "$d"
-	done
-	for d in microsoft.com live.com outlook.com msn.com bing.com windowsupdate.com office.com azure.com; do
-		printf '  - DOMAIN-SUFFIX,%s,Microsoft\n' "$d"
-	done
-	for d in apple.com icloud.com mzstatic.com cdn-apple.com; do
-		printf '  - DOMAIN-SUFFIX,%s,Apple\n' "$d"
-	done
-	for d in steamcommunity.com steamstatic.com steamcontent.com epicgames.com blizzard.com battlenet.com riotgames.com playstation.com xbox.com; do
-		printf '  - DOMAIN-SUFFIX,%s,Games\n' "$d"
-	done
-	for d in google.com googleapis.com gstatic.com googleusercontent.com gmail.com gvt1.com gvt2.com ggpht.com withgoogle.com; do
-		printf '  - DOMAIN-SUFFIX,%s,Google\n' "$d"
 	done
 }
 

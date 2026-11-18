@@ -260,8 +260,42 @@ sed -i "s#^easyproxy.routing.rule_set_dir=.*#easyproxy.routing.rule_set_dir=$SB/
 json_py "import json,sys;d=json.load(open('$CFG'));print(d['experimental']['cache_file']['path'])" > "$SB/c3"
 [ "$(cat "$SB/c3")" = "$SB/cache.db" ] && ok "cache_file 路径可由 UCI 覆盖" || no "cache_file 路径可由 UCI 覆盖" "$(cat "$SB/c3")"
 
+# --- 8. platform scenes on the sing-box side -------------------------------
+# The two engines must describe the same scene set: a panel click that says
+# "Netflix goes to Japan" has to mean the same thing no matter which kernel is
+# running, otherwise switching engines silently changes the routing.
+write_ucis 1 sing-box
+# Scene rules only exist in split mode, and split needs both CN rule sets on
+# disk. Empty-but-present files are enough for the generator to take that path.
+mkdir -p "$SB/rules"
+printf x > "$SB/rules/geosite-cn.srs"
+printf x > "$SB/rules/geoip-cn.srs"
+"$EP" config generate >/dev/null 2>&1
+json_py "import json;d=json.load(open('$CFG'));t=[o['tag'] for o in d['outbounds'] if o['type']=='selector'];print(len(t),'proxy' in t,'Youtube' in t,'Games' in t)" > "$SB/s1"
+[ "$(cat "$SB/s1")" = "11 True True True" ] && ok "sing-box 侧生成 10 个场景组 + proxy 选择器" || no "sing-box 场景组" "$(cat "$SB/s1")"
+
+json_py "import json;d=json.load(open('$CFG'));r=[x for x in d['route']['rules'] if 'youtube.com' in str(x.get('domain_suffix',[]))];print(r[0]['outbound'] if r else 'none')" > "$SB/s2"
+[ "$(cat "$SB/s2")" = "Youtube" ] && ok "youtube 域名规则指向 Youtube 场景组" || no "youtube 规则指向场景组" "$(cat "$SB/s2")"
+
+json_py "import json;d=json.load(open('$CFG'));print(d['experimental']['clash_api']['external_controller'])" > "$SB/s3"
+[ "$(cat "$SB/s3")" = "127.0.0.1:9090" ] && ok "sing-box 开放 clash_api（面板可读组/切换）" || no "sing-box clash_api" "$(cat "$SB/s3")"
+
+# An operator switch has to remove the rule, not just hide the group
+echo "easyproxy.routing.platform_youtube=0" >> "$SB/etc/uci.db"
+"$EP" config generate >/dev/null 2>&1
+json_py "import json;d=json.load(open('$CFG'));print(sum(1 for x in d['route']['rules'] if x.get('outbound')=='Youtube'))" > "$SB/s4"
+[ "$(cat "$SB/s4")" = "0" ] && ok "关闭 platform_youtube 后不留 Youtube 规则" || no "开关生效" "$(cat "$SB/s4")"
+rm -f "$SB/rules/geosite-cn.srs" "$SB/rules/geoip-cn.srs"
+
+# The rule sets are intentionally absent here, so the config is generated in
+# direct mode and carries no rule_set array. A real engine would reject a fake
+# .srs as a corrupt binary, which says nothing about our config, so validating
+# the outbounds, the scene selectors and clash_api is the meaningful check.
 REAL="${EP_SING_BOX_BIN:-}"
 if [ -n "$REAL" ] && [ -x "$REAL" ]; then
+	# Regenerate now that the rule sets are gone, so the file carries no
+	# rule_set array for the engine to parse.
+	"$EP" config generate >/dev/null 2>&1
 	if "$REAL" check -c "$CFG" >/dev/null 2>&1; then
 		ok "真实 sing-box 接受带 cache_file 与 ip_cidr 的配置"
 	else
