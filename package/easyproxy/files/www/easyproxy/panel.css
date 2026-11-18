@@ -277,6 +277,31 @@ a { color: var(--primary); text-decoration: none; }
 	transition: height .4s ease;
 }
 
+/* ============ 概览：状态条 / 速率 ============ */
+.ov-strip {
+	display: grid;
+	grid-template-columns: repeat(4, minmax(0, 1fr));
+	gap: 1px;
+	background: var(--line);
+	border-radius: 10px;
+	overflow: hidden;
+}
+.ov-cell { background: var(--base-100); padding: 10px 12px; min-width: 0; }
+.ov-value {
+	font-size: 19px; font-weight: 650; letter-spacing: -.3px;
+	margin-top: 4px; font-variant-numeric: tabular-nums;
+	white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ov-value.ok { color: var(--ok); }
+.ov-value.bad { color: var(--err); }
+.rate-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.rate-cell { min-width: 0; }
+
+@media (max-width: 900px) {
+	.ov-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+	.rate-row { grid-template-columns: minmax(0, 1fr); }
+}
+
 /* ============ 列表 / 表格 ============ */
 .tbl { width: 100%; border-collapse: separate; border-spacing: 0; table-layout: fixed; }
 .tbl th {

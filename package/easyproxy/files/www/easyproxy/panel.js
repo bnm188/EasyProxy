@@ -219,31 +219,54 @@ function pageOverview() {
 	const wrap = el('div', 'grid', '');
 	wrap.style.gap = '12px';
 
+	// 1 实时运行状态：一条横向状态条（运行状态 / 运行时长 / 监听端口 / 节点健康）
+	const strip = el('div', 'card');
+	strip.innerHTML = ''
+		+ '<div class="card-head"><div class="card-title">实时运行状态</div>'
+		+ '<div class="card-note" id="ovNote">等待首次采样</div></div>'
+		+ '<div id="statStrip" class="ov-strip"></div>';
+	wrap.appendChild(strip);
+
+	// 2 四个指标：CPU / 内存 / 今日流量 / 连接数
 	const kpi = el('div', 'grid g4');
 	kpi.id = 'kpiGrid';
 	wrap.appendChild(kpi);
 
-	const bottom = el('div', 'grid g2');
-	bottom.style.marginTop = '0';
-	bottom.innerHTML = ''
-		+ '<div class="card" style="grid-column:1/-1">'
-		+ '  <div class="card-head"><div class="card-title">运行概况</div><div class="card-note">节点流量口径 · 自本次启动累计</div></div>'
-		+ '  <div id="runGrid" class="grid g4"></div>'
+	// 3 实时速率 + 内核状态
+	const row = el('div', 'grid g2');
+	row.style.marginTop = '0';
+	row.innerHTML = ''
+		+ '<div class="card">'
+		+ '  <div class="card-head"><div class="card-title">实时速率</div><div class="card-note">节点出口口径 · 每 1.5 秒采样</div></div>'
+		+ '  <div class="rate-row">'
+		+ '    <div class="rate-cell"><div class="kpi-label">实时下行</div>'
+		+ '      <div class="kpi-value" id="liveDown">—</div>'
+		+ '      <div class="bar"><div class="bar-fill" id="liveDownb"></div></div></div>'
+		+ '    <div class="rate-cell"><div class="kpi-label">实时上行</div>'
+		+ '      <div class="kpi-value" id="liveUp">—</div>'
+		+ '      <div class="bar"><div class="bar-fill" id="liveUpb"></div></div></div>'
+		+ '  </div>'
+		+ '  <div class="spark" id="rateSpark"></div>'
+		+ '  <div class="kpi-foot" id="liveFoot">下行近 60 秒走势</div>'
+		+ '</div>'
+		+ '<div class="card">'
+		+ '  <div class="card-head"><div class="card-title">内核状态</div><div class="card-note" id="kernNote">—</div></div>'
+		+ '  <div id="kernBox"></div>'
 		+ '</div>';
-	wrap.appendChild(bottom);
+	wrap.appendChild(row);
 
+	// 4 站点连通性（既有真实检测，保留在底部）
 	const sites = el('div', 'card');
 	sites.style.marginTop = '0';
 	sites.innerHTML = ''
 		+ '<div class="card-head"><div class="card-title">站点连通性</div>'
-		+ '<div class="card-note" id="siteNote">本机直连检测</div></div>'
+		+ '<div class="card-note" id="siteNote">本机出口检测</div></div>'
 		+ '<div id="siteList" class="skeleton">检测中…</div>'
 		+ '<div style="margin-top:12px"><button class="btn sm" id="reSite">重新检测</button></div>';
 	wrap.appendChild(sites);
 
 	setTimeout(() => {
-		renderKpi();
-		renderRun();
+		renderVitals();
 		$('#reSite').onclick = checkSites;
 		checkSites();
 	}, 0);
@@ -261,6 +284,38 @@ function kpiCard(label, valueHtml, foot, barPct, barCls, id) {
 	return c;
 }
 
+function renderVitals() {
+	renderStrip();
+	renderKpi();
+	renderLive();
+	renderKernelBox();
+}
+
+/* 实时运行状态条 */
+function renderStrip() {
+	const box = $('#statStrip');
+	if (!box) return;
+	const st = S.status || {};
+	const running = st.runtime === 'running';
+	const total = Number(st.nodes) || 0;
+	const en = Number(st.nodes_enabled) || 0;
+	const note = $('#ovNote');
+	if (note) note.textContent = '最近刷新 ' + fmtTime(new Date()) + ' · 每 1.5 秒';
+	const cells = [
+		['运行状态', running ? '运行中' : '已停止', running ? 'PID ' + (st.runtime_pid || '—') : '内核未启动', running ? 'ok' : 'bad'],
+		['运行时长', fmtUptime(st.runtime_uptime || S.uptime), running ? '自本次启动' : '—', ''],
+		['监听端口', ':' + (st.listen_port || '—'), st.listen_open ? '已监听' : '未监听', st.listen_open ? 'ok' : ''],
+		['节点健康', en + ' / ' + total, '规则集 ' + (st.rule_set_state === 'ready' ? '就绪' : (st.rule_set_state || '—')), total > 0 && en > 0 ? 'ok' : ''],
+	];
+	box.innerHTML = cells.map((c) => ''
+		+ '<div class="ov-cell">'
+		+ '  <div class="kpi-label">' + c[0] + '</div>'
+		+ '  <div class="ov-value ' + c[3] + '">' + esc(c[1]) + '</div>'
+		+ '  <div class="kpi-foot">' + esc(c[2]) + '</div>'
+		+ '</div>').join('');
+}
+
+/* CPU / 内存 / 今日流量 / 连接数 */
 function renderKpi() {
 	const g = $('#kpiGrid');
 	if (!g) return;
@@ -269,24 +324,77 @@ function renderKpi() {
 	const mem = S.mem || { used_mb: 0, total_mb: 0, pct: 0 };
 	const cpuPct = Math.min(100, Number(cpu.usage) || 0);
 	const cls = cpuPct >= 85 ? 'e' : (cpuPct >= 60 ? 'w' : '');
+	const up = Number(st.conn_up) || 0;
+	const down = Number(st.conn_down) || 0;
+	const today = up + down;
+	const conns = Number(st.connections) || 0;
+	const connMem = Number(st.conn_memory) || 0;
+	const running = st.runtime === 'running';
+	const downShare = today > 0 ? Math.round(down / today * 100) : 0;
 
 	g.innerHTML = '';
-	g.appendChild(kpiCard('CPU 使用', cpuPct + '<span class="kpi-unit">%</span>',
+	g.appendChild(kpiCard('CPU', cpuPct + '<span class="kpi-unit">%</span>',
 		'usr ' + (cpu.user || 0) + '% · sys ' + (cpu.sys || 0) + '%', cpuPct, cls, 'kcpu'));
 
 	g.appendChild(kpiCard('内存', (mem.used_mb || 0) + '<span class="kpi-unit">MB</span>',
 		'已用 ' + (mem.pct || 0) + '% · 共 ' + (mem.total_mb || 0) + ' MB', Math.min(100, mem.pct || 0), '', 'kmem'));
 
-	g.appendChild(kpiCard('实时下行', fmtRateNum(S.prev.rateDown) + '<span class="kpi-unit">' + fmtRateUnit(S.prev.rateDown) + '</span>',
-		'节点累计 ' + fmtBytes(st.conn_down || 0), ratePct(S.prev.rateDown), '', 'kdown'));
+	g.appendChild(kpiCard('今日流量', fmtBytes(today),
+		'↑ ' + fmtBytes(up) + ' · ↓ ' + fmtBytes(down) + ' · 节点口径', downShare, '', 'ktraffic'));
 
-	g.appendChild(kpiCard('实时上行', fmtRateNum(S.prev.rateUp) + '<span class="kpi-unit">' + fmtRateUnit(S.prev.rateUp) + '</span>',
-		'节点累计 ' + fmtBytes(st.conn_up || 0), ratePct(S.prev.rateUp), '', 'kup'));
+	g.appendChild(kpiCard('连接数', (running ? conns : 0) + '<span class="kpi-unit">条</span>',
+		running ? '会话内存 ' + fmtBytes(connMem) : '内核未运行',
+		Math.min(100, Math.round(conns / 200 * 100)), '', 'kconn'));
 
 	setBar('kcpu', cpuPct, cls);
 	setBar('kmem', Math.min(100, mem.pct || 0), '');
-	setBar('kdown', ratePct(S.prev.rateDown), '');
-	setBar('kup', ratePct(S.prev.rateUp), '');
+	setBar('ktraffic', downShare, '');
+	setBar('kconn', Math.min(100, Math.round(conns / 200 * 100)), '');
+}
+
+/* 实时上下行 + 近 60 秒走势 */
+function renderLive() {
+	const st = S.status || {};
+	const running = st.runtime === 'running';
+	const d = $('#liveDown');
+	const u = $('#liveUp');
+	if (d) d.innerHTML = running
+		? fmtRateNum(S.prev.rateDown) + '<span class="kpi-unit">' + fmtRateUnit(S.prev.rateDown) + '</span>' : '—';
+	if (u) u.innerHTML = running
+		? fmtRateNum(S.prev.rateUp) + '<span class="kpi-unit">' + fmtRateUnit(S.prev.rateUp) + '</span>' : '—';
+	setBar('liveDown', ratePct(S.prev.rateDown), '');
+	setBar('liveUp', ratePct(S.prev.rateUp), '');
+
+	S.rateHist = S.rateHist || [];
+	if (S.rateHist.length === 0 && Number(S.prev.rateDown) > 0) S.rateHist.push(0);
+	S.rateHist.push(Number(S.prev.rateDown) || 0);
+	if (S.rateHist.length > 40) S.rateHist.shift();
+	const spark = $('#rateSpark');
+	if (spark) {
+		const max = Math.max.apply(null, S.rateHist.concat([1]));
+		spark.innerHTML = S.rateHist.map((v) => '<i style="height:' + Math.max(2, Math.round(v / max * 100)) + '%"></i>').join('');
+	}
+}
+
+/* 内核状态明细 */
+function renderKernelBox() {
+	const box = $('#kernBox');
+	if (!box) return;
+	const st = S.status || {};
+	const running = st.runtime === 'running';
+	const note = $('#kernNote');
+	if (note) note.textContent = st.engine_stability === 'stable' ? '稳定内核' : (st.engine_dev ? '开发中' : '—');
+	const rows = [
+		['引擎', (st.engine || '—') + (running ? ' · 运行中' : ' · 未运行')],
+		['程序版本', 'EasyProxy ' + (S.version || '—')],
+		['二进制', (st.binary_ok ? '可用' : '缺失') + (st.binary ? ' · ' + st.binary : '')],
+		['路由模式', st.route_mode === 'split' ? '分流（国内直连）' : (st.route_mode === 'direct' ? '全局直连' : (st.route_mode || '—'))],
+		['分流规则', String(st.route_rules == null ? '—' : st.route_rules) + ' 条 · DNS ' + (st.dns_mode || '—')],
+		['配置文件', st.config_state || '—'],
+	];
+	box.innerHTML = '<table class="tbl"><colgroup><col style="width:30%"><col style="width:70%"></colgroup>'
+		+ rows.map((r) => '<tr><td class="dim">' + esc(r[0]) + '</td><td>' + esc(r[1]) + '</td></tr>').join('')
+		+ '</table>';
 }
 
 function fmtRateNum(bps) {
@@ -308,29 +416,6 @@ function setBar(id, pct, cls) {
 	if (!b) return;
 	b.style.width = Math.max(0, Math.min(100, pct || 0)) + '%';
 	b.className = 'bar-fill ' + (cls || '');
-}
-
-function renderRun() {
-	const g = $('#runGrid');
-	if (!g) return;
-	const st = S.status || {};
-	const running = st.runtime === 'running';
-	const total = Number(st.nodes) || 0;
-	const en = Number(st.nodes_enabled) || 0;
-	g.innerHTML = ''
-		+ miniKpi('本次流量', fmtBytes((Number(st.conn_up) || 0) + (Number(st.conn_down) || 0)), '↑' + fmtBytes(st.conn_up || 0) + ' / ↓' + fmtBytes(st.conn_down || 0))
-		+ miniKpi('运行时间', fmtUptime(st.runtime_uptime || S.uptime), running ? 'PID ' + (st.runtime_pid || '—') : '未运行')
-		+ miniKpi('代理状态', running ? '运行中' : '已停止', '监听 :' + (st.listen_port || '—') + (st.listen_open ? ' 已开' : ' 未开'))
-		+ miniKpi('节点健康', en + ' / ' + total, '规则集 ' + (st.rule_set_state === 'ready' ? '就绪' : (st.rule_set_state || '—')));
-}
-
-function miniKpi(label, value, foot) {
-	return ''
-		+ '<div>'
-		+ '  <div class="kpi-label">' + label + '</div>'
-		+ '  <div class="kpi-value" style="font-size:20px">' + value + '</div>'
-		+ '  <div class="kpi-foot">' + foot + '</div>'
-		+ '</div>';
 }
 
 async function checkSites() {
@@ -1411,7 +1496,7 @@ function stopPageTimers() {
 
 function onStatus() {
 	const id = currentPage();
-	if (id === 'overview') { renderKpi(); renderRun(); }
+	if (id === 'overview') { renderVitals(); }
 	else if (id === 'kernel') { renderKernel(); }
 }
 
