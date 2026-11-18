@@ -19,7 +19,6 @@ ep_yaml_str() {
 	printf '"%s"' "$(printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')"
 }
 
-# Home directory mihomo uses (-d): geodata and its own cache live here
 ep_mihomo_home() {
 	local value
 	value="$(uci -q get easyproxy.mihomo.home 2>/dev/null)"
@@ -335,8 +334,58 @@ ep_mihomo_config_build() {
 		done
 		printf '\n'
 		printf 'proxy-groups:\n'
+		# Two levels, the layout every mature client converged on: the rules
+		# point at PROXY, PROXY holds one url-test group per region, and each
+		# region group picks the fastest node on its own. A user who wants
+		# "Japan, fastest machine" never has to touch 9 individual nodes.
+		regions="$tmp.regions"
+		: > "$regions"
+		for section in $node_sections; do
+			[ "$(ep_bool "$(ep_get "$section" enabled 1)")" = "1" ] || continue
+			reg="$(ep_node_region "$(ep_node_uniq_tag "$section")" "$(ep_get "$section" server "")")"
+			grep -qx "$reg" "$regions" 2>/dev/null || printf '%s\n' "$reg" >> "$regions"
+		done
+
 		printf '  - name: PROXY\n'
 		printf '    type: select\n'
+		printf '    proxies:\n'
+		# Manual direct first: a proxy plugin has to be able to stop proxying
+		# for this stream without being stopped itself.
+		printf '      - DIRECT\n'
+		printf '      - %s\n' "$(ep_yaml_str "所有-自动")"
+		while IFS= read -r reg; do
+			printf '      - %s\n' "$(ep_yaml_str "自动-$(ep_region_label "$reg")")"
+		done < "$regions"
+		# Individual nodes stay selectable for the "just this one machine" case.
+		for section in $node_sections; do
+			[ "$(ep_bool "$(ep_get "$section" enabled 1)")" = "1" ] || continue
+			printf '      - %s\n' "$(ep_yaml_str "$(ep_node_uniq_tag "$section")")"
+		done
+		printf '\n'
+
+		# One url-test group per region found above.
+		while IFS= read -r reg; do
+			printf '  - name: %s\n' "$(ep_yaml_str "自动-$(ep_region_label "$reg")")"
+			printf '    type: url-test\n'
+			printf '    url: http://www.gstatic.com/generate_204\n'
+			printf '    interval: 300\n'
+			printf '    tolerance: 100\n'
+			printf '    proxies:\n'
+			for section in $node_sections; do
+				[ "$(ep_bool "$(ep_get "$section" enabled 1)")" = "1" ] || continue
+				tag="$(ep_node_uniq_tag "$section")"
+				[ "$(ep_node_region "$tag" "$(ep_get "$section" server "")")" = "$reg" ] || continue
+				printf '      - %s\n' "$(ep_yaml_str "$tag")"
+			done
+			printf '\n'
+		done < "$regions"
+
+		# Everything at once, for the user who does not care about the region.
+		printf '  - name: %s\n' "$(ep_yaml_str "所有-自动")"
+		printf '    type: url-test\n'
+		printf '    url: http://www.gstatic.com/generate_204\n'
+		printf '    interval: 300\n'
+		printf '    tolerance: 100\n'
 		printf '    proxies:\n'
 		for section in $node_sections; do
 			[ "$(ep_bool "$(ep_get "$section" enabled 1)")" = "1" ] || continue
@@ -376,6 +425,6 @@ ep_mihomo_config_build() {
 	# "direct only (nothing is proxied)" on a mihomo box whose config was in fact
 	# splitting - a reassuring-looking line that contradicted the YAML.
 	EP_ROUTE_MODE="split"
-	rm -f "$tmp" "$tmp.errmsg" "$tmp.tags" "$tmp.check"
+	rm -f "$tmp" "$tmp.regions" "$tmp.errmsg" "$tmp.tags" "$tmp.check"
 	return 0
 }

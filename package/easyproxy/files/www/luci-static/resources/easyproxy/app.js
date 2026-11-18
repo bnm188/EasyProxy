@@ -118,6 +118,9 @@ var CSS = [
 '.ep-menu summary::-webkit-details-marker{display:none}',
 '.ep-menu summary:hover{background:rgba(255,255,255,.85);color:#16202a}',
 '.ep-menu[open] summary{background:rgba(255,255,255,.92)}',
+'.ep-group-now{display:flex;gap:8px;align-items:baseline;margin-bottom:10px}',
+'.ep-group-now b{font-size:16px}',
+'.ep-select{min-width:260px;max-width:100%;padding:7px 10px;border-radius:9px;border:1px solid rgba(0,0,0,.14);background:rgba(255,255,255,.9);font-size:15px}',
 '.ep-menu-body{position:absolute;right:0;top:27px;z-index:9;display:flex;flex-direction:column;gap:6px;padding:8px;min-width:126px;border-radius:12px;border:1px solid rgba(255,255,255,.85);background:#fff;box-shadow:0 14px 34px rgba(22,60,110,.20)}',
 '.ep-menu-body .ep-btn{margin:0;width:100%;text-align:center}',
 '.ep-pw{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end}',
@@ -878,6 +881,44 @@ function nodeTable(nodes) {
 	]);
 }
 
+// 代理组：生成器把节点按地区拆成 urltest 组，PROXY 选择组指向其中一个。
+// 这是面板上唯一真正能切换出口的地方 —— 之前要改 UCI 或直接打 Clash API。
+function groupCard() {
+	var body = E('div', { class: 'ep-group' }, [E('span', { class: 'ep-hint' }, '读取中…')]);
+	cliJson(['group', 'list']).then(function (g) {
+		while (body.firstChild)
+			body.removeChild(body.firstChild);
+		if (!g || !g.ok) {
+			body.appendChild(E('span', { class: 'ep-hint' }, (g && g.error) || '读取代理组失败'));
+			return;
+		}
+		var members = g.members || [];
+		var sel = E('select', { class: 'ep-select', id: 'ep-group-pick' }, members.map(function (m) {
+			return E('option', { value: m, selected: m === g.now ? 'selected' : null }, m);
+		}));
+		body.appendChild(E('div', { class: 'ep-group-now' }, [
+			E('span', { class: 'ep-hint' }, '当前出口'),
+			E('b', {}, g.now || '-')
+		]));
+		body.appendChild(E('div', { class: 'ep-row' }, [
+			sel,
+			button('切换', 'ep-primary', function () {
+				var m = sel.value;
+				if (!m)
+					return notify('没有可选项', 'error');
+				return run(['group', 'use', m]).then(function (r) {
+					notify((r.stdout || r.stderr || 'done').trim(), r.code === 0 ? 'success' : 'error');
+					if (r.code === 0)
+						reload();
+				});
+			})
+		]));
+		body.appendChild(E('div', { class: 'ep-hint' },
+			'选「自动-xx」由组内 urltest 自动挑最快并剔除故障节点；选具体节点则固定走它。'));
+	});
+	return body;
+}
+
 function pageNodes(data) {
 	injectStyle();
 	var list = data && data.list;
@@ -887,7 +928,8 @@ function pageNodes(data) {
 		return tag(g.label + '（' + g.nodes + '）', g.nodes > 0);
 	});
 	return E('div', { class: 'ep-wrap' }, [
-		hero('节点管理', '导入、查看、测速、删除；区域按名称自动归组，生成 auto-hk / auto-us 等 urltest 组。'),
+		hero('节点管理', '导入、查看、测速、删除；区域按名称自动归组，生成 自动-香港 / 自动-美国 等 urltest 组。'),
+		card('代理组（出口）', groupCard(), '规则统一指向 PROXY：在这里切换即可换出口，不需要改配置。'),
 		card('节点分组', E('div', {}, groups.length ? groups : [E('span', { class: 'ep-hint' }, '暂无分组')])),
 		card('节点列表', nodeTable(list.nodes), '区域由节点名称里的 hk/tw/jp/sg/us/uk/de/kr/ru 或中文地名推断。'),
 		card('导入链接', [

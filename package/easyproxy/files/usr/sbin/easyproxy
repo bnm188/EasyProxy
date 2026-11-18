@@ -44,6 +44,9 @@ Usage:
   easyproxy node export [name]     Print share links back out
   easyproxy node del <name>        Delete a node
   easyproxy node test [--json]     TCP-probe every enabled node (latency)
+  easyproxy group list [--json]    Show the PROXY selector: current pick and members
+  easyproxy group use <member>     Point PROXY at a member (node or auto-<region>)
+  easyproxy group set <g> <member> Point any selector group at a member
   easyproxy rule list [--json]     List custom split rules
   easyproxy rule add <type:value:outbound>
   easyproxy rule del <index>
@@ -309,6 +312,65 @@ cmd_connections() {
 				{ printf "%-44s %-16s %-14s %10s %10s %9s\n", $1, $2, $3, $4, $5, ($6 == "-" || $6 == "" ? "-" : int($6 / 1000) "s") }'
 			;;
 	esac
+}
+
+cmd_group_list() {
+	local group now members m first=1
+	group="PROXY"
+	if ! command -v ep_clash_applicable >/dev/null 2>&1 || ! ep_clash_applicable; then
+		if [ "$JSON" = "1" ]; then
+			printf '{"ok":false,"error":"the Clash API is only available on mihomo"}\n'
+		else
+			echo "Group switching needs the mihomo engine (current: $(ep_get main engine none))."
+		fi
+		return 1
+	fi
+	now="$(ep_clash_group_now "$group")"
+	members="$(ep_clash_group_members "$group")"
+	if [ -z "$members" ]; then
+		if [ "$JSON" = "1" ]; then
+			printf '{"ok":false,"error":"Clash API unreachable or group %s is not defined"}\n' "$group"
+		else
+			echo "No group ${group}: the Clash API is unreachable on $(ep_clash_controller), or the config was built before groups existed."
+			echo "Run \"easyproxy config generate\" and restart."
+		fi
+		return 1
+	fi
+	if [ "$JSON" = "1" ]; then
+		printf '{"ok":true,"group":"%s","now":"%s","members":[' "$group" "$(ep_json_escape "$now")"
+		printf '%s\n' "$members" | while IFS= read -r m; do
+			[ -n "$m" ] || continue
+			[ "$first" = "1" ] || printf ','
+			first=0
+			printf '"%s"' "$(ep_json_escape "$m")"
+		done
+		printf ']}\n'
+		return 0
+	fi
+	printf 'Group %s -> %s\n' "$group" "$now"
+	printf '%s\n' "$members" | while IFS= read -r m; do
+		[ -n "$m" ] || continue
+		if [ "$m" = "$now" ]; then
+			printf '  * %s\n' "$m"
+		else
+			printf '    %s\n' "$m"
+		fi
+	done
+}
+
+cmd_group_use() {
+	local member group
+	member="$1"; group="${2:-PROXY}"
+	if [ -z "$member" ]; then
+		echo "usage: easyproxy group use <member> [group]" >&2
+		return 2
+	fi
+	if ep_clash_select "$group" "$member"; then
+		printf 'Group %s -> %s\n' "$group" "$member"
+		return 0
+	fi
+	echo "Could not switch ${group} to ${member}: ${EP_ERR:-unknown error}" >&2
+	return 1
 }
 
 cmd_validate_text() {
@@ -1988,6 +2050,13 @@ case "$CMD" in
 			del|delete|rm) cmd_node_del "$SUB2" ;;
 			test|ping) cmd_node_test ;;
 			*) echo "Unknown node action: $SUB" >&2; exit 2 ;;
+		esac
+		;;
+	group)
+		case "$SUB" in
+			list|"") cmd_group_list ;;
+			use|set) cmd_group_use "$SUB2" "$SUB3" ;;
+			*) echo "Unknown group action: $SUB" >&2; exit 2 ;;
 		esac
 		;;
 	rule)

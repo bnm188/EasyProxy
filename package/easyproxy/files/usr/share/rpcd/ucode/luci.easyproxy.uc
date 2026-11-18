@@ -22,7 +22,11 @@ const BIN = '/usr/sbin/easyproxy';
 const SAFE = [
 	'status', 'validate', 'engine', 'node', 'rule', 'config', 'ruleset',
 	'doctor', 'diag', 'update', 'start', 'stop', 'restart', 'bypass',
-	'transparent', 'log', 'traffic', 'subscribe', 'uninstall-clean', 'version'
+	'transparent', 'log', 'traffic', 'subscribe', 'uninstall-clean', 'version',
+	// The panel's live page and its new group switcher both go through here.
+	// Missing entries do not fail loudly: rpcd refuses the call and the page
+	// just renders empty, which is how the connections table stayed blank.
+	'connections', 'group'
 ];
 
 function quote(s) {

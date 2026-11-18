@@ -178,3 +178,73 @@ ep_clash_connections_json() {
 	done
 	printf ']}\n'
 }
+
+# --- proxy groups ------------------------------------------------------------
+#
+# The generator emits PROXY (select) around one url-test group per region, so
+# the useful question is not "which node is enabled" but "what is this group
+# pointed at right now, and what can I point it at". Both answers live here.
+
+# Members of a group, one per line. Empty when the API is down.
+ep_clash_group_members() {
+	local group body inner
+	group="${1:-PROXY}"
+	body="$(ep_clash_get "/proxies/${group}")"
+	[ -n "$body" ] || return 0
+	# Cut at the FIRST "]" after "all":[. A greedy regex reaches the last
+	# bracket in the whole document and drags history / dialer-proxy into the
+	# member list, which is how garbage lines appeared on the real router.
+	inner="$(printf '%s' "$body" | awk '{ i = index($0, "\"all\":[");
+		if (i == 0) next;
+		s = substr($0, i + 7);
+		j = index(s, "]");
+		if (j == 0) next;
+		print substr(s, 1, j - 1) }' | head -1)"
+	[ -n "$inner" ] || return 0
+	# Members are plain double-quoted strings; a name containing a comma would
+	# break a naive comma split, so split on the quote boundary instead.
+	printf '%s' "$inner" | sed 's/","/\n/g' | sed 's/^"//; s/"$//' | grep -v '^$'
+}
+
+# The member a group currently uses. "null" and a dead API both print "-".
+ep_clash_group_now() {
+	local group body now
+	group="${1:-PROXY}"
+	body="$(ep_clash_get "/proxies/${group}")"
+	[ -n "$body" ] || { printf '%s' "-"; return 0; }
+	now="$(printf '%s' "$body" | sed -n 's/.*"now":"\([^"]*\)".*/\1/p' | head -1)"
+	[ -n "$now" ] || now="-"
+	printf '%s' "$now"
+}
+
+# Point a group at one of its members. Fails loudly: a selector that silently
+# ignores the switch is the exact bug this endpoint exists to remove.
+ep_clash_select() {
+	local group member c secret url body
+	group="${1:-PROXY}"
+	member="$2"
+	[ -n "$member" ] || { EP_ERR="no member given"; return 1; }
+	ep_clash_applicable || { EP_ERR="the Clash API is only available on mihomo"; return 1; }
+	command -v curl >/dev/null 2>&1 || { EP_ERR="curl is missing"; return 1; }
+	c="$(ep_clash_controller)"
+	url="http://${c}/proxies/${group}"
+	secret="$(ep_get mihomo secret "")"
+	# JSON string escaping: a node name can carry a quote or a backslash.
+	body="$(printf '%s' "$member" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')"
+	if [ -n "$secret" ]; then
+		out="$(curl -sS -m 5 -X PUT -H "Content-Type: application/json" \
+			-H "Authorization: Bearer ${secret}" \
+			-d "{\"name\":\"${body}\"}" "$url" 2>&1)"
+	else
+		out="$(curl -sS -m 5 -X PUT -H "Content-Type: application/json" \
+			-d "{\"name\":\"${body}\"}" "$url" 2>&1)"
+	fi
+	case "$out" in
+		*"proxy not exist"*|*"not found"*) EP_ERR="$out"; return 1 ;;
+	esac
+	# mihomo answers 204 with an empty body on success and a JSON error otherwise.
+	case "$out" in
+		*'"message"'*) EP_ERR="$out"; return 1 ;;
+	esac
+	return 0
+}

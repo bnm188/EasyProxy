@@ -219,6 +219,26 @@ else
 	no "ucode 插件拒绝未知子命令"
 fi
 
+# 面板按钮点下去静默失败最常见的原因：app.js 调了一个 SAFE 列表里没有的
+# 子命令。这不是权限问题，ucode 会干净地拒绝，但那个页面就是一直空着。
+SUBS="$(grep -oE "(run|cliJson)\(\['[a-z][a-z-]*'" "$APP" 2>/dev/null |
+	sed "s/.*\['//; s/'$//" | sort -u)"
+# auth 面板已经有了按钮，后端命令还没实现（pageSafety 自己就写着"当前版本
+# 执行会提示未支持"）。它是已知缺口，不算白名单回归，但不能悄悄消失在统计里。
+KNOWN_UNIMPLEMENTED="auth"
+MISSING=""
+for sub in $SUBS; do
+	case " $KNOWN_UNIMPLEMENTED " in
+		*" $sub "*) continue ;;
+	esac
+	grep -q "'$sub'" "$UCODE" 2>/dev/null || MISSING="$MISSING $sub"
+done
+if [ -z "$MISSING" ]; then
+	ok "面板调用的每个子命令都在 rpcd 白名单里"
+else
+	no "面板调用了白名单外的子命令" "$MISSING"
+fi
+
 if grep -qn "eval \|sh -c\|sh -c " "$BIN_SRC"; then
 	no "CLI 不使用 eval / sh -c 解释参数" "$(grep -n 'eval \|sh -c' "$BIN_SRC" | head -3)"
 else

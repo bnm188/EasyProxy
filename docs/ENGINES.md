@@ -349,3 +349,29 @@ domain-suffix / block→REJECT / IP-CIDR 带 no-resolve、关 YouTube 不影响 
 4. 删除节点会同时删掉块文件，否则每删一个节点就留一个死文件。
 
 实测（真机 0.8.14-17）：一条 `proxies` 段含 24 个节点的订阅 → `24 imported, 0 existed, 0 unusable`；`config generate` 过 mihomo 自检；25 个节点全部出现在 `proxies`；Clash API 里 PROXY 组能逐个切换。
+
+## 代理组（0.8.14-18 起）
+
+之前生成的 `proxy-groups` 只有一个 `PROXY`（select），成员是全部节点平铺。25 个节点时，用户在面板上点不到任何东西：换出口只能改 UCI 或直接打 Clash API。
+
+现在的布局是两层，和成熟客户端一致：
+
+```
+PROXY (select)
+|- DIRECT                       手动直连，不停引擎也能绕过代理
+|- 所有-自动 (url-test)          全部节点，谁快用谁
+|- 自动-日本 / 自动-美国 / ...    按地区的 url-test 组
+\- 每个具体节点                 固定走某一台
+```
+
+- 地区从节点名推断（`_US_`、"机场A | 香港-01"），名字里没有时再看 server 令牌（`jp01`、`hk-2`）。这里复用 `ep_node_region`，所以面板上的 `auto-us` 与生成的 `自动-美国` 是同一个判断。
+- url-test 统一 `http://www.gstatic.com/generate_204`、`interval: 300`、`tolerance: 100`：组内自动挑最快，节点挂了自动换下一个。
+- 规则仍然只写 `PROXY`，不直接绑节点 —— 换地区不动规则。
+
+真机（0.8.14-19，25 节点）：生成 7 个组（1 个 select + 6 个 url-test），`mihomo -t` 通过；`easyproxy group list` 显示 `PROXY -> 自动-日本`；`自动-日本` 组内 urltest 选中 `11`（该节点 server 域名含 `jp01`，是组内唯一可用的），`curl -x 7890 .../generate_204` 返回 204。
+
+切换走 `easyproxy group use <member> [group]`，失败会明确报错而不是静默不动 —— mihomo 对不存在的成员返回 `{"message":"Selector update error: proxy not exist"}`。
+
+**踩到的两个坑**（都在 0.8.14-19 修掉）：
+1. 用 `sed 's/.*"all":\[\\(.*\\)\].*/'` 取成员时贪婪匹配跨过整份文档，把 `history`、`dialer-proxy` 一起当成节点。改成 awk 从 `"all":[` 截到**第一个** `]`。
+2. 成员名含空格（`🇯🇵_JP_日本_IPV4 (3)`），`for m in $members` 会把它拆成两个词。改成 `while IFS= read -r`。
