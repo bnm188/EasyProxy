@@ -27,6 +27,31 @@ locale 二次编码成乱码。解析失败会把原因写进 stderr（例如
 
 节点写进 UCI（`uci add` 分配 section，不用固定下标），所以升级和备份都不会冲突。
 
+## 节点命名模板
+
+机场订阅里的名字是随机的（`🇺🇸_US_美国_IPV4 (3)`、`🇯🇵_JP_日本_IPV4`），
+同批次还有多个同地区节点，名字里没有可读的区分度。导入时统一重写成：
+
+```
+<机场> | <地区>-<线路>-<NN>          有机场名
+<地区>-<NN>                          没有机场名
+```
+
+- `地区` 来自原来的国旗/国家关键字，落进 hk/tw/jp/sg/us/uk/de/kr/ru 之一，其余进「其他」
+- `线路` 从原名抓 `IPLC` / `IEPL` / `BGP` / `家宽` / `专线`，抓不到就省略整段
+- `NN` 按「该地区已存节点数 + 1」现算，两位数补零，所以删掉中间某个节点不会错位
+- 只改 UCI 里的 `name`。生成配置时 `ep_mihomo_node` 会把 `name:` 覆写成 tag，
+  raw 文件与文件名都不必跟着动
+
+```
+easyproxy node import-clash /tmp/sub.yaml 我的机场   # 导入即按模板命名
+easyproxy node normalize 我的机场                     # 给已存节点批量改名
+easyproxy node rename 我的机场                        # 同 normalize 的别名
+```
+
+`provider` 存在节点的 UCI 字段里，面板的「按机场分组」读的就是它。
+不传机场名时节点没有 provider，只能按地区分组。
+
 ## 自动分组与自动选路
 
 节点按名字里的地区关键字分组，中英文都认：
@@ -75,6 +100,64 @@ locale 二次编码成乱码。解析失败会把原因写进 stderr（例如
   `nflximg.net`、`nflxso.net`、`nflxvideo.net`
 - TikTok：`tiktok.com`、`tiktokv.com`、`tiktokcdn.com`、`byteoversea.com`、
   `ibytedtos.com`、`muscdn.com`
+
+## 场景组（mihomo 侧）
+
+mihomo 不再把一堆域名全塞给一个 `PROXY`，而是每个使用场景一个 `select` 组，
+在面板「节点中心 → 策略组」里能逐个改出口，改完立刻生效：
+
+| 组 | 覆盖 |
+|---|---|
+| `Youtube` | youtube.com / youtu.be / googlevideo.com / ytimg.com / yt3.ggpht.com |
+| `Netflix` | netflix.com / nflxext.com / nflximg.net / nflxso.net / nflxvideo.net |
+| `TikTok` | tiktok.com / tiktokv.com / tiktokcdn.com / byteoversea.com / muscdn.com |
+| `AI` | openai / anthropic / gemini / aistudio / perplexity / poe / copilot |
+| `Github` | github.com / githubusercontent / githubassets |
+| `Google` | google.com / gstatic / googleapis / gmail / googleusercontent |
+| `Microsoft` | microsoft.com / live.com / office / azure / bing |
+| `Apple` | apple.com / icloud / mzstatic |
+| `Games` | steam / epicgames / blizzard / riot / ea / ubisoft / nintendo / playstation |
+| `Speed` | speedtest.net / speedtest.com / ookla |
+
+每个组的成员顺序固定为：
+
+```
+所有-自动 → 自动-日本 → 自动-俄罗斯 → 自动-新加坡 → 自动-美国 → 自动-其他 → 自动-德国 → DIRECT
+```
+
+即「默认走全区自动测速，可一键换成某个地区，也可以一键直连」。成员里只放组不放
+单机节点，节点上下线不用改场景组。默认选中第一项 `所有-自动`。
+
+规则顺序按「谁会被谁抢」排：
+
+```
+Speed → Youtube → Netflix → TikTok → AI → Github → Microsoft → Apple → Games → Google
+```
+
+- `AI` 必须排在 `Google` 之前，否则 `gemini.google.com`、`aistudio.google.com`
+  会先被 Google 组吃掉，AI 组形同虚设；
+- `Youtube` 必须排在 `Google` 之前，否则 `googlevideo.com` 的 CDN 流量会落到 Google 组。
+
+`youtube` / `netflix` / `tiktok` 三组仍受 `routing.platform_youtube` 等开关控制，
+置 0 就不生成对应规则（该平台回落 `PROXY`）。
+
+### 选择持久化
+
+`select` 组的手动选择默认只存在内存里，进程重启就回落到第一项——面板显示
+「Netflix 走 自动-日本」，实际流量却走 `所有-自动`。所以生成的配置里固定写入：
+
+```yaml
+store-selected: true
+```
+
+选择结果落在 `/etc/easyproxy/mihomo/cache.db`，重启后仍然保留。真机验证：
+把 `Youtube` 设成 `自动-美国` → `easyproxy restart` → 复查仍是 `自动-美国`。
+
+### 与 sing-box 的差异
+
+sing-box 侧（`config.sh`）目前仍把三个平台规则指向 `PROXY`，没有场景组。
+两引擎在「平台分流去哪里」这一点上行为不一致，以 mihomo 为准，sing-box
+待同步。
 
 ## 自定义规则
 

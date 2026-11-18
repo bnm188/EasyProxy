@@ -173,9 +173,12 @@ case "$OUTD" in
 	*"2 imported"*) ok "同名不同端点两个都留下" ;;
 	*) no "同名不同端点两个都留下" "$OUTD" ;;
 esac
+# Names now follow the display template (<region>-<seq>), so the second US
+# entry lands on 美国-02 instead of reusing "US IPV4 (2)". The point of the
+# assertion is unchanged: the duplicate must survive under a distinct name.
 case "$OUTD" in
-	*"US IPV4 (2)"*) ok "第二个节点自动加后缀" ;;
-	*) no "第二个节点自动加后缀" "$OUTD" ;;
+	*"美国-02"*) ok "第二个节点自动加序号后缀" ;;
+	*) no "第二个节点自动加序号后缀" "$OUTD" ;;
 esac
 
 # The file mihomo reads must agree with the tag the panel and the group use;

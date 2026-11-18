@@ -91,22 +91,68 @@ ep_mihomo_custom_rules() {
 	IFS="$old_ifs"
 }
 
-# YouTube / Netflix / TikTok. Same inline domain lists as the sing-box writer and
-# they must come before GEOIP,CN: the CDN domains of a platform resolve into CN
-# ranges often enough that the geo rule would claim them first.
-ep_mihomo_platform_rules() {
-	local key domains d
-	for key in youtube netflix tiktok; do
-		[ "$(ep_bool "$(ep_get routing "platform_${key}" 1)")" = "1" ] || continue
-		case "$key" in
-			youtube) domains="youtube.com youtu.be googlevideo.com ytimg.com youtube-nocookie.com yt3.ggpht.com" ;;
-			netflix) domains="netflix.com netflix.net nflxext.com nflximg.com nflximg.net nflxso.net nflxvideo.net" ;;
-			tiktok) domains="tiktok.com tiktokv.com tiktokcdn.com byteoversea.com ibytedtos.com muscdn.com" ;;
-			*) continue ;;
-		esac
-		for d in $domains; do
-			printf '  - DOMAIN-SUFFIX,%s,PROXY\n' "$d"
+# Platform scene groups. Each one is a real select group, so "Netflix goes to
+# Japan while everything else stays auto" is a panel click instead of a rule
+# edit. Members are the auto groups, never single machines: a scene group that
+# pins one node rots quietly the day that node dies.
+ep_mihomo_scene_groups() {
+	local regions="$1" scene
+	for scene in Youtube Netflix TikTok AI Github Google Microsoft Apple Games Speed; do
+		printf '  - name: %s\n' "$(ep_yaml_str "$scene")"
+		printf '    type: select\n'
+		printf '    proxies:\n'
+		printf '      - %s\n' "$(ep_yaml_str "所有-自动")"
+		while IFS= read -r reg; do
+			printf '      - %s\n' "$(ep_yaml_str "自动-$(ep_region_label "$reg")")"
+		done < "$regions"
+		printf '      - DIRECT\n'
+		printf '\n'
+	done
+}
+
+# Domains per scene, matched by suffix. Order matters: the narrower scene wins,
+# so AI sits in front of Google (gemini.google.com) and Youtube in front of
+# Google (googlevideo). Speed comes first so a benchmark is never classified as
+# platform traffic.
+ep_mihomo_scene_rules() {
+	local d
+	for d in speedtest.net fast.com speedtest.cn; do
+		printf '  - DOMAIN-SUFFIX,%s,Speed\n' "$d"
+	done
+	if [ "$(ep_bool "$(ep_get routing platform_youtube 1)")" = "1" ]; then
+		for d in youtube.com youtu.be googlevideo.com ytimg.com youtube-nocookie.com yt3.ggpht.com; do
+			printf '  - DOMAIN-SUFFIX,%s,Youtube\n' "$d"
 		done
+	fi
+	if [ "$(ep_bool "$(ep_get routing platform_netflix 1)")" = "1" ]; then
+		for d in netflix.com netflix.net nflxext.com nflximg.com nflximg.net nflxso.net nflxvideo.net; do
+			printf '  - DOMAIN-SUFFIX,%s,Netflix\n' "$d"
+		done
+	fi
+	if [ "$(ep_bool "$(ep_get routing platform_tiktok 1)")" = "1" ]; then
+		for d in tiktok.com tiktokv.com tiktokcdn.com byteoversea.com ibytedtos.com muscdn.com; do
+			printf '  - DOMAIN-SUFFIX,%s,TikTok\n' "$d"
+		done
+	fi
+	for d in openai.com chatgpt.com oaistatic.com oaiusercontent.com anthropic.com claude.ai perplexity.ai poe.com midjourney.com huggingface.co; do
+		printf '  - DOMAIN-SUFFIX,%s,AI\n' "$d"
+	done
+	printf '  - DOMAIN,gemini.google.com,AI\n'
+	printf '  - DOMAIN,aistudio.google.com,AI\n'
+	for d in github.com githubusercontent.com githubassets.com github.io; do
+		printf '  - DOMAIN-SUFFIX,%s,Github\n' "$d"
+	done
+	for d in microsoft.com live.com outlook.com msn.com bing.com windowsupdate.com office.com azure.com; do
+		printf '  - DOMAIN-SUFFIX,%s,Microsoft\n' "$d"
+	done
+	for d in apple.com icloud.com mzstatic.com cdn-apple.com; do
+		printf '  - DOMAIN-SUFFIX,%s,Apple\n' "$d"
+	done
+	for d in steamcommunity.com steamstatic.com steamcontent.com epicgames.com blizzard.com battlenet.com riotgames.com playstation.com xbox.com; do
+		printf '  - DOMAIN-SUFFIX,%s,Games\n' "$d"
+	done
+	for d in google.com googleapis.com gstatic.com googleusercontent.com gmail.com gvt1.com gvt2.com ggpht.com withgoogle.com; do
+		printf '  - DOMAIN-SUFFIX,%s,Google\n' "$d"
 	done
 }
 
@@ -125,7 +171,7 @@ ep_mihomo_rules() {
 	printf '  - IP-CIDR,127.0.0.0/8,DIRECT,no-resolve\n'
 	printf '  - IP-CIDR,100.64.0.0/10,DIRECT,no-resolve\n'
 	ep_mihomo_custom_rules
-	ep_mihomo_platform_rules
+	ep_mihomo_scene_rules
 	printf '  - GEOIP,CN,DIRECT\n'
 	printf '  - MATCH,PROXY\n'
 }
@@ -309,6 +355,11 @@ ep_mihomo_config_build() {
 		printf 'external-controller: %s\n' "$(ep_yaml_str "$controller")"
 		printf 'external-ui: ""\n'
 		printf 'unified-delay: true\n'
+		# Without this every manual selection (PROXY, a scene group, a single
+		# node) is lost on restart and silently falls back to the group's first
+		# entry - the panel would show "Netflix: 自动-日本" while traffic goes
+		# through 所有-自动.
+		printf 'store-selected: true\n'
 		printf 'tcp-concurrent: true\n'
 		printf 'geodata-loader: memconservative\n'
 		printf 'geo-auto-update: false\n'
@@ -392,6 +443,7 @@ ep_mihomo_config_build() {
 			printf '      - %s\n' "$(ep_yaml_str "$(ep_node_uniq_tag "$section")")"
 		done
 		printf '\n'
+		ep_mihomo_scene_groups "$regions"
 		printf 'rules:\n'
 		# Custom, platform, LAN, then the CN geo rule: the same precedence the
 		# sing-box writer documents, so a node behaves identically on either engine.

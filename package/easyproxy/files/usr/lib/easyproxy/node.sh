@@ -489,6 +489,90 @@ ep_clash_endpoint_exists() {
 	return 1
 }
 
+# Airport / subscription name a node came from. Empty for hand-added nodes.
+ep_node_provider() {
+	ep_get "$1" provider ''
+}
+
+# Line feature carried by the original name (IPLC / IEPL / BGP ...). Kept in the
+# display name because "日本-IPLC-01" tells a user what "日本-01" cannot: the
+# transport they are paying for.
+ep_node_feature() {
+	case "$(printf '%s' "$1" | tr 'A-Z' 'a-z')" in
+		*iplc*) printf 'IPLC' ;;
+		*iepl*) printf 'IEPL' ;;
+		*bgp*) printf 'BGP' ;;
+		*家宽*) printf '家宽' ;;
+		*专线*) printf '专线' ;;
+		*) printf '' ;;
+	esac
+}
+
+# <airport> | <region>-<feature>-<seq>   e.g.  ikuuu | 日本-IEPL-08
+# The airport prefix is what lets the panel group nodes per provider, the
+# region is what keeps the automatic per-region groups fed.
+ep_node_display_name() {
+	local region="$1" feature="$2" seq="$3" provider="$4" base
+	base="$(ep_region_label "$region")"
+	[ -n "$feature" ] && base="$base-$feature"
+	base="$base-$(printf '%02d' "$seq" 2>/dev/null || printf '%s' "$seq")"
+	if [ -n "$provider" ]; then
+		printf '%s | %s' "$provider" "$base"
+	else
+		printf '%s' "$base"
+	fi
+}
+
+# Next free sequence number inside one region, counted from the nodes that are
+# already stored. A per-region counter file would desync as soon as a node is
+# deleted, so the stored nodes are the source of truth.
+ep_node_next_seq() {
+	local region="$1" section n=0
+	for section in $(ep_node_sections); do
+		[ -n "$(ep_get "$section" type '')" ] || continue
+		[ "$(ep_node_region "$(ep_get "$section" name '')" "$(ep_get "$section" server '')")" = "$region" ] || continue
+		n=$((n + 1))
+	done
+	printf '%s' "$((n + 1))"
+}
+
+# Rename every stored node to the display template and (optionally) stamp the
+# airport name on it. Only the UCI name changes: the imported clash block has
+# its `name:` rewritten from the tag at generate time, so the raw file and its
+# filename stay untouched.
+ep_node_normalize() {
+	local force_provider="${1:-}" tmpd section region feature provider orig new seq seqf changed=0
+	tmpd="$(mktemp -d)" || { echo "cannot create a temporary directory" >&2; return 1; }
+	: > "$tmpd/plan"
+	for section in $(ep_node_sections); do
+		[ -n "$(ep_get "$section" type '')" ] || continue
+		orig="$(ep_get "$section" name '')"
+		region="$(ep_node_region "$orig" "$(ep_get "$section" server '')")"
+		feature="$(ep_node_feature "$orig")"
+		provider="$force_provider"
+		[ -n "$provider" ] || provider="$(ep_node_provider "$section")"
+		printf '%s\t%s\t%s\t%s\n' "$section" "$region" "$feature" "$provider" >> "$tmpd/plan"
+	done
+	while IFS="$(printf '\t')" read -r section region feature provider; do
+		[ -n "$section" ] || continue
+		seqf="$tmpd/seq-$region"
+		seq=$(( $(cat "$seqf" 2>/dev/null || echo 0) + 1 ))
+		printf '%s' "$seq" > "$seqf"
+		new="$(ep_node_display_name "$region" "$feature" "$seq" "$provider")"
+		orig="$(ep_get "$section" name '')"
+		if [ "$new" != "$orig" ]; then
+			uci -q set "${EP_CONFIG}.${section}.name=${new}"
+			changed=$((changed + 1))
+			printf 'renamed: %s -> %s\n' "$orig" "$new"
+		fi
+		[ -n "$force_provider" ] && uci -q set "${EP_CONFIG}.${section}.provider=${force_provider}"
+	done < "$tmpd/plan"
+	uci -q commit "$EP_CONFIG" 2>/dev/null
+	rm -rf "$tmpd"
+	printf 'normalize: %s renamed\n' "$changed"
+	[ "$changed" -ge 0 ]
+}
+
 # Read one top-level key out of a Clash proxy block (4-space indent), with the
 # surrounding quotes YAML may or may not use stripped off.
 clash_field() {
@@ -496,7 +580,7 @@ clash_field() {
 }
 
 ep_node_import_clash() {
-	local file="$1" dir tmp blocks blk name base n type server port uuid pw section raw imported skipped failed tag
+	local file="$1" provider="${2:-}" dir tmp blocks blk name base n type server port uuid pw section raw imported skipped failed tag orig region feature
 
 	[ -n "$file" ] || { echo "usage: easyproxy node import-clash <file.yaml>" >&2; return 1; }
 	[ -s "$file" ] || { echo "no such file or cannot read: $file" >&2; return 1; }
@@ -525,16 +609,21 @@ ep_node_import_clash() {
 		# 4-space indent marks a proxy's own keys; the leading "  - " of the
 		# first line is rewritten so the whole entry reads the same way.
 		sed -i -e 's/^  - /    /' "$tmp/$blk" 2>/dev/null
-		name="$(clash_field name "$tmp/$blk")"
+		orig="$(clash_field name "$tmp/$blk")"
 		type="$(clash_field type "$tmp/$blk")"
 		server="$(clash_field server "$tmp/$blk")"
 		port="$(clash_field port "$tmp/$blk")"
 		uuid="$(clash_field uuid "$tmp/$blk")"
 		pw="$(clash_field password "$tmp/$blk")"
 
-		case "$port" in ''|*[!0-9]*) failed=$((failed + 1)); echo "skip (no port): ${name:-$blk}" >&2; continue ;; esac
-		[ -n "$server" ] || { failed=$((failed + 1)); echo "skip (no server): ${name:-$blk}" >&2; continue; }
-		[ -n "$name" ] || name="$type-$port"
+		case "$port" in ''|*[!0-9]*) failed=$((failed + 1)); echo "skip (no port): ${orig:-$blk}" >&2; continue ;; esac
+		[ -n "$server" ] || { failed=$((failed + 1)); echo "skip (no server): ${orig:-$blk}" >&2; continue; }
+		# The original name is only read for its region and line feature; the
+		# stored name always follows the display template so the panel and the
+		# per-region groups speak one language.
+		region="$(ep_node_region "${orig:-$type-$port}" "$server")"
+		feature="$(ep_node_feature "${orig:-}")"
+		name="$(ep_node_display_name "$region" "$feature" "$(ep_node_next_seq "$region")" "$provider")"
 
 		# Same endpoint twice is a real duplicate. The same display name over a
 		# different server is not, so a clash gets a counter suffix instead of
@@ -565,6 +654,7 @@ ep_node_import_clash() {
 		cp "$tmp/$blk.raw" "$dir/$raw" 2>/dev/null || { failed=$((failed + 1)); continue; }
 
 		uci -q set "${EP_CONFIG}.${section}.name=${tag}"
+		[ -n "$provider" ] && uci -q set "${EP_CONFIG}.${section}.provider=${provider}"
 		uci -q set "${EP_CONFIG}.${section}.type=$(ep_clash_type "$type")"
 		uci -q set "${EP_CONFIG}.${section}.server=${server}"
 		uci -q set "${EP_CONFIG}.${section}.port=${port}"

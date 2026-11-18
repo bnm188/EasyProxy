@@ -338,7 +338,7 @@ if [ -s "$MIHOMO_YAML" ]; then
 	# nothing read them on the mihomo side: the boxes looked configured while
 	# those domains were still decided by GEOIP,CN alone. Assert they land in
 	# the YAML, and that they sit in front of the geo rule.
-	grep -q '  - DOMAIN-SUFFIX,youtube.com,PROXY' "$MIHOMO_YAML" && ok "平台规则进 YAML（YouTube）" || no "平台规则进 YAML"
+	grep -q '  - DOMAIN-SUFFIX,youtube.com,Youtube' "$MIHOMO_YAML" && ok "平台规则进 YAML（YouTube）" || no "平台规则进 YAML"
 	# status must speak for the engine that is actually selected: mihomo splits
 	# without the sing-box .srs files, so a box with nodes but no rule sets was
 	# being reported as "direct only" while every packet went through the proxy.
@@ -359,7 +359,7 @@ if [ -s "$MIHOMO_YAML" ]; then
 		*) no "摘要不会把 mihomo 误报成 direct only" "MODE=$mode_line" ;;
 	esac
 
-	grep -q '  - DOMAIN-SUFFIX,nflxvideo.net,PROXY' "$MIHOMO_YAML" && ok "平台规则进 YAML（Netflix CDN）" || no "Netflix 规则进 YAML"
+	grep -q '  - DOMAIN-SUFFIX,nflxvideo.net,Netflix' "$MIHOMO_YAML" && ok "平台规则进 YAML（Netflix CDN）" || no "Netflix 规则进 YAML"
 	LANLINE="$(grep -n 'IP-CIDR,192.168.0.0/16,DIRECT,no-resolve' "$MIHOMO_YAML" | cut -d: -f1)"
 	GEOLINE="$(grep -n 'GEOIP,CN,DIRECT' "$MIHOMO_YAML" | cut -d: -f1)"
 	if [ -n "$LANLINE" ] && [ -n "$GEOLINE" ] && [ "$LANLINE" -lt "$GEOLINE" ]; then
@@ -376,7 +376,7 @@ if [ -s "$MIHOMO_YAML" ]; then
 		grep -q '  - DOMAIN,blocked.test,REJECT' "$MIHOMO_YAML" && ok "自定义 block 映射为 REJECT" || no "block 未映射为 REJECT"
 		grep -q '  - IP-CIDR,1.2.3.0/24,PROXY,no-resolve' "$MIHOMO_YAML" && ok "自定义 IP 段带 no-resolve" || no "自定义 IP 段未进 YAML"
 		grep -q 'youtube.com,PROXY' "$MIHOMO_YAML" && no "关闭 YouTube 开关后不再有 youtube 规则" || ok "关闭 YouTube 开关后不再有 youtube 规则"
-		grep -q 'nflxvideo.net,PROXY' "$MIHOMO_YAML" && ok "关闭 YouTube 不影响 Netflix 规则" || no "Netflix 规则被误删"
+		grep -q 'nflxvideo.net,Netflix' "$MIHOMO_YAML" && ok "关闭 YouTube 不影响 Netflix 规则" || no "Netflix 规则被误删"
 	else
 		no "带自定义规则时仍能生成" "$(sh "$SB/probe-mihomo.sh" 2>&1 | tail -2)"
 	fi

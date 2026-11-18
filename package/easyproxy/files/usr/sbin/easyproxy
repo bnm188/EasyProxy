@@ -660,9 +660,15 @@ cmd_node_import() {
 }
 
 cmd_node_import_clash() {
-	local file="$1"
-	[ -n "$file" ] || { echo "usage: easyproxy node import-clash <file.yaml>" >&2; return 2; }
-	ep_node_import_clash "$file"
+	local file="$1" provider="$2"
+	[ -n "$file" ] || { echo "usage: easyproxy node import-clash <file.yaml> [airport]" >&2; return 2; }
+	ep_node_import_clash "$file" "$provider"
+}
+
+cmd_node_normalize() {
+	local provider="$1"
+	[ -n "$provider" ] && printf 'airport: %s\n' "$provider"
+	ep_node_normalize "$provider"
 }
 
 cmd_node_export() {
@@ -2043,7 +2049,8 @@ case "$CMD" in
 			show) cmd_node_list ;;
 			add) cmd_node_add "$SUB2" "$SUB3" ;;
 			import) cmd_node_import "$SUB2" "$SUB3" ;;
-			import-clash|clash-import) cmd_node_import_clash "$SUB2" ;;
+			import-clash|clash-import) cmd_node_import_clash "$SUB2" "$SUB3" ;;
+			normalize|rename) cmd_node_normalize "$SUB2" ;;
 			export|dump) cmd_node_export "$SUB2" ;;
 			enable) cmd_node_enabled "$SUB2" 1 ;;
 			disable) cmd_node_enabled "$SUB2" 0 ;;
