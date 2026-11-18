@@ -214,9 +214,79 @@ curl -x http://127.0.0.1:7890 https://www.google.com/generate_204   # 204, 0.58s
 日志确认 `Load MMDB file: /etc/easyproxy/mihomo/geoip.metadb` —— 用的是包内那份，
 没有联网下载。
 
+## Clash API 接进面板（0.8.14-9）
+
+mihomo 的 `external-controller` 是唯一能拿到「连接级」信息的地方：哪条连接、来自谁、
+实际走了哪个出站、多少字节、开了多久。sing-box 没有等价接口，所以这一段只对
+mihomo 生效，面板在别的引擎下会明说「当前引擎没有连接接口」，而不是摆一张空表。
+
+### 读取层
+
+`usr/lib/easyproxy/clash.sh`：
+
+| 函数 | 作用 |
+|---|---|
+| `ep_clash_controller` | 读 `mihomo.controller`，缺省 `127.0.0.1:9090` |
+| `ep_clash_applicable` | 只有 `main.engine=mihomo` 时返回 0 |
+| `ep_clash_get` | `curl -fsS -m 2`；`mihomo.secret` 非空才加 `Authorization: Bearer` |
+| `ep_clash_snapshot` | 输出 `api / count / up / down / memory`，不可达返回 `absent` |
+| `ep_clash_connections` | 把 `/connections` 按 `},{"` 切行，输出六列 TSV |
+
+设备上没有 `jq`（busybox 环境），解析全部走 `grep -o` + `cut`/`sed`。这决定了下面
+四个坑的形态。
+
+### 四个真机才暴露的坑
+
+**1. `--json` 被参数循环吃掉。**
+顶层 `for arg in "$@"` 把 `--json` 收进 `JSON=1`，`SUB` 于是为空，分发那行
+`cmd_connections "$SUB"` 传了空串，子命令永远走文本分支 —— 面板 `JSON.parse` 拿到的
+是一张表。`connections --json` 现在显式判断 `$JSON` 再分发，`tests/test-engine.sh`
+有两条断言守着（必须是 `{"ok":false` 开头的对象、且不能出现 `HOST` 表头）。
+
+**2. 连接时长凭空老 8 小时。**
+Clash 的 `start` 是 `2026-11-18T02:54:44.897905728Z`，末尾的 Z 是 UTC。原实现拿
+`date +%H`（本地 CST）去减，每条连接都「已经开了 28804 秒」。现在按末尾有没有 Z
+决定用不用 `date -u`：带 Z 用 UTC，不带 Z 视为本地墙钟。测试里两种时间戳各有断言，
+fixture 也必须用 `date -u` 构造，否则测的是「本地对本地」这个假通过。
+
+**3. NODE 列显示 `PROXY` 而不是节点名。**
+真机的 `chains` 是 `["11","PROXY"]` —— mihomo 从里往外写：**首项**才是真正承载这条
+流量的出站，末项是最外层的选择器组。原来取末项，等于把选择器名当节点名。
+`awk -F, '{print $1}'`，注释里写清这个顺序，免得下次又有人「顺手改成 $NF」。
+
+**4. `memory` 恒为 0。**
+`/connections` 返回 `"memory":0`，是平台没有上报，不是面板算错。CLI 保留 0 原样，
+面板显示 `—`，不显示 `0 B` —— 一个永远为 0 的仪表比一个破折号更误导。
+
+### CLI 与面板
+
+```
+easyproxy connections           # 文本表格
+easyproxy connections --json    # {"ok":true,"engine":"mihomo","connections":[...]}
+easyproxy status --json         # 多出 clash_api / connections / conn_up / conn_down / conn_memory
+```
+
+`conn_up` / `conn_down` 是 Clash 的累计计数，**引擎重启即归零**，所以面板文案写的是
+「本会话」，不冒充「今日流量」—— 今日流量仍旧走节点口径的 `traffic`。
+
+面板 `pageLive` 每 3 秒并发拉一次 `connections` 与 `status`，原地替换表格与 KPI，并用
+`document.body.contains(wrap)` 判断视图是否已经被 LuCI 拆掉，拆掉就 `clearInterval`，
+否则每进一次这个页面就多留一个定时器。
+
+### 真机结果（0.8.14-9 / -10）
+
+```
+easyproxy connections
+HOST                     SOURCE       NODE   UP     DOWN       ELAPSED
+speed.cloudflare.com     127.0.0.1    11     1778   6325650    4s
+```
+
+造流量必须限速：不限速时 30 MB 两秒下完，连接已关闭，`/connections` 自然返回空数组，
+看起来像是解析坏了。`curl --limit-rate 200k` 拉 10 MB 才能稳定拿到一条活连接。
+
 ## 尚未做完
 
-- Clash API 的 `/connections`、`/traffic` 还没接进 `easyproxy status` 与面板。
+- Clash API 的 `/traffic`、`/memory` 还没接；`/connections` 已接（见上一节）。
 - `engine use` 的切换事务（先 validate 再停旧、失败回滚）未做，现在靠人工切。
 - mihomo 的规则层只有 `GEOIP,CN,DIRECT` + `MATCH,PROXY`，sing-box 已有的
   YouTube / Netflix / TikTok 独立策略还没在这个 writer 里实现。
