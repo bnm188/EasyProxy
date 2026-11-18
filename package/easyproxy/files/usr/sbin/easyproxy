@@ -579,7 +579,7 @@ cmd_node_list() {
 			region="$(ep_node_region "$(ep_node_tag "$section")" "$(ep_get "$section" server '')")"
 			[ "$first" = "1" ] || printf ','
 			first=0
-			printf '{"section":"%s","name":"%s","type":"%s","server":"%s","port":"%s","region":"%s","group":"auto-%s","enabled":%s}' \
+			printf '{"section":"%s","name":"%s","type":"%s","server":"%s","port":"%s","region":"%s","group":"auto-%s","provider":"%s","enabled":%s}' \
 				"$(ep_json_escape "$section")" \
 				"$(ep_json_escape "$(ep_node_tag "$section")")" \
 				"$(ep_json_escape "$(ep_get "$section" type '')")" \
@@ -587,6 +587,7 @@ cmd_node_list() {
 				"$(ep_json_escape "$(ep_get "$section" port '')")" \
 				"$(ep_json_escape "$region")" \
 				"$region" \
+				"$(ep_json_escape "$(ep_node_provider "$section")")" \
 				"$([ "$(ep_get "$section" enabled 1)" = "1" ] && printf 'true' || printf 'false')"
 		done
 		printf '],"groups":['

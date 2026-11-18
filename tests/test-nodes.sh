@@ -194,6 +194,15 @@ json_py "import json;d=json.load(open('$SB/list.json'));print(sorted(g['tag'] fo
 json_py "import json;d=json.load(open('$SB/list.json'));print([n['group'] for n in d['nodes'] if n['name']=='hk-04'][0])" > "$SB/n3"
 [ "$(cat "$SB/n3")" = "auto-hk" ] && ok "单节点也能报出所属分组" || no "单节点也能报出所属分组" "$(cat "$SB/n3")"
 
+# The panel groups nodes per airport; if the field never reaches the JSON the
+# "按机场分组" control has nothing to group by and renders empty.
+HKSEC="$(sh -c ". '$SB/usr/lib/easyproxy/common.sh'; . '$SB/usr/lib/easyproxy/node.sh'; ep_node_resolve hk-04")"
+uci -q set "easyproxy.$HKSEC.provider=我的机场" >/dev/null 2>&1
+uci -q commit easyproxy >/dev/null 2>&1
+"$EP" node list --json > "$SB/list2.json" 2>/dev/null
+json_py "import json;d=json.load(open('$SB/list2.json'));print(sorted(n.get('provider','') for n in d['nodes'] if n['name']=='hk-04'))" > "$SB/n4"
+grep -q "我的机场" "$SB/n4" && ok "JSON 带出机场名" || no "JSON 带出机场名" "$(cat "$SB/n4")"
+
 # --- 5b. region fallback: a renamed node must still find its group ----------
 reg() { sh -c ". '$SB/usr/lib/easyproxy/common.sh'; ep_node_region \"$1\" \"$2\""; }
 r="$(reg "11" "3.d.s.p.r.x.0.8.d.jp01-ae5.entry.v51124-4.qpon")"
