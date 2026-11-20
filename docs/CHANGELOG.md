@@ -1,7 +1,17 @@
 # 更新日志
 
-版本号格式：`PKG_VERSION-PKG_RELEASE`，当前基线 `0.8.14-30`。
+版本号格式：`PKG_VERSION-PKG_RELEASE`，当前基线 `0.8.14-31`。
 未归档到具体版本的早期条目见仓库 `git log`。
+
+---
+
+## 0.8.14-31（打包清单修复）
+
+### 构建
+- 修复 Makefile 安装清单仍引用旧 LuCI 页面（proxy.js / connect.js / dns.js）导致 CI 构建失败的问题
+- 同步新增页面 split.js / nodes.js / kernel.js / dnsnet.js / monitor.js / update.js 的打包
+- 补齐 policy.sh / stats.sh / mihomo.sh / clash.sh / adapters/mihomo.sh 进包
+- 新增 usr/bin/easyproxy-api 进包（Go 后端骨架）
 
 ---
 

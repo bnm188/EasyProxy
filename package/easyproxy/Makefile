@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=easyproxy
 PKG_VERSION:=0.8.14
-PKG_RELEASE:=30
+PKG_RELEASE:=31
 
 PKG_LICENSE:=MIT
 PKG_MAINTAINER:=EasyProxy Contributors
@@ -89,8 +89,15 @@ define Package/easyproxy/install
 	$(INSTALL_DATA) ./files/usr/lib/easyproxy/maint.sh $(1)/usr/lib/easyproxy/maint.sh
 	$(INSTALL_DATA) ./files/usr/lib/easyproxy/traffic.sh $(1)/usr/lib/easyproxy/traffic.sh
 	$(INSTALL_DATA) ./files/usr/lib/easyproxy/subscribe.sh $(1)/usr/lib/easyproxy/subscribe.sh
+	$(INSTALL_DATA) ./files/usr/lib/easyproxy/clash.sh $(1)/usr/lib/easyproxy/clash.sh
+	$(INSTALL_DATA) ./files/usr/lib/easyproxy/mihomo.sh $(1)/usr/lib/easyproxy/mihomo.sh
+	$(INSTALL_DATA) ./files/usr/lib/easyproxy/policy.sh $(1)/usr/lib/easyproxy/policy.sh
+	$(INSTALL_DATA) ./files/usr/lib/easyproxy/stats.sh $(1)/usr/lib/easyproxy/stats.sh
 	$(INSTALL_DATA) ./files/usr/lib/easyproxy/adapters/dae.sh $(1)/usr/lib/easyproxy/adapters/dae.sh
 	$(INSTALL_DATA) ./files/usr/lib/easyproxy/adapters/sing-box.sh $(1)/usr/lib/easyproxy/adapters/sing-box.sh
+	$(INSTALL_DATA) ./files/usr/lib/easyproxy/adapters/mihomo.sh $(1)/usr/lib/easyproxy/adapters/mihomo.sh
+	$(INSTALL_DIR) $(1)/usr/bin
+	$(INSTALL_BIN) ./files/usr/bin/easyproxy-api $(1)/usr/bin/easyproxy-api
 	$(INSTALL_DIR) $(1)/usr/share/easyproxy
 	$(INSTALL_DATA) ./files/usr/share/easyproxy/easyproxy.default $(1)/usr/share/easyproxy/easyproxy.default
 	$(INSTALL_DIR) $(1)/www/luci-static/resources/easyproxy
@@ -98,10 +105,13 @@ define Package/easyproxy/install
 	$(INSTALL_DATA) ./files/www/luci-static/resources/easyproxy/ubus.js $(1)/www/luci-static/resources/easyproxy/ubus.js
 	$(INSTALL_DIR) $(1)/www/luci-static/resources/view/easyproxy
 	$(INSTALL_DATA) ./files/www/luci-static/resources/view/easyproxy/overview.js $(1)/www/luci-static/resources/view/easyproxy/overview.js
-	$(INSTALL_DATA) ./files/www/luci-static/resources/view/easyproxy/proxy.js $(1)/www/luci-static/resources/view/easyproxy/proxy.js
-	$(INSTALL_DATA) ./files/www/luci-static/resources/view/easyproxy/connect.js $(1)/www/luci-static/resources/view/easyproxy/connect.js
-	$(INSTALL_DATA) ./files/www/luci-static/resources/view/easyproxy/dns.js $(1)/www/luci-static/resources/view/easyproxy/dns.js
+	$(INSTALL_DATA) ./files/www/luci-static/resources/view/easyproxy/split.js $(1)/www/luci-static/resources/view/easyproxy/split.js
+	$(INSTALL_DATA) ./files/www/luci-static/resources/view/easyproxy/nodes.js $(1)/www/luci-static/resources/view/easyproxy/nodes.js
+	$(INSTALL_DATA) ./files/www/luci-static/resources/view/easyproxy/kernel.js $(1)/www/luci-static/resources/view/easyproxy/kernel.js
+	$(INSTALL_DATA) ./files/www/luci-static/resources/view/easyproxy/dnsnet.js $(1)/www/luci-static/resources/view/easyproxy/dnsnet.js
+	$(INSTALL_DATA) ./files/www/luci-static/resources/view/easyproxy/monitor.js $(1)/www/luci-static/resources/view/easyproxy/monitor.js
 	$(INSTALL_DATA) ./files/www/luci-static/resources/view/easyproxy/settings.js $(1)/www/luci-static/resources/view/easyproxy/settings.js
+	$(INSTALL_DATA) ./files/www/luci-static/resources/view/easyproxy/update.js $(1)/www/luci-static/resources/view/easyproxy/update.js
 	$(INSTALL_DIR) $(1)/usr/share/luci/menu.d
 	$(INSTALL_DATA) ./files/usr/share/luci/menu.d/luci-app-easyproxy.json $(1)/usr/share/luci/menu.d/luci-app-easyproxy.json
 	$(INSTALL_DIR) $(1)/usr/share/rpcd/acl.d
