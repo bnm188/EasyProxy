@@ -1,11 +1,11 @@
 # 更新日志
 
-版本号格式：`PKG_VERSION-PKG_RELEASE`，当前基线 `0.8.14-31`。
+版本号格式：`PKG_VERSION-PKG_RELEASE`，当前基线 `0.8.15-1`。
 未归档到具体版本的早期条目见仓库 `git log`。
 
 ---
 
-## 0.8.14-31（打包清单修复）
+## 0.8.15-1（打包清单修复）
 
 ### 构建
 - 修复 Makefile 安装清单仍引用旧 LuCI 页面（proxy.js / connect.js / dns.js）导致 CI 构建失败的问题
