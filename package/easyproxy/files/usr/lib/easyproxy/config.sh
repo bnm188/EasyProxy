@@ -314,6 +314,87 @@ ep_singbox_scene_groups() {
 	done
 }
 
+# --- policy layer (13 fixed business groups) -------------------------------
+# The layer only switches on once an operator has assigned at least one node:
+# an install that never opens the policy page renders byte-for-byte the same
+# config as the region-group layout.
+ep_policy_layer_active() {
+	type ep_policy_active >/dev/null 2>&1 || return 1
+	ep_policy_active
+}
+
+ep_policy_outbound_tag() {
+	printf 'policy-%s' "$1"
+}
+
+# One outbound per non-direct group. A group with no member still has to exist,
+# because a rule may point at it before the operator assigns anything: it
+# degrades to a one-option selector onto its fallback (or direct), which keeps
+# the config valid and the traffic flowing instead of failing the engine.
+ep_singbox_policy_groups() {
+	local key mode fb tag ftag members n first
+	for key in $(ep_policy_keys_sorted); do
+		mode="$(ep_policy_get "$key" mode selector)"
+		[ "$mode" = "direct" ] && continue
+		tag="$(ep_policy_outbound_tag "$key")"
+		fb="$(ep_policy_get "$key" fallback '')"
+		members=""
+		first=1
+		for n in $(ep_policy_members "$key"); do
+			[ "$first" = "1" ] || members="$members, "
+			first=0
+			members="$members\"$(ep_json_escape "$(ep_node_uniq_tag "$n")")\""
+		done
+		if [ -z "$members" ]; then
+			if [ -n "$fb" ] && [ "$fb" != "$key" ]; then
+				ftag="$(ep_policy_outbound_tag "$fb")"
+				printf '    { "type": "selector", "tag": "%s", "outbounds": ["%s"], "default": "%s" },\n' \
+					"$tag" "$ftag" "$ftag"
+			else
+				printf '    { "type": "selector", "tag": "%s", "outbounds": ["direct"], "default": "direct" },\n' \
+					"$tag"
+			fi
+			continue
+		fi
+		if [ "$mode" = "urltest" ]; then
+			printf '    { "type": "urltest", "tag": "%s", "outbounds": [%s], "url": "http://www.gstatic.com/generate_204", "interval": "5m", "tolerance": 50 },\n' \
+				"$tag" "$members"
+			continue
+		fi
+		printf '    { "type": "selector", "tag": "%s", "outbounds": [%s' "$tag" "$members"
+		if [ -n "$fb" ] && [ "$fb" != "$key" ]; then
+			printf ', "%s"' "$(ep_policy_outbound_tag "$fb")"
+		fi
+		printf ', "direct"], "default": "%s" },\n' \
+			"$(ep_json_escape "$(ep_node_uniq_tag "$(ep_policy_members "$key" | sed -n 1p)")")"
+	done
+}
+
+# Rules for every group that owns domains or CIDRs of its own. Speed produces
+# none by definition, 国内 keeps the existing geosite/geoip path, 国外 is
+# emitted by the caller as an inverted CN rule and 其他 is the route final,
+# so all three are skipped here.
+ep_singbox_policy_rules() {
+	local key mode target domains cidrs
+	for key in $(ep_policy_keys_sorted); do
+		case "$key" in speed|china|foreign|other) continue ;; esac
+		mode="$(ep_policy_get "$key" mode selector)"
+		if [ "$mode" = "direct" ]; then
+			target="direct"
+		else
+			target="$(ep_policy_outbound_tag "$key")"
+		fi
+		domains="$(ep_policy_domains_json "$key")"
+		cidrs="$(ep_policy_cidrs_json "$key")"
+		if [ "$domains" != "[]" ]; then
+			printf '      { "domain_suffix": %s, "outbound": "%s" }\n' "$domains" "$target"
+		fi
+		if [ "$cidrs" != "[]" ]; then
+			printf '      { "ip_cidr": %s, "outbound": "%s" }\n' "$cidrs" "$target"
+		fi
+	done
+}
+
 # The panel talks to one controller regardless of which kernel is running; the
 # engines are mutually exclusive so sharing the port is safe.
 ep_singbox_controller() {
@@ -593,7 +674,13 @@ ep_config_build() {
 	fi
 
 	case "$mode" in
-		split) final="$proxy" ;;
+		split)
+			if ep_policy_layer_active; then
+				final="$(ep_policy_outbound_tag other)"
+			else
+				final="$proxy"
+			fi
+			;;
 		*) final="direct" ;;
 	esac
 
@@ -703,6 +790,9 @@ ep_config_build() {
 			done
 			printf '], "default": "auto-%s" },\n' "$default_region"
 			ep_singbox_scene_groups "$regions"
+			if ep_policy_layer_active; then
+				ep_singbox_policy_groups
+			fi
 		fi
 		printf '    { "type": "direct", "tag": "direct" }'
 		if [ "$(ep_custom_uses_block)" = "1" ]; then
@@ -744,9 +834,23 @@ ep_config_build() {
 			if [ -n "$custom_rules" ]; then
 				printf ',\n%s' "$custom_rules"
 			fi
-			platform_rules="$(ep_singbox_scene_rules)"
-			if [ -n "$platform_rules" ]; then
-				printf ',\n%s' "$platform_rules"
+			if ep_policy_layer_active; then
+				policy_rules="$(ep_singbox_policy_rules)"
+				if [ -n "$policy_rules" ]; then
+					printf ',\n%s' "$policy_rules"
+				fi
+				# 国外: everything the CN rule sets do not claim leaves through
+				# that group, which is what makes it a real "rest of the world"
+				# fallback instead of an empty selector.
+				if [ -n "$(ep_policy_nodes foreign)" ]; then
+					printf ',\n      { "rule_set": ["geosite-cn", "geoip-cn"], "invert": true, "outbound": "%s" }' \
+						"$(ep_policy_outbound_tag foreign)"
+				fi
+			else
+				platform_rules="$(ep_singbox_scene_rules)"
+				if [ -n "$platform_rules" ]; then
+					printf ',\n%s' "$platform_rules"
+				fi
 			fi
 		fi
 		if [ "$split" = "1" ]; then

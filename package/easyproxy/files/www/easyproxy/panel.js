@@ -26,14 +26,21 @@ const ICONS = {
 
 const PAGES = [
 	{ id: 'overview', name: '概览', icon: 'overview', sub: '运行状态与实时指标' },
-	{ id: 'nodes', name: '节点中心', icon: 'nodes', sub: '节点、订阅与测速' },
-	{ id: 'routing', name: '智能分流', icon: 'routing', sub: '出口选择与分流策略' },
-	{ id: 'dns', name: 'DNS 与网络', icon: 'dns', sub: 'DNS 策略与网络参数' },
-	{ id: 'kernel', name: '内核管理', icon: 'kernel', sub: 'sing-box / mihomo 引擎' },
-	{ id: 'monitor', name: '连接与监控', icon: 'monitor', sub: '实时连接与日志' },
-	{ id: 'settings', name: '系统设置', icon: 'settings', sub: '密码、端口与备份' },
-	{ id: 'update', name: '更新与诊断', icon: 'update', sub: '版本、校验与自检' },
+	{ id: 'routing', name: '分流', icon: 'routing', sub: '13 个业务分组、内置规则与全局出口' },
+	{ id: 'nodes', name: '节点', icon: 'nodes', sub: '节点、订阅与测速' },
+	{ id: 'network', name: '网络', icon: 'dns', sub: 'DNS 策略、端口、实时连接与日志' },
+	{ id: 'system', name: '系统', icon: 'settings', sub: '内核、密码、运行参数与自检' },
 ];
+
+/* 旧路由兼容：历史链接里的旧 id 映射到新的 5 项 */
+const PAGE_ALIAS = {
+	groups: 'routing',
+	dns: 'network',
+	monitor: 'network',
+	kernel: 'system',
+	settings: 'system',
+	update: 'system',
+};
 
 const S = {
 	version: '—',
@@ -118,7 +125,7 @@ function tickClock() {
 /* ---------------- 主题 ---------------- */
 function initTheme() {
 	let t = localStorage.getItem('ep.theme');
-	if (!t) t = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+	if (!t) t = 'dark';
 	document.documentElement.setAttribute('data-theme', t);
 }
 function toggleTheme() {
@@ -158,12 +165,14 @@ function markActive(id) {
 }
 
 function go(id) {
+	id = PAGE_ALIAS[id] || id;
 	if (!PAGES.some((p) => p.id === id)) id = 'overview';
 	location.hash = '#/' + id;
 }
 
 function currentPage() {
-	const h = location.hash.replace('#/', '');
+	let h = location.hash.replace('#/', '');
+	h = PAGE_ALIAS[h] || h;
 	return PAGES.some((p) => p.id === h) ? h : 'overview';
 }
 
@@ -232,11 +241,21 @@ function pageOverview() {
 	kpi.id = 'kpiGrid';
 	wrap.appendChild(kpi);
 
-	// 3 实时速率 + 内核状态
-	const row = el('div', 'grid g2');
-	row.style.marginTop = '0';
-	row.innerHTML = ''
-		+ '<div class="card">'
+	// 3 一键体检：出口 + 站点 + 节点，一次点击直接给结论
+	const health = el('div', 'card');
+	health.innerHTML = ''
+		+ '<div class="card-head"><div class="card-title">一键体检</div>'
+		+ '<div class="card-note" id="healthNote">自动判定，不用自己对着数字猜</div></div>'
+		+ '<div class="hp-actions">'
+		+ '  <button class="btn primary sm" id="hpRun">开始体检</button>'
+		+ '  <span class="hp-hint">出口策略 · 站点连通 · 节点可用性</span>'
+		+ '</div>'
+		+ '<div id="healthBody" class="hp-body"><div class="hp-idle">还没体检 · 点上方按钮开始</div></div>';
+	wrap.appendChild(health);
+
+	// 4 实时速率（节点出口口径）
+	const rate = el('div', 'card');
+	rate.innerHTML = ''
 		+ '  <div class="card-head"><div class="card-title">实时速率</div><div class="card-note">节点出口口径 · 每 1.5 秒采样</div></div>'
 		+ '  <div class="rate-row">'
 		+ '    <div class="rate-cell"><div class="kpi-label">实时下行</div>'
@@ -247,28 +266,12 @@ function pageOverview() {
 		+ '      <div class="bar"><div class="bar-fill" id="liveUpb"></div></div></div>'
 		+ '  </div>'
 		+ '  <div class="spark" id="rateSpark"></div>'
-		+ '  <div class="kpi-foot" id="liveFoot">下行近 60 秒走势</div>'
-		+ '</div>'
-		+ '<div class="card">'
-		+ '  <div class="card-head"><div class="card-title">内核状态</div><div class="card-note" id="kernNote">—</div></div>'
-		+ '  <div id="kernBox"></div>'
-		+ '</div>';
-	wrap.appendChild(row);
-
-	// 4 站点连通性（既有真实检测，保留在底部）
-	const sites = el('div', 'card');
-	sites.style.marginTop = '0';
-	sites.innerHTML = ''
-		+ '<div class="card-head"><div class="card-title">站点连通性</div>'
-		+ '<div class="card-note" id="siteNote">本机出口检测</div></div>'
-		+ '<div id="siteList" class="skeleton">检测中…</div>'
-		+ '<div style="margin-top:12px"><button class="btn sm" id="reSite">重新检测</button></div>';
-	wrap.appendChild(sites);
+		+ '  <div class="kpi-foot" id="liveFoot">下行近 60 秒走势</div>';
+	wrap.appendChild(rate);
 
 	setTimeout(() => {
 		renderVitals();
-		$('#reSite').onclick = checkSites;
-		checkSites();
+		$('#hpRun').onclick = runHealth;
 	}, 0);
 
 	return wrap;
@@ -288,7 +291,6 @@ function renderVitals() {
 	renderStrip();
 	renderKpi();
 	renderLive();
-	renderKernelBox();
 }
 
 /* 实时运行状态条 */
@@ -438,9 +440,79 @@ async function checkSites() {
 		+ '</tbody></table>';
 }
 
-/* =================================================================
-   页面：节点中心
-   ================================================================= */
+/* ---------------- 一键体检 ---------------- */
+async function runHealth() {
+	const btn = $('#hpRun');
+	const body = $('#healthBody');
+	const note = $('#healthNote');
+	if (!body || !btn) return;
+	btn.disabled = true;
+	btn.textContent = '体检中…';
+	body.innerHTML = '<div class="hp-idle">正在检测出口、站点与节点…</div>';
+
+	const [site, group, clash] = await Promise.all([api('sites'), api('group'), api('clash-proxies')]);
+
+	const exitName = (group.ok && group.data && group.data.now) || '—';
+	const isDirect = /^(DIRECT|直连|direct)$/i.test(exitName);
+
+	const sites = (site.ok && site.data) || [];
+	const siteOk = sites.filter((x) => String(x.code) === '200' || String(x.code) === '204').length;
+
+	const proxies = (clash.ok && clash.data && clash.data.proxies) || {};
+	const nodeDelay = (p) => {
+		let h = p && p.history;
+		if ((!h || !h.length) && p && p.extra) {
+			for (const k in p.extra) {
+				if (p.extra[k] && p.extra[k].history && p.extra[k].history.length) { h = p.extra[k].history; break; }
+			}
+		}
+		if (!h || !h.length) return -1;
+		const last = h[h.length - 1];
+		return (last && typeof last.delay === 'number' && last.delay > 0) ? last.delay : -1;
+	};
+	let nTotal = 0, nAlive = 0;
+	for (const k in proxies) {
+		const p = proxies[k];
+		if (!p || !p.type) continue;
+		if (isGroupType(p.type) || isBuiltinType(p.type)) continue;
+		nTotal++;
+		const d = nodeDelay(p);
+		if (d > 0 && d < 5000) nAlive++;
+	}
+
+	let verdict, vcls;
+	if (isDirect) {
+		verdict = '全局出口是「直连」，代理实际未生效，流量仍走本地网络。';
+		vcls = 'warn';
+	} else if (nAlive === 0) {
+		verdict = '出口节点全部无响应，当前无法通过代理出网。';
+		vcls = 'bad';
+	} else if (siteOk === 0) {
+		verdict = '节点在线但站点全部超时：多为节点对目标段封锁，或 DNS 解析已失效。';
+		vcls = 'bad';
+	} else if (siteOk < sites.length) {
+		verdict = '代理链路可用：' + siteOk + '/' + sites.length + ' 个站点可达，其余超时需单独排查。';
+		vcls = 'warn';
+	} else {
+		verdict = '正常：出口 ' + exitName + '，' + siteOk + '/' + sites.length + ' 站点可达，' + nAlive + ' 个节点在线。';
+		vcls = 'ok';
+	}
+
+	body.innerHTML = ''
+		+ '<div class="hp-row"><span class="hp-k">全局出口</span>'
+		+ '<span class="hp-v ' + (isDirect ? 'bad' : 'ok') + '">' + esc(exitName) + '</span></div>'
+		+ '<div class="hp-row"><span class="hp-k">节点可用</span>'
+		+ '<span class="hp-v' + (nAlive === 0 ? ' bad' : '') + '">' + nAlive + ' / ' + nTotal + '</span></div>'
+		+ '<div class="hp-sites">'
+		+ sites.map((x) => '<span class="hp-site ' + ((String(x.code) === '200' || String(x.code) === '204') ? 'ok' : 'bad')
+			+ '">' + esc(x.host) + '<em>' + esc(x.code) + '</em></span>').join('')
+		+ '</div>'
+		+ '<div class="hp-verdict ' + vcls + '">' + esc(verdict) + '</div>';
+
+	if (note) note.textContent = '体检完成 · ' + fmtTime(new Date());
+	btn.disabled = false;
+	btn.textContent = '重新体检';
+}
 const REGION_NAME = {
 	jp: '日本', hk: '香港', tw: '台湾', sg: '新加坡', kr: '韩国',
 	us: '美国', ru: '俄罗斯', de: '德国', it: '意大利', cn: '中国', gb: '英国', fr: '法国',
@@ -509,6 +581,15 @@ function pageNodes() {
 	wrap.style.gap = '12px';
 	wrap.innerHTML = ''
 		+ '<div class="card">'
+		+ '  <div class="card-head"><div class="card-title">订阅导入</div><div class="card-note">Clash / v2ray 订阅链接 · 换订阅先来这里</div></div>'
+		+ '  <input class="input" id="subUrl" placeholder="https://…（订阅地址，含 token 请自行保管）">'
+		+ '  <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">'
+		+ '    <button class="btn primary sm" id="subImport">导入为节点</button>'
+		+ '    <button class="btn sm" id="subPreviewNote">说明</button>'
+		+ '  </div>'
+		+ '  <div class="notice" style="margin-top:12px">导入后会替换同名节点，订阅 token 不会出现在面板任何位置。</div>'
+		+ '</div>'
+		+ '<div class="card">'
 		+ '  <div class="card-head"><div class="card-title">节点中心</div><div class="card-note" id="grpMeta">读取中…</div></div>'
 		+ '  <div class="pmtabs" id="pmtabs"></div>'
 		+ '  <div class="ntools">'
@@ -522,15 +603,6 @@ function pageNodes() {
 		+ '<div class="card">'
 		+ '  <div class="card-head"><div class="card-title">节点开关</div><div class="card-note">启用 / 停用，修改后自动重载配置</div></div>'
 		+ '  <div id="nodeAdvList" class="skeleton">读取中…</div>'
-		+ '</div>'
-		+ '<div class="card">'
-		+ '  <div class="card-head"><div class="card-title">订阅导入</div><div class="card-note">Clash / v2ray 订阅链接</div></div>'
-		+ '  <input class="input" id="subUrl" placeholder="https://…（订阅地址，含 token 请自行保管）">'
-		+ '  <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">'
-		+ '    <button class="btn primary sm" id="subImport">导入为节点</button>'
-		+ '    <button class="btn sm" id="subPreviewNote">说明</button>'
-		+ '  </div>'
-		+ '  <div class="notice" style="margin-top:12px">导入后会替换同名节点，订阅 token 不会出现在面板任何位置。</div>'
 		+ '</div>';
 
 	setTimeout(() => {
@@ -880,15 +952,35 @@ function pageRouting() {
 	wrap.style.gap = '12px';
 	wrap.innerHTML = ''
 		+ '<div class="card">'
-		+ '  <div class="card-head"><div class="card-title">出口选择</div><div class="card-note" id="grpNow">—</div></div>'
+		+ '  <div class="grp-tools">'
+		+ '    <span class="grp-sum" id="grpSum">读取中…</span>'
+		+ '    <div class="grp-grow"></div>'
+		+ '    <input class="input grp-search" id="grpSearch" placeholder="搜索分组或节点">'
+		+ '    <button class="btn sm" id="grpTestBtn">一键测速</button>'
+		+ '    <button class="btn sm" id="grpReload">刷新</button>'
+		+ '  </div>'
+		+ '</div>'
+		+ '<div id="grpGrid" class="skeleton">读取分组…</div>'
+		+ '<div class="card">'
+		+ '  <div class="card-head"><div class="card-title">全局出口</div><div class="card-note" id="grpNow">—</div></div>'
 		+ '  <div id="groupBox" class="skeleton">读取中…</div>'
 		+ '</div>'
 		+ '<div class="card">'
-		+ '  <div class="card-head"><div class="card-title">分流策略</div><div class="card-note">只读展示 · 修改走系统设置</div></div>'
+		+ '  <div class="card-head"><div class="card-title">分流策略</div><div class="card-note">只读展示</div></div>'
 		+ '  <div id="policyBox" class="skeleton">读取中…</div>'
 		+ '</div>';
 
-	setTimeout(() => { loadGroup(); loadPolicy(); }, 0);
+	setTimeout(() => {
+		loadGroups();
+		loadGroup();
+		loadPolicy();
+		const q = $('#grpSearch');
+		if (q) q.oninput = () => renderGroupCards();
+		const t = $('#grpTestBtn');
+		if (t) t.onclick = () => runGroupTest(null, t);
+		const r = $('#grpReload');
+		if (r) r.onclick = () => { GP.open = null; GP.loaded = false; loadGroups(); };
+	}, 0);
 	return wrap;
 }
 
@@ -1100,7 +1192,7 @@ function pageMonitor() {
 	wrap.style.gap = '12px';
 	wrap.innerHTML = ''
 		+ '<div class="card">'
-		+ '  <div class="card-head"><div class="card-title">连接与监控</div><div class="card-note" id="wkMeta">读取中…</div></div>'
+		+ '  <div class="card-head"><div class="card-title">连接与日志</div><div class="card-note" id="wkMeta">读取中…</div></div>'
 		+ '  <div class="pmtabs" id="wktabs"></div>'
 		+ '  <div id="wkTools" class="ntools"></div>'
 		+ '  <div id="wkBody" class="skeleton">读取中…</div>'
@@ -1366,39 +1458,80 @@ function renderRuleBody() {
 /* =================================================================
    页面：系统设置
    ================================================================= */
-function pageSettings() {
+function pageSystem() {
 	const wrap = el('div');
 	wrap.style.display = 'grid';
 	wrap.style.gap = '12px';
 	wrap.innerHTML = ''
 		+ '<div class="card">'
-		+ '  <div class="card-head"><div class="card-title">管理密码</div><div class="card-note">仅用于本面板登录</div></div>'
+		+ '  <div class="card-head"><div class="card-title">内核</div><div class="card-note" id="kernNote">—</div></div>'
+		+ '  <div id="kernBox" class="skeleton">读取中…</div>'
+		+ '  <div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap">'
+		+ '    <button class="btn sm primary" data-act="start">启动</button>'
+		+ '    <button class="btn sm" data-act="restart">重启</button>'
+		+ '    <button class="btn sm danger" data-act="stop">停止</button>'
+		+ '  </div>'
+		+ '</div>'
+		+ '<div class="card">'
+		+ '  <div class="card-head"><div class="card-title">内核切换</div><div class="card-note">切换会重写配置并重启</div></div>'
+		+ '  <div class="group-members" id="engineList"></div>'
+		+ '  <div class="notice" style="margin-top:12px">sing-box 与 mihomo 共用同一份节点数据；dae 为可选内核，未安装时不可选。</div>'
+		+ '</div>'
+		+ '<div class="card">'
+		+ '  <div class="card-head"><div class="card-title">管理密码</div><div class="card-note">仅用于本面板登录，改完需重新登录</div></div>'
 		+ '  <div class="auth-field"><label>当前密码</label><input class="input" id="pwOld" type="password" autocomplete="current-password"></div>'
 		+ '  <div class="auth-field"><label>新密码（6 位以上）</label><input class="input" id="pwNew" type="password" autocomplete="new-password"></div>'
-		+ '  <button class="btn primary sm" id="pwSave" style="margin-top:4px">保存新密码</button>'
+		+ '  <div style="display:flex;gap:8px;margin-top:6px;flex-wrap:wrap">'
+		+ '    <button class="btn primary sm" id="pwSave">保存新密码</button>'
+		+ '    <button class="btn sm danger" id="doLogout">退出登录</button>'
+		+ '  </div>'
 		+ '</div>'
 		+ '<div class="card">'
-		+ '  <div class="card-head"><div class="card-title">运行参数</div><div class="card-note">只读展示</div></div>'
-		+ '  <div id="setBox" class="skeleton">读取中…</div>'
+		+ '  <div class="card-head"><div class="card-title">运行参数</div><div class="card-note" id="sysNote">只读展示</div></div>'
+		+ '  <div id="sysBox" class="skeleton">读取中…</div>'
 		+ '</div>'
 		+ '<div class="card">'
-		+ '  <div class="card-head"><div class="card-title">设备</div><div class="card-note" id="devNote">—</div></div>'
-		+ '  <div class="row"><div class="row-main"><div class="row-title">面板端口</div><div class="row-sub">独立进程，与 LuCI(80) 互不影响</div></div><span class="pill">8090</span></div>'
-+ '  <div style="margin-top:12px"><button class="btn sm danger" id="doLogout">退出登录</button></div>'
+		+ '  <div class="card-head"><div class="card-title">运行自检</div><div class="card-note">只读，不改配置</div></div>'
+		+ '  <button class="btn sm" id="docBtn">运行 easyproxy doctor</button>'
+		+ '  <div id="docBox" class="skeleton" style="margin-top:12px">点上方按钮开始</div>'
 		+ '</div>';
 
 	setTimeout(() => {
+		renderKernel();
+		$('#kernBox').parentNode.querySelectorAll('[data-act]').forEach((b) => {
+			b.onclick = async () => {
+				const act = b.dataset.act;
+				if (act === 'stop' && !confirm('停止内核会中断当前代理，确定？')) return;
+				b.disabled = true;
+				const r = await api('engine', { action: act });
+				b.disabled = false;
+				if (!r.ok) { toast(r.error || '操作失败'); return; }
+				toast('已' + ({ start: '启动', stop: '停止', restart: '重启' })[act]);
+				setTimeout(async () => { await pullStatus(); renderKernel(); }, 2500);
+			};
+		});
+		loadEngines();
 		const s = S.status || {};
-		$('#setBox').className = '';
-		$('#setBox').innerHTML = rowsHtml([
-			['开机自启', s.enabled ? '已启用' : '未启用'],
-			['管理端口', '8090'],
-			['代理端口', String(s.listen_port || '—')],
-			['版本', S.version],
-		]);
-		$('#devNote').textContent = S.host;
+		const box = $('#sysBox');
+		if (box) {
+			box.className = '';
+			box.innerHTML = rowsHtml([
+				['版本', S.version],
+				['主机', S.host],
+				['面板端口', '8090'],
+				['面板后端', s.panel_backend || 'lighttpd + CGI'],
+				['代理端口', String(s.listen_port || '—')],
+				['开机自启', s.enabled ? '已启用' : '未启用'],
+				['包状态', s.stage ? '阶段 ' + s.stage : '—'],
+				['内核', s.engine || '—'],
+				['节点', (s.nodes_enabled || 0) + ' / ' + (s.nodes || 0) + ' 启用'],
+			]);
+		}
+		const note = $('#sysNote');
+		if (note) note.textContent = 'EasyProxy ' + S.version;
 		$('#pwSave').onclick = savePw;
 		$('#doLogout').onclick = logout;
+		$('#docBtn').onclick = runDoctor;
 	}, 0);
 	return wrap;
 }
@@ -1420,37 +1553,6 @@ async function savePw() {
 /* =================================================================
    页面：更新与诊断
    ================================================================= */
-function pageUpdate() {
-	const wrap = el('div');
-	wrap.style.display = 'grid';
-	wrap.style.gap = '12px';
-	wrap.innerHTML = ''
-		+ '<div class="card">'
-		+ '  <div class="card-head"><div class="card-title">版本</div><div class="card-note" id="verNote">—</div></div>'
-		+ '  <div id="verBox" class="skeleton">读取中…</div>'
-		+ '</div>'
-		+ '<div class="card">'
-		+ '  <div class="card-head"><div class="card-title">运行自检</div><div class="card-note">只读，不改配置</div></div>'
-		+ '  <button class="btn sm" id="docBtn">运行 easyproxy doctor</button>'
-		+ '  <div id="docBox" class="skeleton" style="margin-top:12px">点上方按钮开始</div>'
-		+ '</div>';
-
-	setTimeout(() => {
-		const s = S.status || {};
-		$('#verBox').className = '';
-		$('#verBox').innerHTML = rowsHtml([
-			['版本', S.version],
-			['包状态', s.stage ? '阶段 ' + s.stage : '—'],
-			['内核', s.engine || '—'],
-			['节点', (s.nodes_enabled || 0) + ' / ' + (s.nodes || 0) + ' 启用'],
-			['主机', S.host],
-		]);
-		$('#verNote').textContent = 'EasyProxy ' + S.version;
-		$('#docBtn').onclick = runDoctor;
-	}, 0);
-	return wrap;
-}
-
 async function runDoctor() {
 	const box = $('#docBox');
 	box.className = 'skeleton';
@@ -1470,13 +1572,10 @@ async function logout() {
 
 const RENDER = {
 	overview: pageOverview,
-	nodes: pageNodes,
 	routing: pageRouting,
-	dns: pageDns,
-	kernel: pageKernel,
-	monitor: pageMonitor,
-	settings: pageSettings,
-	update: pageUpdate,
+	nodes: pageNodes,
+	network: pageNetwork,
+	system: pageSystem,
 };
 
 async function render() {
@@ -1497,7 +1596,7 @@ function stopPageTimers() {
 function onStatus() {
 	const id = currentPage();
 	if (id === 'overview') { renderVitals(); }
-	else if (id === 'kernel') { renderKernel(); }
+	else if (id === 'system') { renderKernel(); }
 }
 
 function boot() {
@@ -1592,4 +1691,242 @@ async function enterApp() {
 	render();
 }
 
+
+/* =================================================================
+   业务分组（13 个固定组）—— 配置层，区别于 Clash API 的运行时策略组
+   ================================================================= */
+const GP = { list: [], nodes: [], test: {}, open: null, loaded: false };
+
+async function loadGroups() {
+	const [l, n] = await Promise.all([api('policy-list'), api('nodes')]);
+	if (!l || !l.ok) { toast((l && l.error) || '分组读取失败'); return; }
+	GP.list = l.data || [];
+	GP.nodes = (n && n.ok && n.data && n.data.nodes) || [];
+	GP.loaded = true;
+	renderGroupCards();
+}
+
+function groupBy(key) { return GP.list.find((g) => g.key === key); }
+
+function latOf(section) {
+	const t = GP.test[section];
+	if (!t) return null;
+	if (t.quarantined) return { cls: 'bad', txt: '已隔离' };
+	if (t.latency_ms) return { cls: t.latency_ms < 250 ? 'ok' : '', txt: t.latency_ms + ' ms' };
+	return { cls: 'bad', txt: '超时 ' + (t.fails || 0) };
+}
+
+function groupModeText(mode) {
+	return mode === 'urltest' ? '自动' : mode === 'selector' ? '手动' : '直连';
+}
+
+function groupCard(g) {
+	const editing = GP.open === g.key;
+	const mode = groupModeText(g.mode);
+	const empty = !editing && !g.count;
+	const fbLabel = g.fallback ? (((GP.list.find((x) => x.key === g.fallback)) || {}).label || g.fallback) : '—';
+	let dots;
+	if (editing) dots = '';
+	else if (empty) dots = '<div class="pgnowline">未分配节点 · 兜底：' + esc(fbLabel)
+		+ ' · 规则 ' + (g.rules ? g.rules.length : 0) + ' 条</div>';
+	else dots = '<div class="pgnowline">兜底：' + esc(fbLabel)
+		+ ' · 规则 ' + (g.rules ? g.rules.length : 0) + ' 条 · 节点 ' + g.count + ' 个</div>';
+	const body = editing ? groupEditor(g) : (empty ? '' : groupPreview(g));
+	return '<div class="pgcard' + (editing ? ' wide' : '') + (empty ? ' empty' : '') + '" data-key="' + esc(g.key) + '">'
+		+ '<div class="pghead">'
+		+ '<span class="pgdot ' + (g.mode === 'urltest' ? 'a' : 'm') + '"></span>'
+		+ '<span class="pgname">' + esc(g.label) + '</span>'
+		+ '<span class="pgtype">' + mode + ' · ' + g.count + '</span>'
+		+ '<button class="btn sm pgbtn" data-edit="' + esc(g.key) + '">' + (editing ? '收起' : '配置') + '</button>'
+		+ '</div>' + dots + body + '</div>';
+}
+
+function groupPreview(g) {
+	if (!g.nodes || !g.nodes.length) {
+		let hint = '未分配节点';
+		if (g.mode === 'direct') hint = '未分配节点，流量直连';
+		else if (g.fallback) {
+			const fb = GP.list.find((x) => x.key === g.fallback);
+			hint = '未分配节点，流量走' + (fb ? fb.label : g.fallback);
+		}
+		return '<div class="pgbody"><div class="pempty">' + esc(hint) + '</div></div>';
+	}
+	const rows = g.nodes.slice(0, 3).map((n, i) => {
+		const lat = latOf(n.section);
+		return '<div class="prow"><span class="pidx">' + (i + 1) + '</span>'
+			+ '<span class="pnm">' + esc(n.name) + '</span>'
+			+ '<span class="plat ' + (lat ? lat.cls : '') + '">' + (lat ? lat.txt : '—') + '</span></div>';
+	}).join('');
+	const more = g.nodes.length > 3 ? '<button class="pgmore" data-edit="' + esc(g.key) + '">展开全部 ' + g.nodes.length + ' 项</button>' : '';
+	return '<div class="pgbody">' + rows + '</div>' + more;
+}
+
+function groupEditor(g) {
+	const fbOpts = ['<option value="none"' + (!g.fallback ? ' selected' : '') + '>不使用兜底</option>']
+		.concat(GP.list.filter((x) => x.key !== g.key).map((x) =>
+			'<option value="' + esc(x.key) + '"' + (g.fallback === x.key ? ' selected' : '') + '>' + esc(x.label) + '</option>').join(''))
+		.join('');
+	const members = GP.nodes.map((n) => {
+		const on = (g.nodes || []).some((m) => m.section === n.section);
+		const lat = latOf(n.section);
+		return '<label class="grp-member"><input type="checkbox" data-bind="' + esc(g.key) + '" data-sec="' + esc(n.section) + '"'
+			+ (on ? ' checked' : '') + (n.enabled ? '' : ' disabled') + '>'
+			+ '<span class="nm">' + esc(n.name) + '</span>'
+			+ '<span class="lat ' + (lat ? lat.cls : '') + '">' + (n.enabled ? (lat ? lat.txt : '—') : '已停用') + '</span></label>';
+	}).join('') || '<div class="pempty">还没有节点，请先在节点中心导入</div>';
+
+	const rules = (g.rules || []).map((r) =>
+		'<div class="grp-rule"><span class="tag">' + esc(r.type) + '</span>'
+		+ '<span class="v">' + esc(r.value) + '</span>'
+		+ '<button class="btn sm" data-rule-del="' + esc(r.section || '') + '">删除</button></div>').join('')
+		|| '<div class="pempty">还没有自定义规则</div>';
+
+	return '<div class="grp-edit">'
+		+ '<div class="grp-row"><label>模式</label>'
+		+ '<select class="input sm" data-opt="mode" data-key="' + esc(g.key) + '">'
+		+ ['urltest', 'selector', 'direct'].filter((m) => g.key !== 'speed' || m === 'selector')
+			.map((m) => '<option value="' + m + '"' + (g.mode === m ? ' selected' : '') + '>' + groupModeText(m) + '</option>').join('')
+		+ '</select>'
+		+ '<label>兜底出站</label>'
+		+ '<select class="input sm" data-opt="fallback" data-key="' + esc(g.key) + '">' + fbOpts + '</select>'
+		+ '<label class="grp-chk"><input type="checkbox" data-opt="builtin" data-key="' + esc(g.key) + '"'
+		+ (g.builtin === '1' ? ' checked' : '') + '> 启用内置规则</label>'
+		+ '<button class="btn sm" data-test="' + esc(g.key) + '">测速本组</button>'
+		+ '</div>'
+		+ '<div class="grp-col"><div class="grp-label">成员节点（勾选即绑定，可多组共存）</div>'
+		+ '<div class="grp-members">' + members + '</div></div>'
+		+ '<div class="grp-col"><div class="grp-label">自定义规则</div>'
+		+ '<div class="grp-rules">' + rules + '</div>'
+		+ '<div class="grp-add">'
+		+ '<select class="input sm" id="ruleType-' + esc(g.key) + '">'
+		+ '<option value="domain-suffix">域名后缀</option><option value="domain">精确域名</option>'
+		+ '<option value="domain-keyword">域名关键字</option><option value="ip-cidr">IP 段</option></select>'
+		+ '<input class="input sm" id="ruleVal-' + esc(g.key) + '" placeholder="例如 example.com">'
+		+ '<button class="btn sm" data-rule-add="' + esc(g.key) + '">添加</button>'
+		+ '</div></div>'
+		+ '</div>';
+}
+
+/* 分组按性质分三段摆：业务组 / 通用组 / 特殊组 */
+const GP_SECTIONS = [
+	{ id: 'biz', title: '业务组', note: '命中服务规则后走本组出口；未分配时规则不接管', keys: ['netflix', 'youtube', 'tiktok', 'ai', 'disney', 'google', 'telegram', 'apple', 'games'] },
+	{ id: 'gen', title: '通用组', note: '没命中具体服务时的兜底出口', keys: ['foreign', 'other'] },
+	{ id: 'spec', title: '特殊组', note: '测速与直连，不参与业务分流', keys: ['speed', 'china'] },
+];
+
+function renderGroupCards() {
+	const box = $('#grpGrid');
+	if (!box) return;
+	const q = ($('#grpSearch') ? $('#grpSearch').value.trim().toLowerCase() : '');
+	const all = GP.list;
+	const sum = $('#grpSum');
+	if (sum) {
+		const used = all.filter((g) => g.count > 0).length;
+		sum.textContent = '共 ' + all.length + ' 组 · 已分配 ' + used + ' · 空置 ' + (all.length - used);
+	}
+	const list = all.filter((g) => !q || g.label.toLowerCase().indexOf(q) >= 0 || g.key.indexOf(q) >= 0);
+	if (!list.length) { box.className = 'skeleton'; box.textContent = '没有匹配的分组'; return; }
+
+	const known = GP_SECTIONS.reduce((a, s) => a.concat(s.keys), []);
+	const rest = list.filter((g) => known.indexOf(g.key) < 0);
+	const html = GP_SECTIONS.map((sec) => {
+		const items = list.filter((g) => sec.keys.indexOf(g.key) >= 0);
+		if (!items.length) return '';
+		return '<div class="pgsec">'
+			+ '<div class="pgsec-head"><span class="pgsec-title">' + esc(sec.title) + '</span>'
+			+ '<span class="pgsec-note">' + esc(sec.note) + '</span></div>'
+			+ '<div class="pggrid">' + items.map(groupCard).join('') + '</div></div>';
+	}).join('')
+			+ (rest.length ? '<div class="pgsec"><div class="pgsec-head"><span class="pgsec-title">其他</span>'
+				+ '<span class="pgsec-note">未归类的分组</span></div><div class="pggrid">' + rest.map(groupCard).join('') + '</div></div>' : '');
+
+	box.className = '';
+	box.innerHTML = html;
+
+	box.querySelectorAll('[data-edit]').forEach((b) => {
+		b.onclick = () => { GP.open = GP.open === b.dataset.edit ? null : b.dataset.edit; renderGroupCards(); };
+	});
+	box.querySelectorAll('[data-bind]').forEach((c) => {
+		c.onchange = async () => {
+			const cmd = c.checked ? 'policy-bind' : 'policy-unbind';
+			const r = await api(cmd, { key: c.dataset.bind, nodes: c.dataset.sec });
+			if (!r.ok) { toast(r.error || '操作失败'); c.checked = !c.checked; return; }
+			await refreshOne(c.dataset.bind);
+		};
+	});
+	box.querySelectorAll('[data-opt]').forEach((c) => {
+		c.onchange = async () => {
+			const opt = c.dataset.opt;
+			const val = opt === 'builtin' ? (c.checked ? '1' : '0') : c.value;
+			const r = await api('policy-set', { key: c.dataset.key, option: opt, value: val });
+			if (!r.ok) toast(r.error || '保存失败');
+			await refreshOne(c.dataset.key);
+		};
+	});
+	box.querySelectorAll('[data-rule-add]').forEach((b) => {
+		b.onclick = async () => {
+			const key = b.dataset.ruleAdd;
+			const t = $('#ruleType-' + key);
+			const v = $('#ruleVal-' + key);
+			if (!v || !v.value.trim()) { toast('请填写规则值'); return; }
+			const r = await api('policy-rule-add', { key, type: t.value, value: v.value.trim() });
+			if (!r.ok) { toast(r.error || '添加失败'); return; }
+			v.value = '';
+			await refreshOne(key);
+		};
+	});
+	box.querySelectorAll('[data-rule-del]').forEach((b) => {
+		b.onclick = async () => {
+			const sec = b.dataset.ruleDel;
+			const r = await api('policy-rule-del', { section: sec });
+			if (!r.ok) { toast(r.error || '删除失败'); return; }
+			await loadGroups();
+		};
+	});
+	box.querySelectorAll('[data-test]').forEach((b) => {
+		b.onclick = () => runGroupTest(b.dataset.test, b);
+	});
+}
+
+async function refreshOne(key) {
+	const r = await api('policy-show', { key });
+	if (r.ok && r.data) {
+		const i = GP.list.findIndex((g) => g.key === key);
+		if (i >= 0) {
+			GP.list[i] = Object.assign({}, r.data, { count: (r.data.nodes || []).length });
+		}
+	}
+	renderGroupCards();
+}
+
+async function runGroupTest(key, btn) {
+	if (btn) { btn.disabled = true; btn.textContent = '测速中…'; }
+	const r = await api('policy-test');
+	if (btn) { btn.disabled = false; btn.textContent = '测速本组'; }
+	if (!r || !r.ok) { toast((r && r.error) || '测速失败'); return; }
+	GP.test = {};
+	(r.nodes || []).forEach((n) => { GP.test[n.section] = n; });
+	const total = r.total || 0;
+	const reach = r.reachable || 0;
+	toast('测速完成：' + reach + '/' + total + ' 可达');
+	renderGroupCards();
+}
+
+/* =================================================================
+   页面：网络（DNS + 端口 + 实时连接/日志/路由）
+   ================================================================= */
+function pageNetwork() {
+	const wrap = el('div');
+	wrap.style.display = 'grid';
+	wrap.style.gap = '12px';
+	const a = pageDns();
+	const b = pageMonitor();
+	while (a.firstChild) wrap.appendChild(a.firstChild);
+	while (b.firstChild) wrap.appendChild(b.firstChild);
+	return wrap;
+}
+
+/* =================================================================
+   页面：系统（密码 + 运行参数 + 设备 + 版本 + 自检）
+   ================================================================= */
 document.addEventListener('DOMContentLoaded', boot);

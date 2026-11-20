@@ -110,6 +110,151 @@ ep_mihomo_scene_groups() {
 	done
 }
 
+# 13 个固定业务组：mihomo 侧的等价实现。策略层一旦有成员，就取代场景组；
+# 没有成员时完全保持原有的 auto-<region> + scene 结构，老配置行为不变。
+ep_mihomo_policy_active() {
+	type ep_policy_active >/dev/null 2>&1 && ep_policy_active
+}
+
+# 全部启用节点段。平台组没有在面板里显式绑定时，共享同一个节点池，
+# 行为对齐 Open-Box：分组只决定走哪条规则，节点池对所有平台组一致。
+ep_mihomo_all_nodes() {
+	local s
+	for s in $(ep_node_sections); do
+		[ "$(ep_get "$s" enabled 1)" = "1" ] || continue
+		printf '%s\n' "$s"
+	done
+}
+
+ep_mihomo_policy_groups() {
+	ep_mihomo_policy_active || return 0
+	local key mode tag section n members
+	for key in $(ep_policy_keys_sorted); do
+		mode="$(ep_policy_get "$key" mode selector)"
+		# A direct group carries no outbound of its own: its rules point at
+		# DIRECT, so declaring a proxy-group for it would be dead weight.
+		[ "$mode" = "direct" ] && continue
+		printf '  - name: policy-%s\n' "$key"
+		if [ "$mode" = "urltest" ]; then
+			printf '    type: url-test\n'
+			printf '    url: http://www.gstatic.com/generate_204\n'
+			printf '    interval: 300\n'
+			printf '    tolerance: 100\n'
+		else
+			printf '    type: select\n'
+		fi
+		printf '    proxies:\n'
+		n=0
+		members="$(ep_policy_members "$key")"
+		[ -z "$members" ] && members="$(ep_mihomo_all_nodes)"
+		for section in $members; do
+			tag="$(ep_node_uniq_tag "$section")"
+			printf '      - %s\n' "$(ep_yaml_str "$tag")"
+			n=$((n + 1))
+		done
+		# 选择器组始终保留直连选项，便于手动切断某条分流；
+		# 节点池也为空时，兜底给 DIRECT，保证组是合法组、内核能启动。
+		if [ "$mode" = "selector" ]; then
+			printf '      - DIRECT\n'
+		elif [ "$n" -eq 0 ]; then
+			printf '      - DIRECT\n'
+		fi
+		printf '\n'
+	done
+}
+
+# geosite.dat 只有随包或运维手动放进来时才有；没有就退回纯域名规则，
+# 绝不能让内核因为缺数据起不来。
+ep_mihomo_has_geosite() {
+	[ -f "$(ep_mihomo_home)/geosite.dat" ]
+}
+
+# 平台组 -> geosite 类目名。一个类目能顶掉几十条域名，且随上游自动更新。
+ep_mihomo_geosite_name() {
+	case "$1" in
+		ai) printf 'category-ai-!cn\n' ;;
+		youtube) printf 'youtube\n' ;;
+		tiktok) printf 'tiktok\n' ;;
+		netflix) printf 'netflix\n' ;;
+		disney) printf 'disney\n' ;;
+		google) printf 'google\n' ;;
+		telegram) printf 'telegram\n' ;;
+		apple) printf 'apple\n' ;;
+		games) printf 'steam\nsony\n' ;;
+		foreign) printf 'gfw\n' ;;
+		china) printf 'cn\n' ;;
+		*) return 0 ;;
+	esac
+}
+
+# Speed 组自带的测速/查 IP 站点。这些必须钉死在测速组：
+# 落到别的组测出来的就不是测速组出口的数值。
+ep_mihomo_speed_targets() {
+	printf '%s\n' \
+		'speed.cloudflare.com' 'challenges.cloudflare.com' \
+		'yalala.com' 'whois.pconline.com.cn' 'ipip.net' 'b0.upaiyun.com' \
+		'asn247.net' 'astrill.org' 'ipinfo.io' 'vultr.com' 'test-ipv6.com' \
+		'ipw.cn' 'ipcheck.im' 'speedcheck.org' 'speedtest.net' 'speedtest.cn' \
+		'ustc.edu.cn' 'dnscheck.tools' 'whoer.net' 'browserleaks.com' \
+		'browserleaks.org' 'browserleaks.net' 'dnsleaktest.org' '1-b.net' \
+		'workers.dev' 'jsonp-ip.com' 'sspanel.net' 'dnsleaktest.com' \
+		'browserscan.net' 'surfshark.com' 'surfsharkdns.com' 'ip-api.com' \
+		'ipleak.net' 'ip-score.com' '888005.xyz' 'incolumitas.com' \
+		'null-addr.com' 'null-addr.net' 'null-addr.org' 'null-addr.biz' \
+		'null-addr.info' 'addr.tools' 'ifconfig.me' 'ip125.com' 'skk.moe' \
+		'ip111.cn' 'ping0.cc' 'ip.sb' 'ipify.org' 'whoer.com' \
+		'whatismyip.com.tw' 'whatismyip.com' 'whoisip.me' 'ipaddress.me' \
+		'ip2proxy.com' 'vpnapi.io' 'l.google.com'
+}
+
+# 测速组自己的规则块。规则无条件生成：组空时内核会自动给空组补 DIRECT，
+# 规则指向它不会崩，反而能保证测速站永远被这个组认领。
+ep_mihomo_speed_rules() {
+	local d
+	for d in $(ep_mihomo_speed_targets); do
+		[ -n "$d" ] || continue
+		printf '  - DOMAIN-SUFFIX,%s,policy-speed\n' "$d"
+	done
+}
+
+# Rules for the fixed groups. Same precedence the sing-box writer documents:
+# LAN and custom rules first, then the narrower platform groups, then China.
+# speed/china/foreign/other are handled by the caller, not here.
+ep_mihomo_policy_rules() {
+	ep_mihomo_policy_active || return 0
+	local key kind val tag d g
+	for key in $(ep_policy_keys_sorted); do
+		case "$key" in
+			speed|china|foreign|other) continue ;;
+		esac
+		tag="policy-$key"
+		# geosite 类目在前：命中面比内置域名宽，后面的域名只作兜底
+		if ep_mihomo_has_geosite; then
+			for g in $(ep_mihomo_geosite_name "$key"); do
+				[ -n "$g" ] || continue
+				printf '  - GEOSITE,%s,%s\n' "$g" "$tag"
+			done
+		fi
+		if [ "$(ep_policy_get "$key" builtin 1)" = "1" ]; then
+			for d in $(ep_policy_builtin_domains "$key"); do
+				[ -n "$d" ] || continue
+				printf '  - DOMAIN-SUFFIX,%s,%s\n' "${d#.}" "$tag"
+			done
+		fi
+		for val in $(ep_policy_rules "$key"); do
+			kind="${val%%:*}"
+			val="${val#*:}"
+			[ -n "$val" ] || continue
+			case "$kind" in
+				domain-suffix) printf '  - DOMAIN-SUFFIX,%s,%s\n' "$val" "$tag" ;;
+				domain) printf '  - DOMAIN,%s,%s\n' "$val" "$tag" ;;
+				domain-keyword) printf '  - DOMAIN-KEYWORD,%s,%s\n' "$val" "$tag" ;;
+				ip-cidr) printf '  - IP-CIDR,%s,%s,no-resolve\n' "$val" "$tag" ;;
+			esac
+		done
+	done
+}
+
 # Domains per scene, matched by suffix. Order matters: the narrower scene wins,
 # so AI sits in front of Google (gemini.google.com) and Youtube in front of
 # Google (googlevideo). Speed comes first so a benchmark is never classified as
@@ -138,17 +283,41 @@ ep_mihomo_rules() {
 		printf '  - MATCH,DIRECT\n'
 		return 0
 	fi
-	# LAN traffic reaches the mixed inbound from other hosts on the box, and it
-	# must never leave through the proxy.
+	# 私网流量从别的机器进混合端口时绝不能出代理
 	printf '  - IP-CIDR,192.168.0.0/16,DIRECT,no-resolve\n'
 	printf '  - IP-CIDR,10.0.0.0/8,DIRECT,no-resolve\n'
 	printf '  - IP-CIDR,172.16.0.0/12,DIRECT,no-resolve\n'
 	printf '  - IP-CIDR,127.0.0.0/8,DIRECT,no-resolve\n'
 	printf '  - IP-CIDR,100.64.0.0/10,DIRECT,no-resolve\n'
+	# NTP 走直连，避免时间同步被分流拖住
+	printf '  - AND,((NETWORK,UDP),(DST-PORT,123)),DIRECT\n'
+	# QUIC 一律拒绝：让浏览器/App 回退 TCP，UDP 流量不进代理，
+	# 少了 QUIC 这一路，分流判定和节点吞吐都稳得多。
+	printf '  - AND,((NETWORK,UDP),(DST-PORT,443)),REJECT\n'
 	ep_mihomo_custom_rules
-	ep_mihomo_scene_rules
-	printf '  - GEOIP,CN,DIRECT\n'
-	printf '  - MATCH,PROXY\n'
+	if ep_mihomo_policy_active; then
+		# 顺序就是优先级：测速 -> 平台组 -> 国外兜底 -> 国内直连 -> 其他
+		ep_mihomo_speed_rules
+		ep_mihomo_policy_rules
+		# 国外：没被上面任何平台组认领的非中国流量都归这里
+		if [ -n "$(ep_policy_members foreign)" ]; then
+			if ep_mihomo_has_geosite; then
+				printf '  - GEOSITE,gfw,policy-foreign\n'
+			fi
+			printf '  - GEOIP,CN,DIRECT\n'
+			printf '  - MATCH,policy-foreign\n'
+		else
+			printf '  - GEOIP,CN,DIRECT\n'
+			printf '  - MATCH,policy-other\n'
+		fi
+	else
+		ep_mihomo_scene_rules
+		if ep_mihomo_has_geosite; then
+			printf '  - GEOSITE,cn,DIRECT\n'
+		fi
+		printf '  - GEOIP,CN,DIRECT\n'
+		printf '  - MATCH,PROXY\n'
+	fi
 }
 
 
@@ -339,10 +508,21 @@ ep_mihomo_config_build() {
 		printf 'geodata-loader: memconservative\n'
 		printf 'geo-auto-update: false\n'
 		printf '\n'
+		# fake-ip：国外域名不在本地解析，把域名透传给节点由远端解析，
+		# 本地 DNS 污染就绕开了。redir-host 会把污染结果当真实 IP 去连。
 		printf 'dns:\n'
 		printf '  enable: true\n'
 		printf '  ipv6: false\n'
-		printf '  enhanced-mode: redir-host\n'
+		printf '  enhanced-mode: fake-ip\n'
+		printf '  fake-ip-range: 198.18.0.1/16\n'
+		printf '  fake-ip-filter:\n'
+		printf '    - "*.lan"\n'
+		printf '    - "*.local"\n'
+		printf '    - "localhost.ptlogin2.qq.com"\n'
+		printf '    - "+.msftconnecttest.com"\n'
+		printf '    - "+.msftncsi.com"\n'
+		printf '    - "time.*.com"\n'
+		printf '    - "ntp.*.com"\n'
 		printf '  nameserver:\n'
 		for ns in $(ep_mihomo_nameservers); do
 			printf '    - %s\n' "$(ep_yaml_str "$ns")"
@@ -418,7 +598,11 @@ ep_mihomo_config_build() {
 			printf '      - %s\n' "$(ep_yaml_str "$(ep_node_uniq_tag "$section")")"
 		done
 		printf '\n'
-		ep_mihomo_scene_groups "$regions"
+		if ep_mihomo_policy_active; then
+			ep_mihomo_policy_groups
+		else
+			ep_mihomo_scene_groups "$regions"
+		fi
 		printf 'rules:\n'
 		# Custom, platform, LAN, then the CN geo rule: the same precedence the
 		# sing-box writer documents, so a node behaves identically on either engine.

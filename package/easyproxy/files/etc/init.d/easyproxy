@@ -14,6 +14,20 @@ USE_PROCD=1
 EP_MIHOMO_LIB="${EP_MIHOMO_LIB:-/usr/lib/easyproxy/mihomo.sh}"
 [ -r "$EP_MIHOMO_LIB" ] && . "$EP_MIHOMO_LIB"
 
+# 概览采样：每分钟一次，落盘到 /etc/easyproxy/stats/（rr.jsonl / daily.csv）
+# 幂等写入 crontab，重启 cron 使新行生效。
+ep_stats_cron() {
+	local line
+	line='* * * * * /usr/lib/easyproxy/stats.sh >/dev/null 2>&1'
+	mkdir -p /etc/crontabs 2>/dev/null
+	if [ -f /etc/crontabs/root ]; then
+		grep -v 'easyproxy/stats\.sh' /etc/crontabs/root > /etc/crontabs/root.tmp 2>/dev/null
+		mv /etc/crontabs/root.tmp /etc/crontabs/root 2>/dev/null
+	fi
+	printf '%s\n' "$line" >> /etc/crontabs/root
+	/etc/init.d/cron restart >/dev/null 2>&1 || /etc/init.d/crond restart >/dev/null 2>&1 || true
+}
+
 start_service() {
 	local enabled engine binary
 	enabled="$(ep_bool "$(ep_get main enabled 0)")"
@@ -40,6 +54,7 @@ start_service() {
 	procd_close_instance
 
 	ep_log "instance handed to procd (engine: $engine)"
+	ep_stats_cron
 
 	# Capture is only switched on once the engine is actually up: a tproxy rule
 	# with no listener black-holes LAN traffic, so a failed start must leave

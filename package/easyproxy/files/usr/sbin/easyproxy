@@ -23,6 +23,10 @@ EP_NODE_LIB="${EP_NODE_LIB:-/usr/lib/easyproxy/node.sh}"
 # Maintenance (backup / restore / reset, rule-set update, doctor, log rotate)
 EP_MAINT_LIB="${EP_MAINT_LIB:-/usr/lib/easyproxy/maint.sh}"
 [ -r "$EP_MAINT_LIB" ] && . "$EP_MAINT_LIB"
+# Policy groups (13 fixed business groups, operator-assigned membership).
+# Best-effort: an older layout without the file must not break status/start.
+EP_POLICY_LIB="${EP_POLICY_LIB:-/usr/lib/easyproxy/policy.sh}"
+[ -r "$EP_POLICY_LIB" ] && . "$EP_POLICY_LIB"
 
 PROG="easyproxy"
 SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
@@ -47,6 +51,15 @@ Usage:
   easyproxy group list [--json]    Show the PROXY selector: current pick and members
   easyproxy group use <member>     Point PROXY at a member (node or auto-<region>)
   easyproxy group set <g> <member> Point any selector group at a member
+  easyproxy policy list [--json]   13 fixed business groups and their members
+  easyproxy policy show <key>      One group: members, built-in and custom rules
+  easyproxy policy set <key> <label|mode|fallback|builtin|sort> <value>
+  easyproxy policy bind <key> <node...>    Assign nodes (a node may join several)
+  easyproxy policy unbind <key> <node...>  Remove nodes from a group
+  easyproxy policy rule list <key> [--json]
+  easyproxy policy rule add <key> <type:value>
+  easyproxy policy rule del <section>
+  easyproxy policy test [--json]   Shared probe: one measurement per node
   easyproxy rule list [--json]     List custom split rules
   easyproxy rule add <type:value:outbound>
   easyproxy rule del <index>
@@ -1999,6 +2012,176 @@ cmd_subscribe() {
 	return $rc
 }
 
+
+# ---- policy groups (13 fixed business groups) --------------------------
+# Membership is operator-assigned and never inferred from the node name, so
+# a subscription refresh cannot re-file nodes behind the operator's back.
+
+cmd_policy_list() {
+	local key label mode fb sort count n first=1
+	ep_policy_ensure
+	if [ "$JSON" = "1" ]; then
+		printf '{"ok":true,"data":['
+	else
+		printf '%-10s %-12s %-9s %-9s %5s\n' "KEY" "LABEL" "MODE" "FALLBACK" "NODES"
+	fi
+	for key in $(ep_policy_keys_sorted); do
+		label="$(ep_policy_get "$key" label "$key")"
+		mode="$(ep_policy_get "$key" mode selector)"
+		fb="$(ep_policy_get "$key" fallback '')"
+		sort="$(ep_policy_get "$key" sort 99)"
+		count=0
+		for n in $(ep_policy_nodes "$key"); do count=$((count + 1)); done
+		if [ "$JSON" = "1" ]; then
+			[ "$first" = "1" ] || printf ','
+			first=0
+			printf '{"key":"%s","label":"%s","mode":"%s","fallback":"%s","sort":"%s","count":%s,"nodes":%s}' \
+				"$(ep_json_escape "$key")" "$(ep_json_escape "$label")" \
+				"$(ep_json_escape "$mode")" "$(ep_json_escape "$fb")" \
+				"$sort" "$count" "$(ep_policy_nodes_json "$key")"
+		else
+			printf '%-10s %-12s %-9s %-9s %5s\n' "$key" "$label" "$mode" "${fb:--}" "$count"
+		fi
+	done
+	if [ "$JSON" = "1" ]; then printf ']}\n'; fi
+	return 0
+}
+
+cmd_policy_show() {
+	local key="$1" label mode fb sort
+	ep_policy_key_valid "$key" || { echo "unknown policy: $key" >&2; return 2; }
+	ep_policy_ensure
+	label="$(ep_policy_get "$key" label "$key")"
+	mode="$(ep_policy_get "$key" mode selector)"
+	fb="$(ep_policy_get "$key" fallback '')"
+	sort="$(ep_policy_get "$key" sort 99)"
+	if [ "$JSON" = "1" ]; then
+		printf '{"ok":true,"data":{"key":"%s","label":"%s","mode":"%s","fallback":"%s","sort":"%s","builtin":"%s","nodes":%s,"rules":%s,"domains":%s,"cidrs":%s}}\n' \
+			"$(ep_json_escape "$key")" "$(ep_json_escape "$label")" \
+			"$(ep_json_escape "$mode")" "$(ep_json_escape "$fb")" "$sort" \
+			"$(ep_policy_get "$key" builtin 0)" \
+			"$(ep_policy_nodes_json "$key")" \
+			"$(ep_policy_rules_json "$key")" \
+			"$(ep_policy_domains_json "$key")" \
+			"$(ep_policy_cidrs_json "$key")"
+		return 0
+	fi
+	printf 'Key:      %s\nLabel:    %s\nMode:     %s\nFallback: %s\nSort:     %s\n' \
+		"$key" "$label" "$mode" "${fb:--}" "$sort"
+	printf 'Nodes:'
+	for n in $(ep_policy_nodes "$key"); do printf ' %s' "$n"; done
+	printf '\nRules:\n'
+	ep_policy_rules "$key" | sed 's/^/  /'
+	return 0
+}
+
+cmd_policy_set() {
+	local key="$1" opt="$2" value="$3"
+	ep_policy_key_valid "$key" || { echo "unknown policy: $key" >&2; return 2; }
+	[ -n "$opt" ] || { echo "usage: easyproxy policy set <key> <label|mode|fallback|builtin|sort> <value>" >&2; return 2; }
+	case "$opt" in
+		label|fallback|builtin|sort|mode) ;;
+		*) echo "unknown option: $opt (label|mode|fallback|builtin|sort)" >&2; return 2 ;;
+	esac
+	if [ "$opt" = "mode" ]; then
+		case "$value" in
+			urltest|selector|direct) ;;
+			*) echo "mode must be urltest, selector or direct" >&2; return 2 ;;
+		esac
+	fi
+	if [ "$opt" = "fallback" ] && [ "$value" = "none" ]; then
+		uci -q delete "easyproxy.$(ep_policy_section "$key").fallback"
+	else
+		uci -q set "easyproxy.$(ep_policy_section "$key").$opt=$value"
+	fi
+	uci -q commit easyproxy
+	return 0
+}
+
+cmd_policy_bind() {
+	local key="$1"; shift
+	[ -n "$key" ] || { echo "usage: easyproxy policy bind <key> <node...>" >&2; return 2; }
+	ep_policy_ensure
+	added="$(ep_policy_bind "$key" "$@")" || return 1
+	printf 'bound: %s new member(s), %s total\n' "$added" \
+		"$(for n in $(ep_policy_nodes "$key"); do printf x; done | wc -c | tr -d ' ')"
+	return 0
+}
+
+cmd_policy_unbind() {
+	local key="$1"; shift
+	[ -n "$key" ] || { echo "usage: easyproxy policy unbind <key> <node...>" >&2; return 2; }
+	removed="$(ep_policy_unbind "$key" "$@")" || return 1
+	printf 'unbound: %s member(s)\n' "$removed"
+	return 0
+}
+
+cmd_policy_rule() {
+	local action="$1" key="$2" typevalue="$3" value="$4"
+	case "$action" in
+		list)
+			[ -n "$key" ] || { echo "usage: easyproxy policy rule list <key>" >&2; return 2; }
+			if [ "$JSON" = "1" ]; then
+				printf '{"ok":true,"data":%s}\n' "$(ep_policy_rules_json "$key")"
+			else
+				ep_policy_rules "$key"
+			fi
+			;;
+		add)
+			case "$typevalue" in
+				*:*) type="${typevalue%%:*}"; value="${typevalue#*:}" ;;
+				*) echo "usage: easyproxy policy rule add <key> <type:value>" >&2; return 2 ;;
+			esac
+			section="$(ep_policy_rule_add "$key" "$type" "$value")" || return 1
+			printf '%s\n' "$section"
+			;;
+		del|delete|rm)
+			ep_policy_rule_del "$key" || return 1
+			printf 'deleted: %s\n' "$key"
+			;;
+		*) echo "usage: easyproxy policy rule list|add|del ..." >&2; return 2 ;;
+	esac
+	return 0
+}
+
+cmd_policy_test() {
+	local node probe state ms smooth count=0 reach=0 first=1 fails
+	ep_policy_test_run || return 1
+	if [ "$JSON" = "1" ]; then
+		printf '{"ok":true,"nodes":['
+	else
+		printf '%-24s %-12s %8s %6s\n' "NODE" "STATE" "LATENCY" "FAILS"
+	fi
+	for node in $(ep_policy_all_bound_nodes); do
+		probe="$(ep_policy_test_state "$node")"
+		set -- $probe
+		state="$1"; ms="$2"; fails="$3"; smooth="$4"
+		count=$((count + 1))
+		[ "$state" = "reachable" ] && reach=$((reach + 1))
+		if [ "$JSON" = "1" ]; then
+			[ "$first" = "1" ] || printf ','
+			first=0
+			printf '{"section":"%s","name":"%s","state":"%s","latency_ms":%s,"fails":%s,"smooth_ms":%s,"quarantined":%s}' \
+				"$(ep_json_escape "$node")" "$(ep_json_escape "$(ep_node_tag "$node")")" \
+				"$(ep_json_escape "$state")" \
+				"$([ "$ms" = "-" ] && printf 'null' || printf '%s' "$ms")" \
+				"$fails" \
+				"$([ "$smooth" = "-" ] && printf 'null' || printf '%s' "$smooth")" \
+				"$(ep_policy_node_quarantined "$node" && printf 'true' || printf 'false')"
+		else
+			printf '%-24s %-12s %8s %6s\n' \
+				"$(ep_node_tag "$node")" "$state" \
+				"$([ "$ms" = "-" ] && printf '-' || printf '%s ms' "$ms")" "$fails"
+		fi
+	done
+	if [ "$JSON" = "1" ]; then
+		printf '],"total":%s,"reachable":%s}\n' "$count" "$reach"
+	else
+		printf 'Reachable: %s/%s\n' "$reach" "$count"
+	fi
+	return 0
+}
+
 CMD="${1:-}"
 [ $# -gt 0 ] && shift
 
@@ -2006,12 +2189,15 @@ JSON=0
 SUB=""
 SUB2=""
 SUB3=""
-for arg in "$@"; do
+EP_REST=""
+while [ $# -gt 0 ]; do
+	arg="$1"; shift
 	case "$arg" in
 		--json) JSON=1 ;;
 		*) if [ -z "$SUB" ]; then SUB="$arg"
 		   elif [ -z "$SUB2" ]; then SUB2="$arg"
 		   elif [ -z "$SUB3" ]; then SUB3="$arg"
+		   else EP_REST="$EP_REST $arg"
 		   fi ;;
 	esac
 done
@@ -2065,6 +2251,26 @@ case "$CMD" in
 			list|"") cmd_group_list ;;
 			use|set) cmd_group_use "$SUB2" "$SUB3" ;;
 			*) echo "Unknown group action: $SUB" >&2; exit 2 ;;
+		esac
+		;;
+	policy)
+		case "$SUB" in
+			list|"") cmd_policy_list ;;
+			show) cmd_policy_show "$SUB2" ;;
+			set) cmd_policy_set "$SUB2" "$SUB3" $EP_REST ;;
+			bind|add) cmd_policy_bind "$SUB2" "$SUB3" $EP_REST ;;
+			unbind|remove) cmd_policy_unbind "$SUB2" "$SUB3" $EP_REST ;;
+			test) cmd_policy_test ;;
+			rule)
+				# policy rule <action> <key|section> <type:value>
+				case "$SUB2" in
+					list) cmd_policy_rule list "$SUB3" ;;
+					add) cmd_policy_rule add "$SUB3" $EP_REST ;;
+					del|delete|rm) cmd_policy_rule del $EP_REST ;;
+					*) echo "Unknown policy rule action: $SUB2" >&2; exit 2 ;;
+				esac
+				;;
+			*) echo "Unknown policy action: $SUB" >&2; exit 2 ;;
 		esac
 		;;
 	rule)

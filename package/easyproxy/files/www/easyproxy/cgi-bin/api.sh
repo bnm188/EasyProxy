@@ -168,6 +168,16 @@ esac
 # 以下全部需要登录
 session_valid || bad "未登录或会话已失效"
 
+# 概览采样兜底：文件为空时立刻采一次
+ov_ensure() {
+	OVDIR=/etc/easyproxy/stats
+	OVRR="$OVDIR/rr.jsonl"
+	mkdir -p "$OVDIR" 2>/dev/null
+	if [ ! -s "$OVRR" ]; then
+		sh /usr/lib/easyproxy/stats.sh >/dev/null 2>&1
+	fi
+}
+
 case "$CMD" in
 
 status)
@@ -226,6 +236,79 @@ group)
 	g="$("$EP" group list --json 2>/dev/null)"
 	[ -n "$g" ] || bad "group list 调用失败"
 	ok "{\"ok\":true,\"data\":$g}"
+	;;
+
+# ---- 策略分组（13 个固定业务组） ----
+policy-list)
+	p="$("$EP" policy list --json 2>/dev/null)"
+	[ -n "$p" ] || bad "policy list 调用失败"
+	ok "$p"
+	;;
+
+policy-show)
+	key="$(jget "$BODY" key)"
+	[ -n "$key" ] || bad "缺少 key"
+	out="$("$EP" policy show "$key" --json 2>&1)"; rc=$?
+	[ "$rc" -eq 0 ] || bad "$(printf '%s' "${out:-policy show 失败}" | tr '\n' ' ')"
+	ok "$out"
+	;;
+
+policy-set)
+	key="$(jget "$BODY" key)"
+	opt="$(jget "$BODY" option)"
+	val="$(jget "$BODY" value)"
+	[ -n "$key" ] || bad "缺少 key"
+	[ -n "$opt" ] || bad "缺少 option"
+	out="$("$EP" policy set "$key" "$opt" "$val" 2>&1)"; rc=$?
+	[ "$rc" -eq 0 ] || bad "$(printf '%s' "${out:-设置失败}" | tr '\n' ' ')"
+	ok '{"ok":true}'
+	;;
+
+policy-bind)
+	key="$(jget "$BODY" key)"
+	nodes="$(jget "$BODY" nodes)"
+	[ -n "$key" ] || bad "缺少 key"
+	[ -n "$nodes" ] || bad "缺少 nodes"
+	# nodes 是空格分隔的节点 section 列表，交给 CLI 分词处理
+	out="$("$EP" policy bind "$key" $nodes 2>&1)"; rc=$?
+	[ "$rc" -eq 0 ] || bad "$(printf '%s' "${out:-绑定失败}" | tr '\n' ' ')"
+	ok "{\"ok\":true,\"message\":\"$(jesc "$(printf '%s' "$out" | tr '\n' ' ')")\"}"
+	;;
+
+policy-unbind)
+	key="$(jget "$BODY" key)"
+	nodes="$(jget "$BODY" nodes)"
+	[ -n "$key" ] || bad "缺少 key"
+	[ -n "$nodes" ] || bad "缺少 nodes"
+	out="$("$EP" policy unbind "$key" $nodes 2>&1)"; rc=$?
+	[ "$rc" -eq 0 ] || bad "$(printf '%s' "${out:-解绑失败}" | tr '\n' ' ')"
+	ok "{\"ok\":true,\"message\":\"$(jesc "$(printf '%s' "$out" | tr '\n' ' ')")\"}"
+	;;
+
+policy-rule-add)
+	key="$(jget "$BODY" key)"
+	typ="$(jget "$BODY" type)"
+	value="$(jget "$BODY" value)"
+	[ -n "$key" ] || bad "缺少 key"
+	[ -n "$value" ] || bad "缺少 value"
+	[ -n "$typ" ] || typ=domain-suffix
+	out="$("$EP" policy rule add "$key" "$typ:$value" 2>&1)"; rc=$?
+	[ "$rc" -eq 0 ] || bad "$(printf '%s' "${out:-添加失败}" | tr '\n' ' ')"
+	ok "{\"ok\":true,\"section\":\"$(jesc "$(printf '%s' "$out" | tr -d '\n')")\"}"
+	;;
+
+policy-rule-del)
+	section="$(jget "$BODY" section)"
+	[ -n "$section" ] || bad "缺少 section"
+	out="$("$EP" policy rule del "$section" 2>&1)"; rc=$?
+	[ "$rc" -eq 0 ] || bad "$(printf '%s' "${out:-删除失败}" | tr '\n' ' ')"
+	ok '{"ok":true}'
+	;;
+
+policy-test)
+	out="$("$EP" policy test --json 2>/dev/null)"
+	[ -n "$out" ] || bad "policy test 调用失败"
+	ok "$out"
 	;;
 
 group-use)
@@ -292,16 +375,21 @@ logs)
 sites)
 	out='['
 	first=1
-	for h in www.baidu.com www.qq.com www.taobao.com www.google.com; do
+	# key|显示名|探测地址 —— 概览四站点胶囊
+	for pair in "baidu|百度|www.baidu.com" "google|Google|www.google.com" "openai|OpenAI|api.openai.com" "telegram|Telegram|api.telegram.org"; do
+		k="${pair%%|*}"; rest="${pair#*|}"
+		name="${rest%%|*}"; h="${rest##*|}"
 		res="$(curl -s -k -o /dev/null -m 8 -w '%{http_code}|%{time_total}' -x http://127.0.0.1:7890 "https://$h" 2>/dev/null)"
 		code="${res%%|*}"
 		t="${res##*|}"
 		[ -n "$code" ] || code=000
 		ms="$(printf '%s' "$t" | awk '{printf "%.0f", $1*1000}')"
 		[ -n "$ms" ] || ms=0
+		okf=false
+		case "$code" in 200|204|301|302|404|400|401|403) okf=true ;; esac
 		[ "$first" -eq 1 ] || out="$out,"
 		first=0
-		out="$out{\"host\":\"$h\",\"code\":\"$code\",\"time\":\"${ms} ms\",\"via\":\"mihomo 7890\"}"
+		out="$out{\"key\":\"$k\",\"name\":\"$name\",\"host\":\"$h\",\"code\":\"$code\",\"ms\":$ms,\"time\":\"${ms} ms\",\"ok\":$okf,\"via\":\"mihomo 7890\"}"
 	done
 	ok "{\"ok\":true,\"mode\":\"经 7890 出口\",\"data\":$out}"
 	;;
@@ -372,6 +460,84 @@ passwd)
 	: > "$SESS_FILE"
 	SET_COOKIE="Set-Cookie: $COOKIE_NAME=; Path=/; Max-Age=0; HttpOnly"
 	ok_cookie '{"ok":true}'
+	;;
+
+# ================= 概览页新接口（Openbox 同构） =================
+# 数据来源：/etc/easyproxy/stats/（stats.sh 每分钟采样）
+
+vitals)
+	ov_ensure
+	[ -s "$OVRR" ] || bad "采样器未产生数据（stats.sh 未运行）"
+	LAST="$(tail -1 "$OVRR")"
+	cpu="$(printf '%s' "$LAST" | sed -n 's/.*"cpu":\([0-9.]*\).*/\1/p')"
+	cores="$(printf '%s' "$LAST" | sed -n 's/.*"cores":"\([^"]*\)".*/\1/p')"
+	mu="$(printf '%s' "$LAST" | sed -n 's/.*"mu":\([0-9]*\).*/\1/p')"
+	mt="$(printf '%s' "$LAST" | sed -n 's/.*"mt":\([0-9]*\).*/\1/p')"
+	mp="$(printf '%s' "$LAST" | sed -n 's/.*"mp":\([0-9]*\).*/\1/p')"
+	rss="$(printf '%s' "$LAST" | sed -n 's/.*"rss":\([0-9]*\).*/\1/p')"
+	ser="$(tail -60 "$OVRR" 2>/dev/null | sed -n 's/.*"cpu":\([0-9.]*\).*/\1/p' | tr '\n' ',' | sed 's/,$//')"
+	cj="$(printf '%s' "$cores" | awk 'BEGIN{printf "[";f=1} {n=split($0,a," "); for(i=1;i<=n;i++){split(a[i],b,":"); if(length(b)>=2){printf "%s%s", (f?"":","), "{\"i\":"b[1]",\"p\":"b[2]"}"} }} END{printf "]"}')"
+	MU="${mu:-0}"; MT="${mt:-0}"; AV=$(( MT - MU ))
+	up="$(cut -d' ' -f1 /proc/uptime 2>/dev/null | cut -d. -f1)"
+	eng="$("$EP" status --json 2>/dev/null | sed -n 's/.*"engine":"\([^"]*\)".*/\1/p')"
+	ok "{\"ok\":true,\"cpu\":{\"total\":${cpu:-0},\"cores\":${cj},\"series\":[${ser}]},\"mem\":{\"used_mb\":$MU,\"total_mb\":$MT,\"avail_mb\":$AV,\"pct\":${mp:-0}},\"proc\":{\"name\":\"$(jesc "${eng:-内核}")\",\"rss_mb\":${rss:-0}},\"uptime\":${up:-0}}"
+	;;
+
+netstatus)
+	ov_ensure
+	[ -s "$OVRR" ] || bad "采样器未产生数据（stats.sh 未运行）"
+	LAST="$(tail -1 "$OVRR")"
+	ur="$(printf '%s' "$LAST" | sed -n 's/.*"ur":\([0-9]*\).*/\1/p')"
+	dr="$(printf '%s' "$LAST" | sed -n 's/.*"dr":\([0-9]*\).*/\1/p')"
+	cn="$(printf '%s' "$LAST" | sed -n 's/.*"cn":\([0-9]*\).*/\1/p')"
+	cl="$(printf '%s' "$LAST" | sed -n 's/.*"cl":\([0-9]*\).*/\1/p')"
+	today="$(date +%Y-%m-%d)"
+	tline="$(awk -F, -v d="$today" '$1==d{print $2" "$3}' /etc/easyproxy/stats/daily.csv 2>/dev/null)"
+	ut="$(printf '%s' "$tline" | awk '{print $1+0}')"
+	dt="$(printf '%s' "$tline" | awk '{print $2+0}')"
+	sc="$(tail -60 "$OVRR" 2>/dev/null | sed -n 's/.*"cn":\([0-9]*\).*/\1/p' | tr '\n' ',' | sed 's/,$//')"
+	sl="$(tail -60 "$OVRR" 2>/dev/null | sed -n 's/.*"cl":\([0-9]*\).*/\1/p' | tr '\n' ',' | sed 's/,$//')"
+	su="$(tail -60 "$OVRR" 2>/dev/null | sed -n 's/.*"ur":\([0-9]*\).*/\1/p' | tr '\n' ',' | sed 's/,$//')"
+	sd="$(tail -60 "$OVRR" 2>/dev/null | sed -n 's/.*"dr":\([0-9]*\).*/\1/p' | tr '\n' ',' | sed 's/,$//')"
+	at="$(uci -q get easyproxy.main.overview_autotest 2>/dev/null)"
+	case "$at" in 0|off|false) atf=false ;; *) atf=true ;; esac
+	ok "{\"ok\":true,\"autotest\":$atf,\"kpi\":{\"conn\":${cn:-0},\"clients\":${cl:-0},\"up_rate\":${ur:-0},\"down_rate\":${dr:-0},\"up_total\":${ut:-0},\"down_total\":${dt:-0}},\"series\":{\"conn\":[${sc}],\"clients\":[${sl}],\"up\":[${su}],\"down\":[${sd}]}}"
+	;;
+
+insight)
+	MONTH="$(jget "$BODY" month)"
+	[ -n "$MONTH" ] || MONTH="$(printf '%s' "$QS" | sed -n 's/.*month=\([0-9][0-9]*-[0-9][0-9]*\).*/\1/p')"
+	[ -n "$MONTH" ] || MONTH="$(date +%Y-%m)"
+	ds="$(awk -F, -v m="$MONTH" '
+		index($1,m"-")==1 { d=substr($1,length(m)+2)+0; if(d>0) printf "%s{\"d\":%d,\"up\":%s,\"down\":%s}", (n++?",":""), d, $2, $3 }
+	' /etc/easyproxy/stats/daily.csv 2>/dev/null)"
+	tu="$(awk -F, -v m="$MONTH" 'index($1,m"-")==1{ s+=$2 } END{printf "%d", s+0}' /etc/easyproxy/stats/daily.csv 2>/dev/null)"
+	td="$(awk -F, -v m="$MONTH" 'index($1,m"-")==1{ s+=$3 } END{printf "%d", s+0}' /etc/easyproxy/stats/daily.csv 2>/dev/null)"
+	nd="$(awk -F, -v m="$MONTH" 'index($1,m"-")==1{ n++ } END{printf "%d", n+0}' /etc/easyproxy/stats/daily.csv 2>/dev/null)"
+	tdy="$(date +%Y-%m-%d)"
+	hs="$(awk -F, -v d="$tdy" '$1==d{ printf "%s{\"h\":%d,\"up\":%s,\"down\":%s}", (n++?",":""), $2+0, $3, $4 }' /etc/easyproxy/stats/hourly.csv 2>/dev/null)"
+	tup="$(awk -F, -v d="$tdy" '$1==d{ s+=$3 } END{printf "%d", s+0}' /etc/easyproxy/stats/hourly.csv 2>/dev/null)"
+	tdn="$(awk -F, -v d="$tdy" '$1==d{ s+=$4 } END{printf "%d", s+0}' /etc/easyproxy/stats/hourly.csv 2>/dev/null)"
+	cs="$(sort -t, -k2,2nr /etc/easyproxy/stats/clients.csv 2>/dev/null | head -8 | awk -F, '{printf "%s{\"ip\":\"%s\",\"conn\":%s,\"last\":%s}", (n++?",":""), $1, $2+0, $3+0}')"
+	ok "{\"ok\":true,\"month\":\"$MONTH\",\"month_total\":{\"up\":${tu:-0},\"down\":${td:-0},\"days\":${nd:-0}},\"days\":[${ds}],\"today\":{\"date\":\"$tdy\",\"up\":${tup:-0},\"down\":${tdn:-0},\"hours\":[${hs}]},\"clients\":[${cs}]}"
+	;;
+
+nodescore)
+	raw="$(curl -s -m 8 "$(clash_base)/proxies" 2>/dev/null)"
+	[ -n "$raw" ] || bad "Clash API 不可用（引擎可能未运行）"
+	# 节点总数（排除组类型与内置）
+	tot="$(printf '%s' "$raw" | grep -o '"type":"[^"]*"' | grep -viE 'Selector|URLTest|Fallback|LoadBalance|Direct|Reject|Compatible|Relay|Pass' | wc -l | tr -d ' ')"
+	delay_all="$(printf '%s' "$raw" | grep -o '"delay":[0-9]*' | sed 's/"delay"://' | awk '{if($1>0 && $1<5000) print}' )"
+	okn="$(printf '%s' "$delay_all" | grep -c . 2>/dev/null | tr -d ' ')"
+	avg="$(printf '%s' "$delay_all" | awk '{s+=$1; n++} END{ if(n>0) printf "%d", s/n; else print 0 }')"
+	[ -n "$okn" ] || okn=0
+	avail=0
+	[ "${tot:-0}" -gt 0 ] 2>/dev/null && avail=$(( okn * 100 / tot ))
+	lat_score=100
+	[ "${avg:-0}" -ge 100 ] 2>/dev/null && lat_score=$(( 100 - (avg - 100) / 5 ))
+	[ "$lat_score" -lt 0 ] && lat_score=0
+	score=$(( avail * 60 / 100 + lat_score * 40 / 100 ))
+	ok "{\"ok\":true,\"score\":$score,\"nodes_total\":${tot:-0},\"nodes_ok\":${okn},\"avail_pct\":$avail,\"delay_avg\":${avg:-0}}"
 	;;
 
 diag)
